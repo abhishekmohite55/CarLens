@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CarLens Inspector</title>
+<style>
+  body { font-family: monospace; background: #111; color: #ddd; margin: 0; padding: 16px; }
+  h1 { color: #fff; margin: 0 0 8px; font-size: 18px; }
+  .section { background: #1a1a1a; border: 1px solid #333; border-radius: 4px; padding: 12px; margin: 12px 0; }
+  label { display: block; margin-bottom: 4px; color: #aaa; font-size: 12px; }
+  input[type=text], input[type=file] { background: #222; color: #eee; border: 1px solid #444; padding: 6px 8px; border-radius: 3px; width: 100%; box-sizing: border-box; font-family: monospace; }
+  button { background: #2a5caa; color: #fff; border: none; padding: 8px 16px; border-radius: 3px; cursor: pointer; font-family: monospace; }
+  button:hover { background: #3a6cbf; }
+  button:disabled { background: #444; cursor: default; }
+  .status { font-size: 12px; color: #aaa; margin-top: 6px; }
+  .ok { color: #6f9; }
+  .err { color: #f66; }
+  .warn { color: #fb0; }
+  .progress-bar { background: #333; border-radius: 2px; height: 6px; margin: 6px 0; }
+  .progress-fill { background: #8fd5b5; height: 6px; border-radius: 2px; width: 0; transition: width 0.2s; }
+  #events-log { max-height: 300px; overflow-y: auto; font-size: 11px; }
+  .event-line { border-bottom: 1px solid #222; padding: 3px 0; }
+  .node-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; font-size: 11px; }
+  .node-cell { background: #222; border-radius: 2px; padding: 4px 6px; text-align: center; }
+  .node-waiting { opacity: 0.5; }
+  .node-running { border: 1px solid #ffb020; color: #ffb020; }
+  .node-done { border: 1px solid #8fd5b5; color: #8fd5b5; }
+  .node-failed { border: 1px solid #e5484d; color: #e5484d; }
+  .node-skipped { opacity: 0.4; text-decoration: line-through; }
+  pre { background: #0a0a0a; padding: 10px; border-radius: 3px; overflow-x: auto; font-size: 11px; max-height: 300px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; }
+  .file-link { color: #6af; text-decoration: none; font-size: 12px; margin-right: 12px; }
+  .file-link:hover { text-decoration: underline; }
+  #run-id-display { color: #8fd5b5; font-size: 13px; margin-top: 6px; }
+</style>
+</head>
+<body>
+<h1>CarLens Inspector <span style="color:#555;font-size:12px">dev tool</span></h1>
+
+<div class="section">
+  <label>Upload limits (from /api/config)</label>
+  <div id="limits" class="status">loading…</div>
+</div>
+
+<div class="section">
+  <label>Pick a video and upload</label>
+  <input type="file" id="file-input" accept="video/*">
+  <div class="progress-bar"><div class="progress-fill" id="prog"></div></div>
+  <div id="upload-status" class="status"></div>
+  <button id="upload-btn" onclick="doUpload()" disabled>Upload</button>
+  <div id="run-id-display"></div>
+</div>
+
+<div class="section">
+  <label>Inspect a run (paste run id or use ?run=… in URL)</label>
+  <input type="text" id="run-id-input" placeholder="r_YYYYMMDD_HHMMSS_xxxx">
+  <button onclick="loadRun(document.getElementById('run-id-input').value.trim())" style="margin-top:6px">Load run</button>
+</div>
+
+<div class="section" id="run-section" style="display:none">
+  <label>Node statuses</label>
+  <div class="node-grid" id="node-grid"></div>
+
+  <label style="margin-top:12px">Run files</label>
+  <div id="file-links"></div>
+
+  <label style="margin-top:12px">meta.json</label>
+  <pre id="meta-json">(loading…)</pre>
+
+  <label style="margin-top:12px">Live events</label>
+  <div id="events-log"></div>
+</div>
+
+<script>
+const NODES = [
+  {id:"upload",  label:"Upload & check"},
+  {id:"locate",  label:"Locate (Gemini)"},
+  {id:"frames",  label:"Extract frames"},
+  {id:"verify",  label:"Verify (Gemini)"},
+  {id:"confirm", label:"You confirm"},
+  {id:"photos",  label:"Extra photos (Gemini)"},
+  {id:"plan",    label:"Plan searches (LLM)"},
+  {id:"search",  label:"Search web (Tavily)"},
+  {id:"extract", label:"Read prices (LLM)"},
+  {id:"pricing", label:"Price & report"},
+];
+
+let currentRunId = null;
+let sseSource = null;
+
+// Load config on start
+fetch('/api/config').then(r => r.json()).then(cfg => {
+  const u = cfg.upload;
+  document.getElementById('limits').innerHTML =
+    `allowed: <b>${u.allowed_types.join(', ')}</b> &nbsp; max size: <b>${u.max_size_mb} MB</b> &nbsp; max duration: <b>${Math.floor(u.max_duration_sec/60)}:${String(u.max_duration_sec%60).padStart(2,'0')}</b>`;
+  document.getElementById('limits').className = 'status ok';
+}).catch(e => {
+  document.getElementById('limits').textContent = 'Error fetching /api/config: ' + e;
+  document.getElementById('limits').className = 'status err';
+});
+
+// Enable upload button when file is selected
+document.getElementById('file-input').addEventListener('change', function() {
+  document.getElementById('upload-btn').disabled = !this.files.length;
+});
+
+function doUpload() {
+  const fileInput = document.getElementById('file-input');
+  if (!fileInput.files.length) return;
+  const file = fileInput.files[0];
+
+  const btn = document.getElementById('upload-btn');
+  const status = document.getElementById('upload-status');
+  const prog = document.getElementById('prog');
+  btn.disabled = true;
+  status.textContent = 'Uploading…';
+  status.className = 'status';
+  prog.style.width = '0%';
+
+  const xhr = new XMLHttpRequest();
+  xhr.open('POST', '/api/runs');
+
+  xhr.upload.onprogress = function(e) {
+    if (e.lengthComputable) {
+      const pct = Math.round(e.loaded / e.total * 100);
+      prog.style.width = pct + '%';
+      status.textContent = `Uploading… ${pct}%`;
+    }
+  };
+
+  xhr.onload = function() {
+    prog.style.width = '100%';
+    try {
+      const data = JSON.parse(xhr.responseText);
+      if (xhr.status === 200 && data.run_id) {
+        status.textContent = `Accepted. Run id: ${data.run_id}`;
+        status.className = 'status ok';
+        document.getElementById('run-id-display').textContent = data.run_id;
+        loadRun(data.run_id);
+      } else {
+        const msg = data.error ? data.error.message : JSON.stringify(data);
+        status.textContent = msg;
+        status.className = 'status err';
+        btn.disabled = false;
+      }
+    } catch(e) {
+      status.textContent = 'Unexpected response: ' + xhr.responseText.slice(0, 200);
+      status.className = 'status err';
+      btn.disabled = false;
+    }
+  };
+
+  xhr.onerror = function() {
+    status.textContent = 'Network error.';
+    status.className = 'status err';
+    btn.disabled = false;
+  };
+
+  const fd = new FormData();
+  fd.append('video', file);
+  xhr.send(fd);
+}
+
+function loadRun(runId) {
+  if (!runId) return;
+  currentRunId = runId;
+  document.getElementById('run-id-input').value = runId;
+  document.getElementById('run-section').style.display = '';
+
+  // Init node grid
+  const grid = document.getElementById('node-grid');
+  grid.innerHTML = NODES.map(n =>
+    `<div class="node-cell node-waiting" id="node-${n.id}">${n.label}</div>`
+  ).join('');
+
+  // File links (known files for Stage 1)
+  const links = document.getElementById('file-links');
+  links.innerHTML = [
+    {path:'meta.json', label:'meta.json'},
+    {path:'events.jsonl', label:'events.jsonl'},
+  ].map(f =>
+    `<a class="file-link" href="/api/runs/${runId}/files/${f.path}" target="_blank">${f.label}</a>`
+  ).join('');
+
+  // Load meta.json
+  fetch(`/api/runs/${runId}/files/meta.json`)
+    .then(r => r.text())
+    .then(t => {
+      try { document.getElementById('meta-json').textContent = JSON.stringify(JSON.parse(t), null, 2); }
+      catch { document.getElementById('meta-json').textContent = t; }
+    })
+    .catch(() => { document.getElementById('meta-json').textContent = '(not yet available)'; });
+
+  // Load snapshot to get node statuses
+  fetch(`/api/runs/${runId}`)
+    .then(r => r.json())
+    .then(d => { if (d.nodes) updateNodeStatuses(d.nodes); })
+    .catch(() => {});
+
+  // Clear and open SSE stream
+  document.getElementById('events-log').innerHTML = '';
+  if (sseSource) { sseSource.close(); }
+  sseSource = new EventSource(`/api/runs/${runId}/events`);
+  sseSource.onmessage = function(e) {
+    try {
+      const ev = JSON.parse(e.data);
+      addEventLine(ev);
+      // Update node status from event
+      if (ev.node && ev.type) {
+        const statusMap = {
+          node_started: 'running',
+          node_done: 'done',
+          node_failed: 'failed',
+          node_skipped: 'skipped',
+        };
+        if (statusMap[ev.type]) {
+          const cell = document.getElementById('node-' + ev.node);
+          if (cell) {
+            cell.className = 'node-cell node-' + statusMap[ev.type];
+          }
+        }
+      }
+    } catch {}
+  };
+  sseSource.onerror = function() {
+    addRawLine('[SSE disconnected or error]', 'warn');
+  };
+}
+
+function updateNodeStatuses(nodes) {
+  for (const [id, status] of Object.entries(nodes)) {
+    const cell = document.getElementById('node-' + id);
+    if (cell) cell.className = 'node-cell node-' + status;
+  }
+}
+
+function addEventLine(ev) {
+  const log = document.getElementById('events-log');
+  const line = document.createElement('div');
+  line.className = 'event-line';
+  line.textContent = `[${ev.seq}] ${ev.ts} ${ev.node}/${ev.type} ${JSON.stringify(ev.data)}`;
+  log.appendChild(line);
+  log.scrollTop = log.scrollHeight;
+}
+
+function addRawLine(text, cls) {
+  const log = document.getElementById('events-log');
+  const line = document.createElement('div');
+  line.className = 'event-line ' + (cls || '');
+  line.textContent = text;
+  log.appendChild(line);
+  log.scrollTop = log.scrollHeight;
+}
+
+// Auto-load run from ?run= URL param
+(function() {
+  const params = new URLSearchParams(location.search);
+  const rid = params.get('run');
+  if (rid) loadRun(rid);
+})();
+</script>
+</body>
+</html>
