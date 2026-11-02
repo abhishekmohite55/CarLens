@@ -48,6 +48,25 @@ _RESPONSE_SCHEMA = {
 }
 
 
+def _validate_locate_items(items: list, duration_sec: float) -> list:
+    """Validate and return a copy of items; clamps t up to 1 s past duration."""
+    validated = []
+    for item in items:
+        item = dict(item)
+        if item.get("category") not in _CATEGORIES:
+            raise ValueError(f"unknown category: {item.get('category')!r}")
+        if item.get("side") not in _SIDES:
+            raise ValueError(f"unknown side: {item.get('side')!r}")
+        t = item.get("t")
+        if not isinstance(t, (int, float)) or t < 0 or t > duration_sec + 1:
+            raise ValueError(f"t={t!r} out of range [0, {duration_sec + 1}]")
+        if t > duration_sec:
+            item["t"] = duration_sec
+            item["t_clamped"] = True
+        validated.append(item)
+    return validated
+
+
 def _read_prompt(name: str) -> str:
     cfg = get_config()
     path = PROJECT_ROOT / cfg.paths.prompts_dir / name
@@ -160,14 +179,7 @@ def _run_locate_inner(run_id: str) -> None:
             raise ValueError("top-level JSON is not an object")
         if "items" not in parsed or "coverage" not in parsed:
             raise ValueError("missing 'items' or 'coverage' key")
-        for item in parsed["items"]:
-            if item.get("category") not in _CATEGORIES:
-                raise ValueError(f"unknown category: {item.get('category')!r}")
-            if item.get("side") not in _SIDES:
-                raise ValueError(f"unknown side: {item.get('side')!r}")
-            t = item.get("t")
-            if not isinstance(t, (int, float)) or t < 0 or t > duration_sec:
-                raise ValueError(f"t={t!r} out of range [0, {duration_sec}]")
+        parsed["items"] = _validate_locate_items(parsed["items"], duration_sec)
     except Exception as exc:
         fail_reason = str(exc)
         parsed = None
