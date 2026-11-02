@@ -11,6 +11,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from .config import get_config
 from .events import sse_stream
 from .graph import run_graph
+from .llm.tracing import _get_client as _warmup_tracing
 from .nodes.upload import process_upload
 from .runs import events_path, run_dir
 
@@ -19,6 +20,12 @@ _started: set[str] = set()
 _start_lock = threading.Lock()
 
 app = FastAPI(title="CarLens backend")
+
+
+@app.on_event("startup")
+def _startup():
+    _warmup_tracing()
+
 
 app.add_middleware(
     CORSMiddleware,
