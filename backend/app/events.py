@@ -13,15 +13,18 @@ _KEEPALIVE_SEC = 15    # SSE keep-alive comment interval
 async def sse_stream(run_id: str) -> AsyncGenerator[str, None]:
     evpath = events_path(run_id)
 
-    # Replay events already on disk
+    # Replay events already on disk; track last_pos by actual bytes read
+    # (not st_size) so a line appended during replay is not silently skipped.
+    last_pos = 0
     if evpath.exists():
-        with open(evpath, encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if line:
-                    yield f"data: {line}\n\n"
+        with open(evpath, "rb") as f:
+            content = f.read()
+            last_pos = f.tell()
+        for line in content.decode("utf-8").splitlines():
+            line = line.strip()
+            if line:
+                yield f"data: {line}\n\n"
 
-    last_pos = evpath.stat().st_size if evpath.exists() else 0
     last_ka = time.monotonic()
 
     while True:
@@ -41,11 +44,19 @@ async def sse_stream(run_id: str) -> AsyncGenerator[str, None]:
             continue
 
         if size > last_pos:
-            with open(evpath, encoding="utf-8") as f:
+            with open(evpath, "rb") as f:
                 f.seek(last_pos)
                 chunk = f.read()
-            last_pos = size
-            for line in chunk.splitlines():
+
+            # Only consume up to the last complete line (ends with \n),
+            # so a half-written line is neither sent nor permanently skipped.
+            last_nl = chunk.rfind(b"\n")
+            if last_nl == -1:
+                continue  # no complete line yet
+            complete = chunk[: last_nl + 1]
+            last_pos += last_nl + 1
+
+            for line in complete.decode("utf-8").splitlines():
                 line = line.strip()
                 if line:
                     yield f"data: {line}\n\n"
