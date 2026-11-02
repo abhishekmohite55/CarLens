@@ -23,6 +23,7 @@ def call_gemini_video(
     media_resolution: str,
     timeout_sec: int,
     emit: Callable[[str], None],
+    response_schema: dict | None = None,
 ) -> dict:
     """Upload video, wait for ACTIVE, ask model, return result dict."""
     client = genai.Client()
@@ -73,6 +74,7 @@ def call_gemini_video(
             system_instruction=system_prompt,
             temperature=temperature,
             response_mime_type="application/json",
+            response_schema=response_schema,
             media_resolution=resolution,
         ),
     )
