@@ -41,6 +41,14 @@ class ModelsConfig(BaseModel):
     temperature: float
     timeout_sec: int
     locate_media_resolution: str
+    locate_thinking_level: Optional[str] = None
+
+
+class LocateVideoConfig(BaseModel):
+    shrink: bool
+    height: int
+    fps: int
+    crf: int
 
 
 class FramesConfig(BaseModel):
@@ -74,6 +82,7 @@ class AppConfig(BaseModel):
     confirm: ConfirmConfig
     pricing: PricingConfig
     paths: PathsConfig
+    locate_video: LocateVideoConfig
 
 
 def get_config() -> AppConfig:

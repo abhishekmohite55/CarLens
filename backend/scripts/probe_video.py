@@ -17,6 +17,14 @@ Variants mode (3rd arg = comma-separated medium,small,current):
 - small:  locate_small.system.md,  application/json, no schema.
 - current: locate.system.md,       application/json + _RESPONSE_SCHEMA.
 - Save everything to runs/_checks/probe_<timestamp>.json.
+
+Fast mode (3rd arg = fast):
+    python -m scripts.probe_video <video_path> <model> fast
+- Shrink with ffmpeg to 720p / 5 fps / no audio (runs/_checks/<name>_small.mp4).
+  Needs `pip install imageio-ffmpeg` or ffmpeg on PATH.
+- Send the small file via Files API (same as the pipeline), model default thinking.
+- Current locate prompts + _RESPONSE_SCHEMA.
+- Prints per-step timings, tokens (incl. thoughts) and validated items.
 """
 from __future__ import annotations
 
@@ -179,8 +187,11 @@ def probe_variants(video_path: Path, model: str, variants_str: str) -> dict:
     prompts_dir = APP_ROOT / cfg.paths.prompts_dir
     probe_dir = prompts_dir / "probe"
 
-    user_prompt = (prompts_dir / "locate.user.md").read_text(encoding="utf-8").replace(
-        "{duration_sec}", str(duration_sec)
+    from app.timecode import seconds_to_mmss
+    user_prompt = (
+        (prompts_dir / "locate.user.md").read_text(encoding="utf-8")
+        .replace("{duration_sec}", str(duration_sec))
+        .replace("{duration_mmss}", seconds_to_mmss(duration_sec))
     )
 
     variant_configs = {
@@ -361,6 +372,140 @@ def probe_variants(video_path: Path, model: str, variants_str: str) -> dict:
     return result
 
 
+# ─── fast mode: shrink then the same Files API call as the pipeline ──────────
+
+def probe_fast(video_path: Path, model: str) -> dict:
+    import cv2
+
+    from app.config import PROJECT_ROOT as APP_ROOT, get_config
+    from app.llm.gemini_video import call_gemini_video
+    from app.nodes.locate import _RESPONSE_SCHEMA, _validate_locate_items
+    from app.timecode import seconds_to_mmss
+    from app.video import shrink_video
+
+    cfg = get_config()
+    temperature = cfg.models.temperature
+    resolution_raw = cfg.models.locate_media_resolution
+    thinking_level = cfg.models.locate_thinking_level
+    lv = cfg.locate_video
+
+    # Duration of the ORIGINAL video (timestamps must match it for frames)
+    cap = cv2.VideoCapture(str(video_path))
+    fps_cap = cap.get(cv2.CAP_PROP_FPS) if cap.isOpened() else 0.0
+    frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT) if cap.isOpened() else 0.0
+    cap.release()
+    duration_sec = round(frame_count / fps_cap, 1) if fps_cap > 0 else 0.0
+
+    prompts_dir = APP_ROOT / cfg.paths.prompts_dir
+    system_prompt = (prompts_dir / "locate.system.md").read_text(encoding="utf-8")
+    user_prompt = (
+        (prompts_dir / "locate.user.md").read_text(encoding="utf-8")
+        .replace("{duration_sec}", str(duration_sec))
+        .replace("{duration_mmss}", seconds_to_mmss(duration_sec))
+    )
+
+    t_total = time.perf_counter()
+    result: dict = {
+        "probed_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "mode": "fast",
+        "video": str(video_path),
+        "original_mb": round(video_path.stat().st_size / 1e6, 1),
+        "duration_sec": duration_sec,
+        "model": model,
+        "settings": {
+            "shrink": {"height": lv.height, "fps": lv.fps, "crf": lv.crf},
+            "media_resolution": resolution_raw,
+            "temperature": temperature,
+            "thinking_level": thinking_level,
+        },
+        "timings_s": {},
+    }
+
+    # 1. Shrink
+    CHECKS_DIR.mkdir(parents=True, exist_ok=True)
+    small_path = CHECKS_DIR / f"{video_path.stem}_small.mp4"
+    print(f"Shrinking {video_path.name} ({result['original_mb']} MB) …")
+    t = time.perf_counter()
+    try:
+        shrink_video(video_path, small_path, height=lv.height, fps=lv.fps, crf=lv.crf)
+    except RuntimeError as exc:
+        result["error"] = str(exc)
+        print(f"  {result['error']}")
+        return result
+    result["timings_s"]["shrink"] = round(time.perf_counter() - t, 2)
+    result["small_mb"] = round(small_path.stat().st_size / 1e6, 1)
+    result["small_path"] = str(small_path)
+    print(f"  {result['small_mb']} MB in {result['timings_s']['shrink']}s → {small_path.name}")
+
+    # 2. Files API upload + ask via the same pipeline call
+    msgs: list[str] = []
+
+    def _emit(msg: str) -> None:
+        msgs.append(msg)
+        print(f"  {msg}")
+
+    t_send = time.perf_counter()
+    try:
+        print(f"  Asking {model} (media_resolution={resolution_raw}) …")
+        call_result = call_gemini_video(
+            video_path=small_path,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            model=model,
+            fallback_model=None,
+            temperature=temperature,
+            media_resolution=resolution_raw,
+            timeout_sec=cfg.models.timeout_sec,
+            emit=_emit,
+            response_schema=_RESPONSE_SCHEMA,
+            thinking_level=thinking_level,
+        )
+    except Exception as exc:
+        result["timings_s"]["send_and_generate"] = round(time.perf_counter() - t_send, 2)
+        result["timings_s"]["total"] = round(time.perf_counter() - t_total, 2)
+        result["error"] = str(exc)
+        result["code"] = getattr(exc, "code", None)
+        print(f"  FAIL — {exc}")
+        return result
+
+    result["timings_s"]["generate"] = round(call_result["duration_ms"] / 1000, 2)
+    result["timings_s"]["send_and_generate"] = round(time.perf_counter() - t_send, 2)
+    result["timings_s"]["upload_and_active"] = round(
+        result["timings_s"]["send_and_generate"] - result["timings_s"]["generate"], 2
+    )
+    result["timings_s"]["total"] = round(time.perf_counter() - t_total, 2)
+
+    raw_reply = call_result["raw_text"]
+    result["tokens"] = call_result["tokens"]
+    result["raw_reply"] = raw_reply
+
+    # Same checks the locate node applies
+    try:
+        parsed = json.loads(raw_reply)
+        parsed["items"] = _validate_locate_items(parsed["items"], duration_sec)
+        result["parsed"] = parsed
+        result["validation"] = "ok"
+    except Exception as exc:
+        result["parsed"] = None
+        result["validation"] = f"fail: {exc}"
+
+    by_cat: dict[str, int] = {}
+    for item in (result["parsed"] or {}).get("items", []):
+        by_cat[item["category"]] = by_cat.get(item["category"], 0) + 1
+
+    print(f"  timings: {result['timings_s']}")
+    print(f"  tokens: {result['tokens']}")
+    print(f"  validation: {result['validation']}, items by category: {by_cat}")
+    if result["parsed"]:
+        for item in result["parsed"]["items"]:
+            t_text = item.get("t_text", "")
+            print(f"    t={item['t']:>7.1f}s ({t_text})  {item['category']:<12} {item['side']:<9} {item['label']}")
+        print(f"  coverage: {result['parsed'].get('coverage')}")
+    else:
+        print(f"  raw reply (first 500): {raw_reply[:500]!r}")
+    return result
+
+
 def _file_obj(info) -> dict:
     """Extract serialisable fields from a Gemini File object."""
     return {
@@ -377,7 +522,7 @@ def _file_obj(info) -> dict:
 def main() -> None:
     if len(sys.argv) not in (3, 4):
         print("Usage: python -m scripts.probe_video <video_path> <model> [variants]")
-        print("       variants: comma-separated medium,small,current (omit for plain probe)")
+        print("       variants: comma-separated medium,small,current, or fast (omit for plain probe)")
         sys.exit(1)
 
     video_path = Path(sys.argv[1])
@@ -392,7 +537,9 @@ def main() -> None:
     print(f"probe_video: {video_path.name} / {model}")
     print(sep)
 
-    if len(sys.argv) == 4:
+    if len(sys.argv) == 4 and sys.argv[3] == "fast":
+        result = probe_fast(video_path, model)
+    elif len(sys.argv) == 4:
         result = probe_variants(video_path, model, sys.argv[3])
     else:
         result = probe(video_path, model)

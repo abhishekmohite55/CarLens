@@ -9,6 +9,8 @@ from ..config import PROJECT_ROOT, get_config
 from ..llm.gemini_video import call_gemini_video
 from ..llm.tracing import trace_locate
 from ..runs import append_event, run_dir, write_json_atomic
+from ..timecode import mmss_to_seconds, seconds_to_mmss
+from ..video import shrink_video
 
 log = logging.getLogger(__name__)
 
@@ -29,7 +31,7 @@ _RESPONSE_SCHEMA = {
                     "category": {"type": "string", "enum": sorted(_CATEGORIES)},
                     "label":    {"type": "string"},
                     "side":     {"type": "string", "enum": sorted(_SIDES)},
-                    "t":        {"type": "number"},
+                    "t":        {"type": "string"},
                 },
             },
         },
@@ -57,9 +59,15 @@ def _validate_locate_items(items: list, duration_sec: float) -> list:
             raise ValueError(f"unknown category: {item.get('category')!r}")
         if item.get("side") not in _SIDES:
             raise ValueError(f"unknown side: {item.get('side')!r}")
-        t = item.get("t")
-        if not isinstance(t, (int, float)) or t < 0 or t > duration_sec + 1:
+        t_text = item.get("t")
+        try:
+            t = mmss_to_seconds(t_text)
+        except (ValueError, TypeError) as exc:
+            raise ValueError(f"item {item.get('id')!r}: bad t={t_text!r}: {exc}") from exc
+        if t < 0 or t > duration_sec + 1:
             raise ValueError(f"t={t!r} out of range [0, {duration_sec + 1}]")
+        item["t_text"] = t_text
+        item["t"] = t
         if t > duration_sec:
             item["t"] = duration_sec
             item["t_clamped"] = True
@@ -103,22 +111,53 @@ def _run_locate_inner(run_id: str) -> None:
 
     cfg = get_config()
     system_prompt = _read_prompt("locate.system.md")
-    user_prompt = _read_prompt("locate.user.md").replace("{duration_sec}", str(duration_sec))
+    user_prompt = (
+        _read_prompt("locate.user.md")
+        .replace("{duration_sec}", str(duration_sec))
+        .replace("{duration_mmss}", seconds_to_mmss(duration_sec))
+    )
 
     out_dir = rd / "01_locate"
     out_dir.mkdir(exist_ok=True)
 
-    # Write request.json (gemini_file and model_used filled in after call)
+    # Shrink video if configured; fall back to original on error
+    lv = cfg.locate_video
+    send_path = video_path
+    shrink_settings: dict | None = None
+    if lv.shrink:
+        small_path = out_dir / "video_small.mp4"
+        try:
+            emit_fn_tmp = lambda msg: append_event(run_id, "locate", "node_progress", {"message": msg})
+            emit_fn_tmp("Shrinking video")
+            shrink_video(video_path, small_path, height=lv.height, fps=lv.fps, crf=lv.crf)
+            send_path = small_path
+            shrink_settings = {"height": lv.height, "fps": lv.fps, "crf": lv.crf}
+        except Exception as exc:
+            log.warning("shrink failed for %s: %s — sending original", run_id, exc)
+            emit_fn_tmp("Shrink failed, sending original video")
+
+    sent_file = send_path.relative_to(rd).as_posix()
+    sent_mb = round(send_path.stat().st_size / 1e6, 1)
+
+    # Write request.json (gemini_file filled in after call)
     request_data = {
         "node": "locate",
         "model": cfg.models.locate.model,
         "settings": {
             "media_resolution": cfg.models.locate_media_resolution,
             "temperature": cfg.models.temperature,
+            "thinking_level": cfg.models.locate_thinking_level,
+            "shrink": shrink_settings,
         },
         "system_prompt": system_prompt,
         "user_prompt": user_prompt,
-        "media": [{"type": "video", "file": video_path.name, "gemini_file": None}],
+        "media": [{
+            "type": "video",
+            "file": sent_file,
+            "source_file": video_path.name,
+            "size_mb": sent_mb,
+            "gemini_file": None,
+        }],
         "sent_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
     write_json_atomic(out_dir / "request.json", request_data)
@@ -128,7 +167,7 @@ def _run_locate_inner(run_id: str) -> None:
 
     try:
         result = call_gemini_video(
-            video_path=video_path,
+            video_path=send_path,
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             model=cfg.models.locate.model,
@@ -138,6 +177,7 @@ def _run_locate_inner(run_id: str) -> None:
             timeout_sec=cfg.models.timeout_sec,
             emit=emit,
             response_schema=_RESPONSE_SCHEMA,
+            thinking_level=cfg.models.locate_thinking_level,
         )
     except Exception as exc:
         log.exception("locate gemini call failed for %s", run_id)
@@ -150,7 +190,7 @@ def _run_locate_inner(run_id: str) -> None:
     model_used = result.get("model_used", cfg.models.locate.model)
 
     try:
-        # Update request.json with gemini_file, actual model, and fallback block if used
+        # Update request.json with gemini_file, actual model, fallback block if used
         request_data["media"][0]["gemini_file"] = result["gemini_file_name"]
         request_data["model"] = model_used
         if "fallback" in result:

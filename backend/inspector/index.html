@@ -315,9 +315,10 @@ function loadLocateFiles(runId) {
     .then(r => r.json()).then(req => {
       const cfg = req.settings || {};
       let html = `<b>Model:</b> ${req.model}<br>`;
-      html += `<b>Media resolution:</b> ${cfg.media_resolution || '-'} &nbsp; <b>Temperature:</b> ${cfg.temperature ?? '-'}<br>`;
+      html += `<b>Media resolution:</b> ${cfg.media_resolution || '-'} &nbsp; <b>Temperature:</b> ${cfg.temperature ?? '-'} &nbsp; <b>Thinking:</b> ${cfg.thinking_level || 'default'}<br>`;
       if (req.media && req.media[0]) {
         const m = req.media[0];
+        html += `<b>Sent file:</b> ${m.file || m.source_file || '?'} (${m.size_mb != null ? m.size_mb + ' MB' : '?'})<br>`;
         html += `<b>Gemini file:</b> ${m.gemini_file || '(pending)'}<br>`;
       }
       html += `<br><b>System prompt:</b><pre>${escHtml(req.system_prompt || '')}</pre>`;
@@ -336,9 +337,9 @@ function loadLocateFiles(runId) {
       }
       const tok = res.tokens || {};
       let html = `<b>Tokens:</b> ${tok.input || 0} in / ${tok.output || 0} out &nbsp; <b>Duration:</b> ${(res.duration_ms/1000).toFixed(1)}s<br><br>`;
-      html += '<table><tr><th>ID</th><th>Category</th><th>Label</th><th>Side</th><th>t</th></tr>';
+      html += '<table><tr><th>ID</th><th>Category</th><th>Label</th><th>Side</th><th>t</th><th>t_text</th></tr>';
       for (const it of (p.items || [])) {
-        html += `<tr><td>${escHtml(it.id)}</td><td>${escHtml(it.category)}</td><td>${escHtml(it.label)}</td><td>${escHtml(it.side)}</td><td>${fmtT(it.t)}</td></tr>`;
+        html += `<tr><td>${escHtml(it.id)}</td><td>${escHtml(it.category)}</td><td>${escHtml(it.label)}</td><td>${escHtml(it.side)}</td><td>${fmtT(it.t)}</td><td>${it.t_text ? escHtml(it.t_text) : ''}</td></tr>`;
       }
       html += '</table><br><b>Coverage:</b> ';
       const cov = p.coverage || {};

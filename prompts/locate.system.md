@@ -14,7 +14,7 @@ Rules:
 - Only include items you can actually see. If an item never appears, leave it out. Never guess.
 - "label" is a short name, at most 8 words, e.g. "dent on left front door". No severity, no cause, no cost.
 - "side" is one of: front, rear, left, right, roof, interior. Left and right are as seen by a driver sitting in the car.
-- "t" is a number of seconds with at most one decimal, inside the video's length.
+- "t" is the time as text "MM:SS.s" from the start of the video, e.g. "00:09.5" or "01:48.2". The seconds part is always 00 to 59.9. It must be inside the video's length.
 - "id" is L1, L2, L3, ... in the order the items appear in the video.
 - "coverage" says which parts of the car the video shows clearly enough to inspect.
 - Reply with JSON only, matching the schema you were given.

@@ -20,20 +20,24 @@ def _is_retryable(exc: Exception) -> bool:
 
 
 def _generate(client, model: str, info, user_prompt: str, system_prompt: str,
-              temperature: float, resolution: str, response_schema: dict | None) -> object:
+              temperature: float, resolution: str, response_schema: dict | None,
+              thinking_level: str | None = None) -> object:
+    cfg_kwargs: dict = dict(
+        system_instruction=system_prompt,
+        temperature=temperature,
+        response_mime_type="application/json",
+        response_schema=response_schema,
+        media_resolution=resolution,
+    )
+    if thinking_level:
+        cfg_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level=thinking_level)
     return client.models.generate_content(
         model=model,
         contents=[
             types.Part.from_text(text=user_prompt),
             types.Part.from_uri(file_uri=info.uri, mime_type=info.mime_type or "video/mp4"),
         ],
-        config=types.GenerateContentConfig(
-            system_instruction=system_prompt,
-            temperature=temperature,
-            response_mime_type="application/json",
-            response_schema=response_schema,
-            media_resolution=resolution,
-        ),
+        config=types.GenerateContentConfig(**cfg_kwargs),
     )
 
 
@@ -49,6 +53,7 @@ def call_gemini_video(
     timeout_sec: int,
     emit: Callable[[str], None],
     response_schema: dict | None = None,
+    thinking_level: str | None = None,
 ) -> dict:
     """Upload video, wait for ACTIVE, ask model, return result dict.
 
@@ -98,7 +103,7 @@ def call_gemini_video(
 
     try:
         response = _generate(client, model, info, user_prompt, system_prompt,
-                             temperature, resolution, response_schema)
+                             temperature, resolution, response_schema, thinking_level)
     except Exception as exc:
         if fallback_model and _is_retryable(exc):
             reason = f"{getattr(exc, 'code', '')} {getattr(exc, 'status', str(exc))}".strip()
@@ -106,7 +111,7 @@ def call_gemini_video(
             log.warning("locate main model %s failed (%s), trying fallback %s", model, reason, fallback_model)
             try:
                 response = _generate(client, fallback_model, info, user_prompt, system_prompt,
-                                     temperature, resolution, response_schema)
+                                     temperature, resolution, response_schema, thinking_level)
                 fallback_info = {"from": model, "reason": reason}
                 model_used = fallback_model
             except Exception as exc2:
@@ -130,10 +135,11 @@ def call_gemini_video(
     usage = response.usage_metadata
     tokens_in = usage.prompt_token_count if usage else 0
     tokens_out = usage.candidates_token_count if usage else 0
+    tokens_thoughts = (usage.thoughts_token_count or 0) if usage else 0
 
     result: dict = {
         "raw_text": raw_text,
-        "tokens": {"input": tokens_in, "output": tokens_out},
+        "tokens": {"input": tokens_in, "output": tokens_out, "thoughts": tokens_thoughts},
         "duration_ms": duration_ms,
         "gemini_file_name": gemini_file_name,
         "model_used": model_used,
