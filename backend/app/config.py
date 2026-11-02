@@ -23,6 +23,7 @@ _last_valid: Optional["AppConfig"] = None
 class ModelEntry(BaseModel):
     provider: str
     model: str
+    fallback_model: Optional[str] = None
 
 
 class UploadConfig(BaseModel):

@@ -89,7 +89,7 @@ def _run_locate_inner(run_id: str) -> None:
     out_dir = rd / "01_locate"
     out_dir.mkdir(exist_ok=True)
 
-    # Write request.json (gemini_file filled in after upload)
+    # Write request.json (gemini_file and model_used filled in after call)
     request_data = {
         "node": "locate",
         "model": cfg.models.locate.model,
@@ -113,6 +113,7 @@ def _run_locate_inner(run_id: str) -> None:
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             model=cfg.models.locate.model,
+            fallback_model=cfg.models.locate.fallback_model,
             temperature=cfg.models.temperature,
             media_resolution=cfg.models.locate_media_resolution,
             timeout_sec=cfg.models.timeout_sec,
@@ -127,17 +128,22 @@ def _run_locate_inner(run_id: str) -> None:
         })
         return
 
+    model_used = result.get("model_used", cfg.models.locate.model)
+
     try:
-        # Update request.json with gemini_file name
+        # Update request.json with gemini_file, actual model, and fallback block if used
         request_data["media"][0]["gemini_file"] = result["gemini_file_name"]
+        request_data["model"] = model_used
+        if "fallback" in result:
+            request_data["fallback"] = result["fallback"]
         write_json_atomic(out_dir / "request.json", request_data)
     except Exception as exc:
         log.exception("Failed to update request.json for %s", run_id)
 
-    # Trace to Langfuse
+    # Trace to Langfuse (record the model that actually answered)
     trace_locate(
         run_id=run_id,
-        model=cfg.models.locate.model,
+        model=model_used,
         request_data=request_data,
         raw_text=result["raw_text"],
         tokens=result["tokens"],
