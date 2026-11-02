@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -9,8 +10,13 @@ from fastapi.responses import FileResponse, StreamingResponse
 
 from .config import get_config
 from .events import sse_stream
+from .graph import run_graph
 from .nodes.upload import process_upload
-from .runs import run_dir
+from .runs import events_path, run_dir
+
+# run_ids that have started or are starting the graph
+_started: set[str] = set()
+_start_lock = threading.Lock()
 
 app = FastAPI(title="CarLens backend")
 
@@ -95,11 +101,33 @@ def api_get_run(run_id: str):
     return {"run_id": run_id, "meta": meta, "nodes": node_status}
 
 
+def _has_locate_event(run_id: str) -> bool:
+    ep = events_path(run_id)
+    if not ep.exists():
+        return False
+    with open(ep, encoding="utf-8") as f:
+        for line in f:
+            try:
+                ev = json.loads(line)
+                if ev.get("node") == "locate":
+                    return True
+            except json.JSONDecodeError:
+                pass
+    return False
+
+
 @app.get("/api/runs/{run_id}/events")
 async def api_run_events(run_id: str):
     rd = run_dir(run_id)
     if not rd.exists():
         raise HTTPException(404, detail=f"Run '{run_id}' not found.")
+
+    with _start_lock:
+        if run_id not in _started and not _has_locate_event(run_id):
+            _started.add(run_id)
+            t = threading.Thread(target=run_graph, args=(run_id,), daemon=True)
+            t.start()
+
     return StreamingResponse(
         sse_stream(run_id),
         media_type="text/event-stream",

@@ -32,6 +32,15 @@
   .file-link { color: #6af; text-decoration: none; font-size: 12px; margin-right: 12px; }
   .file-link:hover { text-decoration: underline; }
   #run-id-display { color: #8fd5b5; font-size: 13px; margin-top: 6px; }
+  .tabs { display: flex; gap: 4px; margin-bottom: 8px; }
+  .tab-btn { background: #222; color: #aaa; border: 1px solid #444; padding: 4px 10px; border-radius: 3px 3px 0 0; cursor: pointer; font-family: monospace; font-size: 12px; }
+  .tab-btn.active { background: #1a1a1a; color: #eee; border-bottom-color: #1a1a1a; }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+  table { border-collapse: collapse; width: 100%; font-size: 11px; }
+  th, td { text-align: left; padding: 4px 8px; border-bottom: 1px solid #2a2a2a; }
+  th { color: #aaa; }
+  .locate-progress { font-size: 12px; color: #ffb020; margin-left: 8px; }
 </style>
 </head>
 <body>
@@ -69,6 +78,24 @@
 
   <label style="margin-top:12px">Live events</label>
   <div id="events-log"></div>
+</div>
+
+<div class="section" id="locate-section" style="display:none">
+  <label>Locate (Gemini) <span id="locate-status-badge" class="node-waiting"></span><span class="locate-progress" id="locate-progress-msg"></span></label>
+  <div class="tabs">
+    <button class="tab-btn active" onclick="showLocateTab('sent')">Sent</button>
+    <button class="tab-btn" onclick="showLocateTab('received')">Received</button>
+    <button class="tab-btn" onclick="showLocateTab('raw')">Raw JSON</button>
+  </div>
+  <div id="locate-tab-sent" class="tab-panel active">
+    <div id="locate-sent-content"><em>Not yet available</em></div>
+  </div>
+  <div id="locate-tab-received" class="tab-panel">
+    <div id="locate-received-content"><em>Not yet available</em></div>
+  </div>
+  <div id="locate-tab-raw" class="tab-panel">
+    <pre id="locate-raw-content">(not yet available)</pre>
+  </div>
 </div>
 
 <script>
@@ -173,14 +200,18 @@ function loadRun(runId) {
     `<div class="node-cell node-waiting" id="node-${n.id}">${n.label}</div>`
   ).join('');
 
-  // File links (known files for Stage 1)
+  // File links
   const links = document.getElementById('file-links');
   links.innerHTML = [
     {path:'meta.json', label:'meta.json'},
     {path:'events.jsonl', label:'events.jsonl'},
+    {path:'01_locate/request.json', label:'01_locate/request.json'},
+    {path:'01_locate/response.json', label:'01_locate/response.json'},
   ].map(f =>
     `<a class="file-link" href="/api/runs/${runId}/files/${f.path}" target="_blank">${f.label}</a>`
   ).join('');
+
+  document.getElementById('locate-section').style.display = '';
 
   // Load meta.json
   fetch(`/api/runs/${runId}/files/meta.json`)
@@ -194,7 +225,11 @@ function loadRun(runId) {
   // Load snapshot to get node statuses
   fetch(`/api/runs/${runId}`)
     .then(r => r.json())
-    .then(d => { if (d.nodes) updateNodeStatuses(d.nodes); })
+    .then(d => {
+      if (d.nodes) updateNodeStatuses(d.nodes);
+      const ls = d.nodes && d.nodes['locate'];
+      if (ls === 'done' || ls === 'failed') loadLocateFiles(runId);
+    })
     .catch(() => {});
 
   // Clear and open SSE stream
@@ -217,6 +252,15 @@ function loadRun(runId) {
           const cell = document.getElementById('node-' + ev.node);
           if (cell) {
             cell.className = 'node-cell node-' + statusMap[ev.type];
+          }
+        }
+        if (ev.node === 'locate') {
+          if (ev.type === 'node_progress') {
+            document.getElementById('locate-progress-msg').textContent = ev.data.message || '';
+          }
+          if (ev.type === 'node_done' || ev.type === 'node_failed') {
+            document.getElementById('locate-progress-msg').textContent = '';
+            loadLocateFiles(currentRunId);
           }
         }
       }
@@ -250,6 +294,61 @@ function addRawLine(text, cls) {
   line.textContent = text;
   log.appendChild(line);
   log.scrollTop = log.scrollHeight;
+}
+
+function showLocateTab(name) {
+  ['sent','received','raw'].forEach(t => {
+    document.getElementById('locate-tab-' + t).classList.toggle('active', t === name);
+  });
+  document.querySelectorAll('.tab-btn').forEach((b, i) => {
+    b.classList.toggle('active', ['sent','received','raw'][i] === name);
+  });
+}
+
+function fmtT(t) {
+  const m = Math.floor(t / 60), s = (t % 60).toFixed(1);
+  return m + ':' + s.padStart(4, '0');
+}
+
+function loadLocateFiles(runId) {
+  fetch(`/api/runs/${runId}/files/01_locate/request.json`)
+    .then(r => r.json()).then(req => {
+      const cfg = req.settings || {};
+      let html = `<b>Model:</b> ${req.model}<br>`;
+      html += `<b>Media resolution:</b> ${cfg.media_resolution || '-'} &nbsp; <b>Temperature:</b> ${cfg.temperature ?? '-'}<br>`;
+      if (req.media && req.media[0]) {
+        const m = req.media[0];
+        html += `<b>Gemini file:</b> ${m.gemini_file || '(pending)'}<br>`;
+      }
+      html += `<br><b>System prompt:</b><pre>${escHtml(req.system_prompt || '')}</pre>`;
+      html += `<b>User prompt:</b><pre>${escHtml(req.user_prompt || '')}</pre>`;
+      document.getElementById('locate-sent-content').innerHTML = html;
+    }).catch(() => {});
+
+  fetch(`/api/runs/${runId}/files/01_locate/response.json`)
+    .then(r => r.json()).then(res => {
+      document.getElementById('locate-raw-content').textContent = JSON.stringify(res, null, 2);
+      const p = res.parsed;
+      if (!p) {
+        document.getElementById('locate-received-content').innerHTML =
+          `<span class="err">Parse failed.</span><pre>${escHtml(res.raw_text || '')}</pre>`;
+        return;
+      }
+      const tok = res.tokens || {};
+      let html = `<b>Tokens:</b> ${tok.input || 0} in / ${tok.output || 0} out &nbsp; <b>Duration:</b> ${(res.duration_ms/1000).toFixed(1)}s<br><br>`;
+      html += '<table><tr><th>ID</th><th>Category</th><th>Label</th><th>Side</th><th>t</th></tr>';
+      for (const it of (p.items || [])) {
+        html += `<tr><td>${escHtml(it.id)}</td><td>${escHtml(it.category)}</td><td>${escHtml(it.label)}</td><td>${escHtml(it.side)}</td><td>${fmtT(it.t)}</td></tr>`;
+      }
+      html += '</table><br><b>Coverage:</b> ';
+      const cov = p.coverage || {};
+      html += Object.entries(cov).filter(([,v])=>v).map(([k])=>k).join(', ') || 'none';
+      document.getElementById('locate-received-content').innerHTML = html;
+    }).catch(() => {});
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
 // Auto-load run from ?run= URL param
