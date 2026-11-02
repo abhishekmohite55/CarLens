@@ -2,13 +2,21 @@
 Dev tool: probe one video + model to diagnose Gemini failures.
 Run from F:\\CarLens\\backend:
     python -m scripts.probe_video <video_path> <model>
+    python -m scripts.probe_video <video_path> <model> medium,small,current
 
-Steps:
+Plain mode (no 3rd arg):
 1. Upload video via Files API, wait for ACTIVE, print full file object.
 2. Ask model "Describe this video in one sentence." (no system prompt, no schema,
    default media resolution).
 3. Print PASS/FAIL, reply or exact error, time taken.
 4. Save output to runs/_checks/probe_<timestamp>.json.
+
+Variants mode (3rd arg = comma-separated medium,small,current):
+- Upload once, run each variant in order on the same Gemini file.
+- medium: locate_medium.system.md, application/json, no schema.
+- small:  locate_small.system.md,  application/json, no schema.
+- current: locate.system.md,       application/json + _RESPONSE_SCHEMA.
+- Save everything to runs/_checks/probe_<timestamp>.json.
 """
 from __future__ import annotations
 
@@ -142,6 +150,217 @@ def probe(video_path: Path, model: str) -> dict:
     return result
 
 
+def probe_variants(video_path: Path, model: str, variants_str: str) -> dict:
+    import cv2
+    import google.genai as genai
+    from google.genai import types
+
+    from app.config import PROJECT_ROOT as APP_ROOT, get_config
+    from app.nodes.locate import _RESPONSE_SCHEMA
+
+    cfg = get_config()
+    temperature = cfg.models.temperature
+    resolution_raw = cfg.models.locate_media_resolution
+    res_map = {
+        "low": "MEDIA_RESOLUTION_LOW",
+        "medium": "MEDIA_RESOLUTION_MEDIUM",
+        "high": "MEDIA_RESOLUTION_HIGH",
+    }
+    resolution = res_map.get(resolution_raw.lower(), resolution_raw.upper())
+
+    # Read duration_sec via OpenCV
+    cap = cv2.VideoCapture(str(video_path))
+    opened = cap.isOpened()
+    fps = cap.get(cv2.CAP_PROP_FPS) if opened else 0.0
+    frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT) if opened else 0.0
+    cap.release()
+    duration_sec = round(frame_count / fps, 1) if fps > 0 else 0.0
+
+    prompts_dir = APP_ROOT / cfg.paths.prompts_dir
+    probe_dir = prompts_dir / "probe"
+
+    user_prompt = (prompts_dir / "locate.user.md").read_text(encoding="utf-8").replace(
+        "{duration_sec}", str(duration_sec)
+    )
+
+    variant_configs = {
+        "medium": {
+            "system_prompt_path": probe_dir / "locate_medium.system.md",
+            "response_schema": None,
+        },
+        "small": {
+            "system_prompt_path": probe_dir / "locate_small.system.md",
+            "response_schema": None,
+        },
+        "current": {
+            "system_prompt_path": prompts_dir / "locate.system.md",
+            "response_schema": _RESPONSE_SCHEMA,
+        },
+    }
+
+    variants = [v.strip() for v in variants_str.split(",")]
+
+    client = genai.Client()
+    result: dict = {
+        "probed_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "video": str(video_path),
+        "model": model,
+        "duration_sec": duration_sec,
+        "variants": {},
+    }
+
+    # Upload once
+    print(f"Uploading {video_path.name} …")
+    t_upload = time.perf_counter()
+    try:
+        upload_file = client.files.upload(file=video_path)
+    except Exception as exc:
+        result["upload"] = {"status": "fail", "error": str(exc)}
+        print(f"  UPLOAD FAIL: {exc}")
+        return result
+    elapsed_upload = round(time.perf_counter() - t_upload, 2)
+    print(f"  uploaded in {elapsed_upload}s → {upload_file.name}")
+
+    print("  Waiting for ACTIVE …")
+    t_poll = time.perf_counter()
+    gemini_file_name = upload_file.name
+    file_info = None
+    while True:
+        info = client.files.get(name=gemini_file_name)
+        if info.state == "ACTIVE":
+            file_info = info
+            break
+        if info.state == "FAILED":
+            result["upload"] = {"status": "fail", "error": f"file state=FAILED: {info}"}
+            print(f"  FILE FAILED: {info}")
+            return result
+        time.sleep(_POLL_INTERVAL)
+    elapsed_poll = round(time.perf_counter() - t_poll, 2)
+    print(f"  ACTIVE in {elapsed_poll}s")
+
+    result["upload"] = {
+        "status": "ok",
+        "elapsed_upload_s": elapsed_upload,
+        "elapsed_poll_s": elapsed_poll,
+        "gemini_file_name": gemini_file_name,
+    }
+
+    summary_parts: list[str] = []
+
+    for variant_name in variants:
+        if variant_name not in variant_configs:
+            print(f"\n[{variant_name}] unknown variant, skipping")
+            continue
+
+        vcfg = variant_configs[variant_name]
+        system_prompt = vcfg["system_prompt_path"].read_text(encoding="utf-8")
+        response_schema = vcfg["response_schema"]
+
+        print(f"\n--- {variant_name} ---")
+        print(f"  system prompt: {vcfg['system_prompt_path'].name}")
+        print(f"  schema: {'yes' if response_schema else 'no'}")
+
+        t_gen = time.perf_counter()
+        vresult: dict = {
+            "system_prompt": system_prompt,
+            "user_prompt": user_prompt,
+            "settings": {
+                "model": model,
+                "temperature": temperature,
+                "media_resolution": resolution_raw,
+                "response_schema": response_schema is not None,
+            },
+        }
+        try:
+            response = client.models.generate_content(
+                model=model,
+                contents=[
+                    types.Part.from_text(text=user_prompt),
+                    types.Part.from_uri(
+                        file_uri=file_info.uri,
+                        mime_type=file_info.mime_type or "video/mp4",
+                    ),
+                ],
+                config=types.GenerateContentConfig(
+                    system_instruction=system_prompt,
+                    temperature=temperature,
+                    response_mime_type="application/json",
+                    response_schema=response_schema,
+                    media_resolution=resolution,
+                ),
+            )
+            elapsed_gen = round(time.perf_counter() - t_gen, 2)
+            try:
+                raw_reply = response.text or ""
+            except Exception:
+                raw_reply = ""
+            usage = response.usage_metadata
+            tokens = {
+                "input": usage.prompt_token_count if usage else 0,
+                "output": usage.candidates_token_count if usage else 0,
+            }
+
+            parsed = None
+            json_ok = False
+            item_count = 0
+            by_category: dict[str, int] = {}
+            try:
+                parsed = json.loads(raw_reply)
+                json_ok = True
+                items = parsed.get("items", []) if isinstance(parsed, dict) else []
+                item_count = len(items)
+                for item in items:
+                    cat = item.get("category", "unknown")
+                    by_category[cat] = by_category.get(cat, 0) + 1
+            except Exception:
+                pass
+
+            vresult.update({
+                "status": "pass",
+                "elapsed_s": elapsed_gen,
+                "tokens": tokens,
+                "raw_reply": raw_reply,
+                "json_parsed": json_ok,
+                "item_count": item_count,
+                "items_by_category": by_category,
+                "parsed": parsed,
+                "error": None,
+            })
+
+            print(f"  PASS in {elapsed_gen}s")
+            print(f"  tokens: {tokens}")
+            print(f"  JSON parsed: {json_ok}, items: {item_count}, by category: {by_category}")
+            print(f"  raw reply (first 300): {raw_reply[:300]!r}")
+            summary_parts.append(f"{variant_name} PASS {elapsed_gen}s {item_count} items")
+
+        except Exception as exc:
+            elapsed_gen = round(time.perf_counter() - t_gen, 2)
+            code = getattr(exc, "code", None)
+            error_str = str(exc)
+            print(f"  FAIL in {elapsed_gen}s — {error_str}")
+            code_str = f" {code}" if code else ""
+            vresult.update({
+                "status": "fail",
+                "elapsed_s": elapsed_gen,
+                "tokens": None,
+                "raw_reply": None,
+                "json_parsed": False,
+                "item_count": 0,
+                "items_by_category": {},
+                "parsed": None,
+                "error": error_str,
+                "code": code,
+            })
+            summary_parts.append(f"{variant_name} FAIL{code_str} in {elapsed_gen}s")
+
+        result["variants"][variant_name] = vresult
+
+    summary = " | ".join(summary_parts)
+    print(f"\n{summary}")
+    result["summary"] = summary
+    return result
+
+
 def _file_obj(info) -> dict:
     """Extract serialisable fields from a Gemini File object."""
     return {
@@ -156,8 +375,9 @@ def _file_obj(info) -> dict:
 
 
 def main() -> None:
-    if len(sys.argv) != 3:
-        print("Usage: python -m scripts.probe_video <video_path> <model>")
+    if len(sys.argv) not in (3, 4):
+        print("Usage: python -m scripts.probe_video <video_path> <model> [variants]")
+        print("       variants: comma-separated medium,small,current (omit for plain probe)")
         sys.exit(1)
 
     video_path = Path(sys.argv[1])
@@ -172,9 +392,11 @@ def main() -> None:
     print(f"probe_video: {video_path.name} / {model}")
     print(sep)
 
-    result = probe(video_path, model)
-    verdict = result.get("verdict", "FAIL")
-    print(f"\nVerdict: {verdict}")
+    if len(sys.argv) == 4:
+        result = probe_variants(video_path, model, sys.argv[3])
+    else:
+        result = probe(video_path, model)
+        print(f"\nVerdict: {result.get('verdict', 'FAIL')}")
 
     saved = _save(result)
     print(f"Saved: {saved}")
