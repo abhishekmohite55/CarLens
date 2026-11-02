@@ -4,7 +4,7 @@ upload:
   max_duration_sec: 300
 
 models:                      # fill model names before each stage
-  locate:  { provider: google_genai, model: TBD }
+  locate:  { provider: google_genai, model: gemini-3.8-flash }
   verify:  { provider: google_genai, model: TBD }
   photos:  { provider: google_genai, model: TBD }
   plan:    { provider: google_genai, model: TBD }
