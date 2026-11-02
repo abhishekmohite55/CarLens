@@ -23,3 +23,8 @@ node_modules/
 # IDEs
 .idea/
 .vscode/
+
+# Never committed
+docs/
+handoff/
+spikes/
