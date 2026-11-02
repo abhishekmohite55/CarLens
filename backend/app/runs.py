@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import secrets
 from datetime import datetime, timezone
 from pathlib import Path
@@ -33,7 +34,7 @@ def write_json_atomic(path: Path, data: Any) -> None:
     try:
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
-        tmp.rename(path)
+        os.replace(tmp, path)
     except Exception:
         tmp.unlink(missing_ok=True)
         raise

@@ -53,12 +53,16 @@ def get_graph():
     return _graph
 
 
+import logging as _logging
+_glog = _logging.getLogger(__name__)
+
+
 def run_graph(run_id: str) -> None:
     graph = get_graph()
     config = {"configurable": {"thread_id": run_id}}
     try:
         graph.invoke({"run_id": run_id, "locate_status": "waiting"}, config=config)
-    except Exception:
-        pass  # node_failed already written by the node; graph must not crash the thread
+    except Exception as exc:
+        _glog.exception("graph.invoke failed for %s: %s", run_id, exc)
     finally:
         append_event(run_id, "pipeline", "run_done", {"status": "partial"})

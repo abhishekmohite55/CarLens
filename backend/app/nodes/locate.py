@@ -56,7 +56,17 @@ def _read_prompt(name: str) -> str:
 
 def run_locate(run_id: str) -> None:
     append_event(run_id, "locate", "node_started", {"label": "Asking Gemini to locate items"})
+    try:
+        _run_locate_inner(run_id)
+    except Exception as exc:
+        log.exception("run_locate unhandled exception for %s", run_id)
+        try:
+            append_event(run_id, "locate", "node_failed", {"error": f"Unexpected error: {exc}"})
+        except Exception:
+            pass
 
+
+def _run_locate_inner(run_id: str) -> None:
     rd = run_dir(run_id)
     meta = json.loads((rd / "meta.json").read_text(encoding="utf-8"))
     duration_sec = meta["duration_sec"]
@@ -117,9 +127,12 @@ def run_locate(run_id: str) -> None:
         })
         return
 
-    # Update request.json with gemini_file name
-    request_data["media"][0]["gemini_file"] = result["gemini_file_name"]
-    write_json_atomic(out_dir / "request.json", request_data)
+    try:
+        # Update request.json with gemini_file name
+        request_data["media"][0]["gemini_file"] = result["gemini_file_name"]
+        write_json_atomic(out_dir / "request.json", request_data)
+    except Exception as exc:
+        log.exception("Failed to update request.json for %s", run_id)
 
     # Trace to Langfuse
     trace_locate(

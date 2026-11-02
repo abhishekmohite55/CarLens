@@ -80,7 +80,14 @@ def call_gemini_video(
     )
     duration_ms = int((time.monotonic() - t0) * 1000)
 
-    raw_text = response.text or ""
+    try:
+        raw_text = response.text or ""
+    except Exception as exc:
+        log.warning("response.text raised %s; trying candidates", exc)
+        try:
+            raw_text = response.candidates[0].content.parts[0].text or ""
+        except Exception:
+            raw_text = ""
     usage = response.usage_metadata
     tokens_in = usage.prompt_token_count if usage else 0
     tokens_out = usage.candidates_token_count if usage else 0
