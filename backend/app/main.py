@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import threading
 from pathlib import Path
 
@@ -11,7 +12,10 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from .config import get_config
 from .events import sse_stream
 from .graph import run_graph
-from .nodes.frames import load_locate_items, run_frames, try_claim
+from .nodes.frames import load_locate_items, run_frames
+from .nodes.frames import try_claim as frames_try_claim
+from .nodes.verify import run_verify
+from .nodes.verify import try_claim as verify_try_claim
 from .llm.tracing import _get_client as _warmup_tracing
 from .nodes.upload import process_upload
 from .runs import events_path, run_dir
@@ -42,7 +46,7 @@ _NODES = [
     {"id": "upload",  "label": "Upload & check"},
     {"id": "locate",  "label": "Locate (Gemini)"},
     {"id": "frames",  "label": "Extract frames"},
-    {"id": "verify",  "label": "Verify (Gemini)"},
+    {"id": "verify",  "label": "Verify (AI)"},
     {"id": "confirm", "label": "You confirm"},
     {"id": "photos",  "label": "Extra photos (Gemini)"},
     {"id": "plan",    "label": "Plan searches (LLM)"},
@@ -154,12 +158,36 @@ def api_run_frames(run_id: str):
             "error": {"code": "no_locate_result", "message": "Locate has no valid result for this run."}
         })
 
-    if not try_claim(run_id):  # also covers a frames run started by the graph after an upload
+    if not frames_try_claim(run_id):  # also covers a frames run started by the graph after an upload
         return JSONResponse(status_code=409, content={
             "error": {"code": "already_running", "message": "Frames extraction is already running for this run."}
         })
 
     threading.Thread(target=run_frames, args=(run_id,), kwargs={"claimed": True}, daemon=True).start()
+    return {"started": True}
+
+
+@app.post("/api/runs/{run_id}/verify", status_code=202)
+def api_run_verify(run_id: str):
+    rd = run_dir(run_id)
+    if not rd.exists():
+        raise HTTPException(404, detail=f"Run '{run_id}' not found.")
+
+    if not (rd / "02_frames" / "manifest.json").exists():
+        return JSONResponse(status_code=409, content={
+            "error": {"code": "no_frames_result", "message": "Frames have no manifest for this run."}
+        })
+
+    if not verify_try_claim(run_id):
+        return JSONResponse(status_code=409, content={
+            "error": {"code": "already_running", "message": "Verify is already running for this run."}
+        })
+
+    verify_dir = rd / "03_verify"
+    if verify_dir.exists():
+        shutil.rmtree(verify_dir)
+
+    threading.Thread(target=run_verify, args=(run_id,), kwargs={"claimed": True}, daemon=True).start()
     return {"started": True}
 
 

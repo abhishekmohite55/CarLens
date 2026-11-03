@@ -34,13 +34,16 @@ class UploadConfig(BaseModel):
 
 class ModelsConfig(BaseModel):
     locate: ModelEntry
-    verify: ModelEntry
+    verify_chain: list[ModelEntry]
     photos: ModelEntry
     plan: ModelEntry
     extract: ModelEntry
     temperature: float
     timeout_sec: int
     locate_media_resolution: str
+    verify_media_resolution: str = "medium"
+    verify_thinking_level: Optional[str] = None
+    verify_timeout_per_model_sec: int = 180
     locate_thinking_level: Optional[str] = None
 
 

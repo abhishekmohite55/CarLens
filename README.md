@@ -13,7 +13,10 @@ cd F:\CarLens\backend
 "C:\Users\abhis\AppData\Local\Programs\Python\Python312\python.exe" -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
+pip install --no-deps rapidocr==3.10.0
 ```
+
+> `--no-deps` keeps the project's `opencv-python`; `rapidocr` would otherwise pull in `opencv-python-headless` which conflicts with it.
 
 ## Start the backend
 
