@@ -52,11 +52,11 @@ def test_sample_indices_clipped_near_end():
 
 
 def test_sharpness_blurred_less_than_sharp():
-    # Sharp: alternating black/white rows → high Laplacian variance
+    # Sharp: 4-px black/white stripes (1-px stripes would average to flat grey at score_scale 0.5)
     sharp_img = np.zeros((100, 100, 3), dtype=np.uint8)
-    sharp_img[::2, :] = 255
+    sharp_img[(np.arange(100) // 4) % 2 == 0, :] = 255
 
-    # Blurred: uniform grey → near-zero variance
-    blur_img = np.full((100, 100, 3), 128, dtype=np.uint8)
+    # Blurred: the same image, Gaussian-blurred
+    blur_img = cv2.GaussianBlur(sharp_img, (15, 15), 5)
 
     assert sharpness(sharp_img, 0.5) > sharpness(blur_img, 0.5)
