@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -17,33 +18,56 @@ from ..runs import append_event, run_dir, write_json_atomic
 
 log = logging.getLogger(__name__)
 
+# run_ids with frames in progress (graph run or inspector button); one at a time per run
+_running: set[str] = set()
+_running_lock = threading.Lock()
 
-def run_frames(run_id: str) -> None:
-    append_event(run_id, "frames", "node_started", {"label": "Cutting frames around each timestamp"})
+
+def try_claim(run_id: str) -> bool:
+    """Mark frames as running for run_id; False if it already is."""
+    with _running_lock:
+        if run_id in _running:
+            return False
+        _running.add(run_id)
+        return True
+
+
+def load_locate_items(rd: Path) -> list | None:
+    """Locate items from 01_locate/response.json, or None if locate has no valid result."""
     try:
-        _run_frames_inner(run_id)
-    except Exception as exc:
-        log.exception("run_frames unhandled exception for %s", run_id)
+        parsed = json.loads((rd / "01_locate" / "response.json").read_text(encoding="utf-8")).get("parsed")
+    except (OSError, ValueError):
+        return None
+    return parsed.get("items") if parsed else None
+
+
+def run_frames(run_id: str, claimed: bool = False) -> None:
+    """claimed=True when the caller already holds try_claim(run_id)."""
+    if not claimed and not try_claim(run_id):
+        log.warning("frames already running for %s; not started again", run_id)
+        return
+    try:
+        append_event(run_id, "frames", "node_started", {"label": "Cutting frames around each timestamp"})
         try:
-            append_event(run_id, "frames", "node_failed", {"error": f"Unexpected error: {exc}"})
-        except Exception:
-            pass
+            _run_frames_inner(run_id)
+        except Exception as exc:
+            log.exception("run_frames unhandled exception for %s", run_id)
+            try:
+                append_event(run_id, "frames", "node_failed", {"error": f"Unexpected error: {exc}"})
+            except Exception:
+                pass
+    finally:
+        with _running_lock:
+            _running.discard(run_id)
 
 
 def _run_frames_inner(run_id: str) -> None:
     rd = run_dir(run_id)
 
-    # Load locate result
-    response_path = rd / "01_locate" / "response.json"
-    if not response_path.exists():
+    items = load_locate_items(rd)
+    if items is None:
         append_event(run_id, "frames", "node_skipped", {"reason": "Locate did not finish"})
         return
-    response = json.loads(response_path.read_text(encoding="utf-8"))
-    parsed = response.get("parsed")
-    if not parsed:
-        append_event(run_id, "frames", "node_skipped", {"reason": "Locate did not finish"})
-        return
-    items = parsed["items"]
 
     # Find original video
     video_path: Path | None = None
@@ -74,7 +98,7 @@ def _run_frames_inner(run_id: str) -> None:
     out_dir.mkdir()
 
     total_items = len(items)
-    max_workers = fc.workers if fc.workers > 0 else None
+    max_workers = fc.workers or os.cpu_count() or 1  # 0 = CPU count (pool default would be cpu+4)
     wall_start = time.perf_counter()
     records: list[dict | None] = [None] * total_items
     done_count = 0
@@ -142,7 +166,6 @@ def _run_frames_inner(run_id: str) -> None:
         return
 
     total_frames = sum(r["frames_extracted"] for r in done_records)
-    actual_workers = max_workers or (os.cpu_count() or 1)
 
     manifest = {
         "run_id": run_id,
@@ -161,7 +184,7 @@ def _run_frames_inner(run_id: str) -> None:
             "items_skipped": len(skipped_records),
             "frames_extracted": total_frames,
             "elapsed_s": elapsed_s,
-            "workers": actual_workers,
+            "workers": max_workers,
         },
         "items": records,
     }

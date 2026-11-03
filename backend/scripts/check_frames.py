@@ -48,8 +48,7 @@ def to_seconds(t) -> float:
 def run_set(set_name: str, items: list[dict], video_name: str) -> None:
     cfg = get_config()
     fc = cfg.frames
-    max_workers = fc.workers if fc.workers > 0 else None
-    actual_workers = max_workers or (os.cpu_count() or 1)
+    max_workers = fc.workers or os.cpu_count() or 1  # 0 = CPU count (pool default would be cpu+4)
 
     video = VIDEO_DIR / video_name
     cap = cv2.VideoCapture(str(video))
@@ -66,7 +65,7 @@ def run_set(set_name: str, items: list[dict], video_name: str) -> None:
     out_dir.mkdir(parents=True)
 
     print(f"\n== {set_name}  ({video_name}, {fps:.0f} fps, {duration:.1f} s, "
-          f"step {fps / fc.sample_fps:g} frames, {actual_workers} threads)")
+          f"step {fps / fc.sample_fps:g} frames, {max_workers} threads)")
     print(f"  {'item':<5}{'category':<12}{'t':>9}{'frames':>7}{'seek':>7}{'decode':>8}{'score':>7}{'total':>7}  best")
 
     def process_item(item: dict) -> dict:
@@ -118,7 +117,7 @@ def run_set(set_name: str, items: list[dict], video_name: str) -> None:
                  "max_long_edge_px": fc.max_long_edge_px, "jpeg_quality": fc.jpeg_quality},
         "totals": {"items": len(records), "items_skipped": len(records) - len(done),
                    "frames_extracted": sum(r["frames_extracted"] for r in done),
-                   "elapsed_s": total_s, "workers": actual_workers},
+                   "elapsed_s": total_s, "workers": max_workers},
         "items": records,
     }
     (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")

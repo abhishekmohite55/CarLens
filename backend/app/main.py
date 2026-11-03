@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from .config import get_config
 from .events import sse_stream
 from .graph import run_graph
-from .nodes.frames import run_frames
+from .nodes.frames import load_locate_items, run_frames, try_claim
 from .llm.tracing import _get_client as _warmup_tracing
 from .nodes.upload import process_upload
 from .runs import events_path, run_dir
@@ -19,10 +19,6 @@ from .runs import events_path, run_dir
 # run_ids that have started or are starting the graph
 _started: set[str] = set()
 _start_lock = threading.Lock()
-
-# run_ids with frames extraction currently in progress
-_frames_running: set[str] = set()
-_frames_lock = threading.Lock()
 
 app = FastAPI(title="CarLens backend")
 
@@ -153,34 +149,17 @@ def api_run_frames(run_id: str):
     if not rd.exists():
         raise HTTPException(404, detail=f"Run '{run_id}' not found.")
 
-    response_path = rd / "01_locate" / "response.json"
-    try:
-        has_result = response_path.exists() and bool(
-            json.loads(response_path.read_text(encoding="utf-8")).get("parsed")
-        )
-    except Exception:
-        has_result = False
-
-    if not has_result:
+    if load_locate_items(rd) is None:
         return JSONResponse(status_code=409, content={
             "error": {"code": "no_locate_result", "message": "Locate has no valid result for this run."}
         })
 
-    with _frames_lock:
-        if run_id in _frames_running:
-            return JSONResponse(status_code=409, content={
-                "error": {"code": "already_running", "message": "Frames extraction is already running for this run."}
-            })
-        _frames_running.add(run_id)
+    if not try_claim(run_id):  # also covers a frames run started by the graph after an upload
+        return JSONResponse(status_code=409, content={
+            "error": {"code": "already_running", "message": "Frames extraction is already running for this run."}
+        })
 
-    def _run():
-        try:
-            run_frames(run_id)
-        finally:
-            with _frames_lock:
-                _frames_running.discard(run_id)
-
-    threading.Thread(target=_run, daemon=True).start()
+    threading.Thread(target=run_frames, args=(run_id,), kwargs={"claimed": True}, daemon=True).start()
     return {"started": True}
 
 
