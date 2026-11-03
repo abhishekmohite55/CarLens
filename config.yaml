@@ -10,13 +10,20 @@ models: # fill model names before each stage
       model: gemini-3.8-flash,
       fallback_model: gemini-3.5-flash,
     }
-  verify: { provider: google_genai, model: TBD }
+  verify_chain: # tried top to bottom; the next one runs on error, invalid answer or after verify_timeout_per_model_sec. Reorder freely.
+    - { provider: google_genai, model: gemini-3.8-flash }
+    - { provider: google_genai, model: gemini-3.5-flash }
+    - { provider: openrouter, model: nvidia/nemotron-3.5-super-vl:free }
+    - { provider: openrouter, model: google/gemma-4-26b-a4b-it:free }
   photos: { provider: google_genai, model: TBD }
   plan: { provider: google_genai, model: TBD }
   extract: { provider: google_genai, model: TBD }
   temperature: 0.2
   timeout_sec: 180
   locate_media_resolution: medium
+  verify_media_resolution: medium # frames sent to verify: low | medium | high
+  verify_thinking_level: low # Gemini entries only; empty = model default; or minimal | low | medium | high
+  verify_timeout_per_model_sec: 90
   locate_thinking_level: low # empty = model default; or minimal | low | medium | high
 
 locate_video: # copy sent to Gemini locate; frames always use the original

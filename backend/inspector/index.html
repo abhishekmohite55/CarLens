@@ -109,12 +109,21 @@
   <div id="frames-manifest-content"></div>
 </div>
 
+<div class="section" id="verify-section" style="display:none">
+  <label>Verify (AI) <span id="verify-status-badge" class="node-waiting"></span><span id="verify-progress-msg" style="font-size:12px;color:#ffb020;margin-left:8px"></span></label>
+  <div style="margin:6px 0">
+    <button id="verify-btn" onclick="doRunVerify()" disabled>Run verify</button>
+    <span id="verify-btn-reason" class="status" style="margin-left:8px"></span>
+  </div>
+  <div id="verify-content"></div>
+</div>
+
 <script>
 const NODES = [
   {id:"upload",  label:"Upload & check"},
   {id:"locate",  label:"Locate (Gemini)"},
   {id:"frames",  label:"Extract frames"},
-  {id:"verify",  label:"Verify (Gemini)"},
+  {id:"verify",  label:"Verify (AI)"},
   {id:"confirm", label:"You confirm"},
   {id:"photos",  label:"Extra photos (Gemini)"},
   {id:"plan",    label:"Plan searches (LLM)"},
@@ -128,6 +137,8 @@ let sseSource = null;
 let locateNodeStatus = 'waiting';
 let framesNodeStatus = 'waiting';
 let framesIsRunning = false;
+let verifyNodeStatus = 'waiting';
+let verifyIsRunning = false;
 
 // Load config on start
 fetch('/api/config').then(r => r.json()).then(cfg => {
@@ -208,6 +219,8 @@ function loadRun(runId) {
   locateNodeStatus = 'waiting';
   framesNodeStatus = 'waiting';
   framesIsRunning = false;
+  verifyNodeStatus = 'waiting';
+  verifyIsRunning = false;
   document.getElementById('run-id-input').value = runId;
   document.getElementById('run-section').style.display = '';
 
@@ -225,6 +238,9 @@ function loadRun(runId) {
     {path:'01_locate/request.json', label:'01_locate/request.json'},
     {path:'01_locate/response.json', label:'01_locate/response.json'},
     {path:'02_frames/manifest.json', label:'02_frames/manifest.json'},
+    {path:'03_verify/ocr.json', label:'03_verify/ocr.json'},
+    {path:'03_verify/request.json', label:'03_verify/request.json'},
+    {path:'03_verify/response.json', label:'03_verify/response.json'},
   ].map(f =>
     `<a class="file-link" href="/api/runs/${runId}/files/${f.path}" target="_blank">${f.label}</a>`
   ).join('');
@@ -233,7 +249,11 @@ function loadRun(runId) {
   document.getElementById('frames-section').style.display = '';
   document.getElementById('frames-manifest-content').innerHTML = '';
   document.getElementById('frames-progress-msg').textContent = '';
+  document.getElementById('verify-section').style.display = '';
+  document.getElementById('verify-content').innerHTML = '';
+  document.getElementById('verify-progress-msg').textContent = '';
   updateFramesButton();
+  updateVerifyButton();
 
   // Load meta.json
   fetch(`/api/runs/${runId}/files/meta.json`)
@@ -253,6 +273,8 @@ function loadRun(runId) {
       if (ls === 'done' || ls === 'failed') loadLocateFiles(runId);
       const fs = d.nodes && d.nodes['frames'];
       if (fs === 'done') loadFramesManifest(runId);
+      const vs = d.nodes && d.nodes['verify'];
+      if (vs === 'done' || vs === 'failed' || vs === 'skipped') loadVerifyFiles(runId);
     })
     .catch(() => {});
 
@@ -303,6 +325,20 @@ function loadRun(runId) {
             document.getElementById('frames-progress-msg').textContent = '';
             if (ev.type === 'node_done') loadFramesManifest(currentRunId);
             updateFramesButton();
+            updateVerifyButton();
+          }
+        }
+        if (ev.node === 'verify') {
+          if (ev.type === 'node_started') { verifyIsRunning = true; updateVerifyButton(); }
+          if (ev.type === 'node_progress') {
+            document.getElementById('verify-progress-msg').textContent = ev.data.message || '';
+          }
+          if (ev.type === 'node_done' || ev.type === 'node_failed' || ev.type === 'node_skipped') {
+            verifyIsRunning = false;
+            verifyNodeStatus = ev.type === 'node_done' ? 'done' : ev.type === 'node_failed' ? 'failed' : 'skipped';
+            document.getElementById('verify-progress-msg').textContent = '';
+            loadVerifyFiles(currentRunId);
+            updateVerifyButton();
           }
         }
       }
@@ -319,8 +355,10 @@ function updateNodeStatuses(nodes) {
     if (cell) cell.className = 'node-cell node-' + status;
     if (id === 'locate') locateNodeStatus = status;
     if (id === 'frames') { framesNodeStatus = status; framesIsRunning = (status === 'running'); }
+    if (id === 'verify') { verifyNodeStatus = status; verifyIsRunning = (status === 'running'); }
   }
   updateFramesButton();
+  updateVerifyButton();
 }
 
 function addEventLine(ev) {
@@ -484,6 +522,173 @@ function renderFramesManifest(runId, manifest) {
   }
   html += '</table>';
   document.getElementById('frames-manifest-content').innerHTML = html;
+}
+
+function updateVerifyButton() {
+  const btn = document.getElementById('verify-btn');
+  const reason = document.getElementById('verify-btn-reason');
+  if (!btn) return;
+  if (framesNodeStatus !== 'done') {
+    btn.disabled = true;
+    btn.textContent = 'Run verify';
+    reason.textContent = 'Frames not done';
+    return;
+  }
+  if (verifyIsRunning) {
+    btn.disabled = true;
+    btn.textContent = 'Run verify';
+    reason.textContent = 'Running…';
+    return;
+  }
+  btn.disabled = false;
+  btn.textContent = (verifyNodeStatus === 'done' || verifyNodeStatus === 'failed')
+    ? 'Re-run verify' : 'Run verify';
+  reason.textContent = '';
+}
+
+function doRunVerify() {
+  if (!currentRunId) return;
+  document.getElementById('verify-btn').disabled = true;
+  document.getElementById('verify-btn-reason').textContent = 'Starting…';
+  fetch('/api/runs/' + currentRunId + '/verify', {method: 'POST'})
+    .then(r => r.json().then(d => ({ok: r.ok, data: d})))
+    .then(({ok, data}) => {
+      if (!ok) {
+        const msg = data.error ? data.error.message : JSON.stringify(data);
+        document.getElementById('verify-btn-reason').textContent = msg;
+        updateVerifyButton();
+      }
+    })
+    .catch(e => {
+      document.getElementById('verify-btn-reason').textContent = 'Error: ' + e;
+      updateVerifyButton();
+    });
+}
+
+function loadVerifyFiles(runId) {
+  Promise.all([
+    fetch('/api/runs/' + runId + '/files/03_verify/ocr.json').then(r => r.ok ? r.json() : null).catch(() => null),
+    fetch('/api/runs/' + runId + '/files/03_verify/request.json').then(r => r.ok ? r.json() : null).catch(() => null),
+    fetch('/api/runs/' + runId + '/files/03_verify/response.json').then(r => r.ok ? r.json() : null).catch(() => null),
+  ]).then(([ocr, req, res]) => {
+    if (ocr || req || res) renderVerifyContent(runId, ocr, req, res);
+  });
+}
+
+function renderVerifyContent(runId, ocr, req, res) {
+  const parsed = res && res.parsed;
+  let html = '<div class="tabs">'
+    + ['plate','attempts','findings','read','sent'].map((t, i) =>
+        `<button class="tab-btn${i===0?' active':''}" onclick="showVerifyTab('${t}')">${t[0].toUpperCase()+t.slice(1)}</button>`
+      ).join('')
+    + '</div>';
+
+  // Plate tab
+  html += '<div id="verify-tab-plate" class="tab-panel active">';
+  if (ocr) {
+    const p = ocr.plate;
+    if (p) {
+      html += `<b>Plate:</b> ${escHtml(p.text)} &nbsp; <b>Source:</b> OCR &nbsp; `
+        + `<b>Confidence:</b> ${p.confidence} &nbsp; `
+        + `<b>Agree:</b> ${p.frames_agree}/${p.frames_tried} frames<br><br>`;
+    } else {
+      html += '<span class="warn">No plate found by OCR.</span><br><br>';
+    }
+    html += '<table><tr><th>Item</th><th>File</th><th>Seconds</th><th>Texts found</th><th>Plates</th></tr>';
+    for (const f of (ocr.frames || [])) {
+      const texts = (f.texts || []).map(t => `${escHtml(t.text)} (${t.score})`).join(', ') || '—';
+      html += `<tr><td>${escHtml(f.item_id)}</td><td>${escHtml(f.file)}</td><td>${f.seconds}</td>`
+        + `<td>${texts}</td><td>${(f.plates||[]).map(escHtml).join(', ')||'—'}</td></tr>`;
+    }
+    html += '</table>';
+  } else { html += '<em>ocr.json not available</em>'; }
+  html += '</div>';
+
+  // Attempts tab
+  html += '<div id="verify-tab-attempts" class="tab-panel">';
+  if (res && res.attempts) {
+    html += '<table><tr><th>Provider</th><th>Model</th><th>Seconds</th><th>Tokens in/out/reasoning</th><th>Error</th></tr>';
+    for (const a of res.attempts) {
+      const tk = a.tokens || {};
+      html += `<tr><td>${escHtml(a.provider)}</td><td>${escHtml(a.model)}</td><td>${a.seconds}</td>`
+        + `<td>${tk.input||0} / ${tk.output||0} / ${tk.reasoning||0}</td>`
+        + `<td>${a.error ? `<span class="err">${escHtml(a.error.slice(0,120))}</span>` : '<span class="ok">ok</span>'}</td></tr>`;
+    }
+    html += '</table>';
+  } else { html += '<em>No attempts data.</em>'; }
+  html += '</div>';
+
+  // Findings tab
+  html += '<div id="verify-tab-findings" class="tab-panel">';
+  if (parsed && parsed.findings) {
+    html += '<table><tr><th>Item</th><th>Thumb</th><th>Confirmed</th><th>Part</th><th>Issue</th>'
+      + '<th>Severity</th><th>Action</th><th>Description / Reason</th><th>Tyre</th></tr>';
+    for (const f of parsed.findings) {
+      const imgPath = f.best_frame ? '02_frames/' + encodeURIComponent(f.best_frame) : null;
+      const imgUrl = imgPath ? '/api/runs/' + runId + '/files/' + imgPath : '';
+      const thumb = imgUrl ? `<img src="${imgUrl}" class="frames-thumb" onclick="window.open('${imgUrl}','_blank')" loading="lazy">` : '—';
+      const tyre = f.tyre ? `${f.tyre.position||'?'} s${f.tyre.tyre_score??'?'} ${f.tyre.tread||'?'}` : '';
+      html += `<tr><td>${escHtml(f.item_id)}</td><td>${thumb}</td>`
+        + `<td>${f.confirmed ? '<span class="ok">yes</span>' : '<span class="err">no</span>'}</td>`
+        + `<td>${escHtml(f.part||'')}</td><td>${escHtml(f.issue||'')}</td>`
+        + `<td>${escHtml(f.severity||'')}</td><td>${escHtml(f.action||'')}</td>`
+        + `<td>${escHtml(f.description||f.reason||'')}</td><td>${escHtml(tyre)}</td></tr>`;
+    }
+    html += '</table>';
+  } else { html += '<em>No findings.</em>'; }
+  html += '</div>';
+
+  // Read tab
+  html += '<div id="verify-tab-read" class="tab-panel">';
+  if (parsed) {
+    const plate = parsed.plate || {};
+    const badge = parsed.badge || {};
+    const odo = parsed.odometer_km || {};
+    const v = parsed.vehicle || {};
+    html += `<b>Plate:</b> ${escHtml(plate.text||'—')} <span style="color:#aaa">(${escHtml(plate.source||'—')}, conf ${plate.confidence??'—'})</span><br>`;
+    html += `<b>Badge:</b> ${escHtml(badge.text||'—')} <span style="color:#aaa">(conf ${badge.confidence??'—'})</span><br>`;
+    html += `<b>Odometer:</b> ${odo.value??'—'} km <span style="color:#aaa">(conf ${odo.confidence??'—'})</span><br>`;
+    html += `<b>Tyres assessed:</b> ${parsed.tyres_assessed} &nbsp; <b>Odometer found:</b> ${parsed.odometer_found}<br><br>`;
+    html += '<table><tr><th>Field</th><th>Value</th><th>Conf</th><th>Alternatives</th></tr>';
+    for (const k of ['make','model','variant','year','fuel']) {
+      const f = (v[k]||{});
+      html += `<tr><td>${k}</td><td>${escHtml(String(f.value??'—'))}</td><td>${f.confidence??'—'}</td>`
+        + `<td>${(f.alternatives||[]).join(', ')||'—'}</td></tr>`;
+    }
+    html += '</table>';
+  } else { html += '<em>No parsed data.</em>'; }
+  html += '</div>';
+
+  // Sent tab
+  html += '<div id="verify-tab-sent" class="tab-panel">';
+  if (req) {
+    const answered = res && res.answered_by ? `${res.answered_by.provider}: ${res.answered_by.model}` : 'none';
+    html += `<b>Answered by:</b> ${escHtml(answered)}<br>`;
+    html += `<b>Plate from OCR:</b> ${req.plate_from_ocr} &nbsp; <b>Frames sent:</b> ${(req.media||[]).length}<br>`;
+    html += `<details><summary style="cursor:pointer;color:#aaa">System prompt</summary><pre>${escHtml(req.system_prompt||'')}</pre></details>`;
+    html += `<details><summary style="cursor:pointer;color:#aaa">User prompt</summary><pre>${escHtml(req.user_prompt||'')}</pre></details>`;
+    html += '<br><b>Frames:</b><br>';
+    html += '<table><tr><th>Item</th><th>File</th><th>Bytes</th></tr>';
+    for (const m of (req.media||[])) {
+      html += `<tr><td>${escHtml(m.item_id)}</td><td>${escHtml(m.file)}</td><td>${m.bytes}</td></tr>`;
+    }
+    html += '</table>';
+    html += `<br>${['03_verify/ocr.json','03_verify/request.json','03_verify/response.json']
+      .map(p => `<a class="file-link" href="/api/runs/${runId}/files/${p}" target="_blank">${p}</a>`).join('')}`;
+  } else { html += '<em>request.json not available.</em>'; }
+  html += '</div>';
+
+  document.getElementById('verify-content').innerHTML = html;
+}
+
+function showVerifyTab(name) {
+  ['plate','attempts','findings','read','sent'].forEach(t => {
+    const el = document.getElementById('verify-tab-' + t);
+    if (el) el.classList.toggle('active', t === name);
+  });
+  document.querySelectorAll('#verify-section .tab-btn').forEach((b, i) => {
+    b.classList.toggle('active', ['plate','attempts','findings','read','sent'][i] === name);
+  });
 }
 
 // Auto-load run from ?run= URL param

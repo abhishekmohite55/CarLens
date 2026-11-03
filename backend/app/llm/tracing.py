@@ -26,6 +26,19 @@ def _get_client():
         return None
 
 
+def langchain_callbacks(run_id: str, node: str) -> list:
+    """LangChain CallbackHandler for Langfuse, or [] when unavailable."""
+    lf = _get_client()
+    if lf is None:
+        return []
+    try:
+        from langfuse.callback import CallbackHandler
+        return [CallbackHandler(session_id=run_id, trace_name=node)]
+    except Exception as exc:
+        log.warning("Langfuse langchain_callbacks failed: %s", exc)
+        return []
+
+
 def trace_locate(
     *,
     run_id: str,
