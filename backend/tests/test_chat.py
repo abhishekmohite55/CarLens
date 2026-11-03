@@ -120,3 +120,21 @@ def test_ask_chain_all_fail():
                            emit=lambda m: None, callbacks=[])
     assert result["answered_by"] is None
     assert all("error" in a for a in result["attempts"])
+
+
+def test_ask_chain_applies_normalise_and_records_repairs():
+    def fake_make(*a):
+        m = MagicMock()
+        m.invoke = MagicMock(return_value=_msg([{"item_id": "L1", "confirmed": True}]))
+        return m
+
+    def wrap(p):
+        return ({"findings": p}, ["wrapped"]) if isinstance(p, list) else (p, [])
+
+    with patch("app.llm.chat.make_chat_model", fake_make):
+        result = ask_chain([_entry("m")], lambda e: [], temperature=0.2, timeout_sec=5, thinking_level=None,
+                           validate=lambda p: None if isinstance(p, dict) else "not a dict",
+                           emit=lambda m: None, callbacks=[], normalise=wrap)
+    assert result["answered_by"] == {"provider": "openrouter", "model": "m"}
+    assert result["parsed"] == {"findings": [{"item_id": "L1", "confirmed": True}]}
+    assert result["attempts"][0]["repairs"] == ["wrapped"]

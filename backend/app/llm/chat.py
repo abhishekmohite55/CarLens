@@ -58,6 +58,8 @@ def ask_chain(
     validate: Callable[[dict], str | None],
     emit: Callable[[str], None],
     callbacks: list,
+    metadata: dict | None = None,
+    normalise: Callable[[Any], tuple[Any, list[str]]] | None = None,
 ) -> dict:
     """Try entries in order; per-model timeout enforced via daemon thread.
 
@@ -77,7 +79,7 @@ def ask_chain(
             try:
                 msgs = build_messages(e)
                 m = make_chat_model(e.provider, e.model, temperature, timeout_sec, thinking_level)
-                cfg = {"callbacks": callbacks} if callbacks else {}
+                cfg = {"callbacks": callbacks, "metadata": metadata or {}} if callbacks else {}
                 box["msg"] = m.invoke(msgs, config=cfg)
             except Exception as exc:  # noqa: BLE001
                 box["error"] = f"{type(exc).__name__}: {exc}"
@@ -118,6 +120,12 @@ def ask_chain(
             emit(f"{entry.model} failed: invalid JSON")
             attempts.append(attempt)
             continue
+
+        if normalise is not None:
+            parsed, repairs = normalise(parsed)
+            if repairs:
+                attempt["repairs"] = repairs
+                emit(f"{entry.model}: answer repaired ({'; '.join(repairs)})"[:200])
 
         err = validate(parsed)
         if err:

@@ -46,15 +46,74 @@ def _get_ocr():
         return None if _ocr_engine is False else _ocr_engine
 
 
-def _validate_verify(parsed: dict) -> str | None:
-    if not isinstance(parsed.get("findings"), list):
-        return "findings is not a list"
-    for f in parsed["findings"]:
-        if "item_id" not in f or "confirmed" not in f:
-            return "finding missing item_id or confirmed"
-    for key in ("badge", "odometer_km", "vehicle", "tyres_assessed", "odometer_found", "plate"):
+_ANSWER_KEYS = ("plate", "badge", "odometer_km", "vehicle", "tyres_assessed", "odometer_found")
+_OBJECT_KEYS = ("plate", "badge", "odometer_km", "vehicle")
+_VEHICLE_FIELDS = ("make", "model", "variant", "year", "fuel")
+
+
+def normalise_answer(parsed):
+    """Repair known shape slips of model answers (key names and wrapping only, never values).
+
+    Returns (answer, repairs). A well-formed answer comes back unchanged with no repairs.
+    Shapes it cannot repair are left for validate_answer to reject.
+    """
+    repairs: list[str] = []
+    if isinstance(parsed, list):
+        parsed = {"findings": parsed}
+        repairs.append("answer was a list: used as findings")
+    if not isinstance(parsed, dict):
+        return parsed, repairs
+
+    for key in ("plate", "badge"):
+        v = parsed.get(key)
+        if isinstance(v, str):
+            parsed[key] = {"text": v, "confidence": None}
+            repairs.append(f"{key} was text: wrapped as {{text}}")
+        elif isinstance(v, dict) and "text" not in v and "value" in v:
+            v["text"] = v.pop("value")
+            repairs.append(f"{key}.value renamed to {key}.text")
+
+    odo = parsed.get("odometer_km")
+    if isinstance(odo, (int, float)) and not isinstance(odo, bool):
+        parsed["odometer_km"] = {"value": odo, "confidence": None}
+        repairs.append("odometer_km was a number: wrapped as {value}")
+    elif isinstance(odo, dict) and "value" not in odo and "text" in odo:
+        odo["value"] = odo.pop("text")
+        repairs.append("odometer_km.text renamed to odometer_km.value")
+
+    vehicle = parsed.get("vehicle")
+    if isinstance(vehicle, dict):
+        for field in _VEHICLE_FIELDS:
+            v = vehicle.get(field)
+            if v is not None and not isinstance(v, dict):
+                vehicle[field] = {"value": v, "confidence": None, "alternatives": []}
+                repairs.append(f"vehicle.{field} was a bare value: wrapped as {{value}}")
+
+    for key in _OBJECT_KEYS:
+        if parsed.get(key) is not None and not isinstance(parsed[key], dict):
+            parsed[key] = None
+            repairs.append(f"{key} had an unknown shape: set to null")
+
+    for key in _ANSWER_KEYS:
         if key not in parsed:
-            return f"missing key: {key}"
+            parsed[key] = None
+            repairs.append(f"{key} missing: set to null")
+
+    findings = parsed.get("findings")
+    if isinstance(findings, list):
+        kept = [f for f in findings if isinstance(f, dict) and "item_id" in f and "confirmed" in f]
+        if len(kept) != len(findings):
+            repairs.append(f"{len(findings) - len(kept)} finding(s) without item_id/confirmed dropped")
+            parsed["findings"] = kept
+    return parsed, repairs
+
+
+def validate_answer(parsed) -> str | None:
+    """Reject only what normalise_answer could not repair."""
+    if not isinstance(parsed, dict):
+        return "answer is not a JSON object"
+    if not isinstance(parsed.get("findings"), list):
+        return "findings is missing or not a list"
     return None
 
 
@@ -159,10 +218,30 @@ def _run_verify_inner(run_id: str) -> None:
         temperature=cfg.models.temperature,
         timeout_sec=cfg.models.verify_timeout_per_model_sec,
         thinking_level=cfg.models.verify_thinking_level,
-        validate=_validate_verify,
+        validate=validate_answer,
+        normalise=normalise_answer,
         emit=lambda msg: append_event(run_id, "verify", "node_progress", {"message": msg}),
         callbacks=cbs,
+        metadata={"langfuse_session_id": run_id, "langfuse_trace_name": "verify"},
     )
+
+    # --- Merge OCR plate into parsed (before response.json, so the saved answer has it) ---
+    parsed = chain_result["parsed"]
+    if parsed is not None:
+        if plate_from_ocr:
+            op = ocr_result["plate"]
+            first_frame = next(
+                (f["file"] for f in ocr_result.get("frames", []) if f.get("plates")), None
+            )
+            parsed["plate"] = {
+                "text": op["text"],
+                "confidence": op["confidence"],
+                "alternatives": op["alternatives"],
+                "frame": first_frame,
+                "source": "ocr",
+            }
+        elif parsed.get("plate") is not None:
+            parsed["plate"]["source"] = "model"
 
     # --- response.json ---
     winning = next((a for a in chain_result["attempts"]
@@ -187,23 +266,6 @@ def _run_verify_inner(run_id: str) -> None:
         append_event(run_id, "verify", "node_failed",
                      {"error": f"All verify models failed: {errors}", "files": files})
         return
-
-    # --- Merge OCR plate into parsed ---
-    parsed = chain_result["parsed"]
-    if plate_from_ocr:
-        op = ocr_result["plate"]
-        first_frame = next(
-            (f["file"] for f in ocr_result.get("frames", []) if f.get("plates")), None
-        )
-        parsed["plate"] = {
-            "text": op["text"],
-            "confidence": op["confidence"],
-            "alternatives": op["alternatives"],
-            "frame": first_frame,
-            "source": "ocr",
-        }
-    elif parsed.get("plate") is not None:
-        parsed["plate"]["source"] = "model"
 
     n_findings = len(parsed.get("findings", []))
     confirmed = sum(1 for f in parsed.get("findings", []) if f.get("confirmed"))

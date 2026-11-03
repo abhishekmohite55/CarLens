@@ -23,7 +23,7 @@ models: # fill model names before each stage
   locate_media_resolution: medium
   verify_media_resolution: medium # frames sent to verify: low | medium | high
   verify_thinking_level: low # Gemini entries only; empty = model default; or minimal | low | medium | high
-  verify_timeout_per_model_sec: 90
+  verify_timeout_per_model_sec: 180
   locate_thinking_level: low # empty = model default; or minimal | low | medium | high
 
 locate_video: # copy sent to Gemini locate; frames always use the original

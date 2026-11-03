@@ -25,6 +25,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.config import PROJECT_ROOT, get_config  # also loads .env
 from app.llm.chat import ask_chain, image_blocks, parse_json
+from app.nodes.verify import normalise_answer, validate_answer
 
 CHECKS_DIR = PROJECT_ROOT / "runs" / "_checks"
 
@@ -111,16 +112,13 @@ def main() -> None:
         content = image_blocks(user_prompt, frames, folder, res)
         return [SystemMessage(content=system_prompt), HumanMessage(content=content)]
 
-    def validate(parsed: dict) -> str | None:
-        problems = check_parsed(parsed, frames)
-        return problems[0] if problems else None
-
     result = ask_chain(
         chain, build_messages,
         temperature=temperature,
         timeout_sec=timeout_sec,
         thinking_level=thinking,
-        validate=validate,
+        validate=validate_answer,
+        normalise=normalise_answer,
         emit=lambda msg: print(f"  {msg}", flush=True),
         callbacks=[],
     )

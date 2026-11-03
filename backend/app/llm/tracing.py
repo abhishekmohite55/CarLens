@@ -32,8 +32,8 @@ def langchain_callbacks(run_id: str, node: str) -> list:
     if lf is None:
         return []
     try:
-        from langfuse.callback import CallbackHandler
-        return [CallbackHandler(session_id=run_id, trace_name=node)]
+        from langfuse.langchain import CallbackHandler  # langfuse 5.x path; session id goes in invoke metadata
+        return [CallbackHandler()]
     except Exception as exc:
         log.warning("Langfuse langchain_callbacks failed: %s", exc)
         return []
