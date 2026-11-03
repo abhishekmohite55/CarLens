@@ -52,11 +52,10 @@ class LocateVideoConfig(BaseModel):
 
 
 class FramesConfig(BaseModel):
-    window_sec: int
+    window_sec: float
     sample_fps: int
-    odometer_window_sec: int
-    odometer_sample_fps: int
-    keep_per_item: int
+    score_scale: float
+    workers: int
     max_long_edge_px: int
     jpeg_quality: int
 

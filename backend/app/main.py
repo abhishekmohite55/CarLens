@@ -6,11 +6,12 @@ from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from .config import get_config
 from .events import sse_stream
 from .graph import run_graph
+from .nodes.frames import load_locate_items, run_frames, try_claim
 from .llm.tracing import _get_client as _warmup_tracing
 from .nodes.upload import process_upload
 from .runs import events_path, run_dir
@@ -140,6 +141,26 @@ async def api_run_events(run_id: str):
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@app.post("/api/runs/{run_id}/frames", status_code=202)
+def api_run_frames(run_id: str):
+    rd = run_dir(run_id)
+    if not rd.exists():
+        raise HTTPException(404, detail=f"Run '{run_id}' not found.")
+
+    if load_locate_items(rd) is None:
+        return JSONResponse(status_code=409, content={
+            "error": {"code": "no_locate_result", "message": "Locate has no valid result for this run."}
+        })
+
+    if not try_claim(run_id):  # also covers a frames run started by the graph after an upload
+        return JSONResponse(status_code=409, content={
+            "error": {"code": "already_running", "message": "Frames extraction is already running for this run."}
+        })
+
+    threading.Thread(target=run_frames, args=(run_id,), kwargs={"claimed": True}, daemon=True).start()
+    return {"started": True}
 
 
 @app.get("/api/runs/{run_id}/files/{path:path}")

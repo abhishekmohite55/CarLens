@@ -41,7 +41,14 @@ def write_json_atomic(path: Path, data: Any) -> None:
 
 
 def next_seq(run_id: str) -> int:
-    _seq[run_id] = _seq.get(run_id, 0) + 1
+    if run_id not in _seq:
+        ep = events_path(run_id)
+        if ep.exists():
+            with open(ep, encoding="utf-8") as f:
+                _seq[run_id] = sum(1 for line in f if line.strip())
+        else:
+            _seq[run_id] = 0
+    _seq[run_id] += 1
     return _seq[run_id]
 
 
