@@ -17,9 +17,9 @@ models: # fill model names before each stage
   temperature: 0.2
   timeout_sec: 180
   locate_media_resolution: medium
-  locate_thinking_level:        # empty = model default; or minimal | low | medium | high
+  locate_thinking_level: low # empty = model default; or minimal | low | medium | high
 
-locate_video:                   # copy sent to Gemini locate; frames always use the original
+locate_video: # copy sent to Gemini locate; frames always use the original
   shrink: true
   height: 1080
   fps: 5

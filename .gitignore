@@ -17,6 +17,7 @@ __pycache__/
 dist/
 build/
 
+
 # Node
 node_modules/
 
@@ -28,3 +29,6 @@ node_modules/
 docs/
 handoff/
 spikes/
+test_achievements/
+
+.superpowers/
