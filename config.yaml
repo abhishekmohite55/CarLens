@@ -26,12 +26,11 @@ locate_video: # copy sent to Gemini locate; frames always use the original
   crf: 23
 
 frames:
-  window_sec: 5
-  sample_fps: 2
-  odometer_window_sec: 3
-  odometer_sample_fps: 4
-  keep_per_item: 4
-  max_long_edge_px: 1280
+  window_sec: 1.5            # ± around each locate timestamp (all items, odometer too)
+  sample_fps: 15             # 45 frames per item; nearest source frame for each sample
+  score_scale: 0.5           # sharpness scored on a half-size grayscale copy
+  workers: 0                 # parallel items; 0 = CPU count
+  max_long_edge_px: 1280     # saved JPEG (sharpest frame only)
   jpeg_quality: 90
 
 confirm:

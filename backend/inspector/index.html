@@ -41,6 +41,8 @@
   th, td { text-align: left; padding: 4px 8px; border-bottom: 1px solid #2a2a2a; }
   th { color: #aaa; }
   .locate-progress { font-size: 12px; color: #ffb020; margin-left: 8px; }
+  .frames-thumb { max-height: 60px; cursor: pointer; border-radius: 2px; vertical-align: middle; }
+  .frames-thumb:hover { opacity: 0.8; }
 </style>
 </head>
 <body>
@@ -98,6 +100,15 @@
   </div>
 </div>
 
+<div class="section" id="frames-section" style="display:none">
+  <label>Extract frames <span id="frames-status-badge" class="node-waiting"></span><span id="frames-progress-msg" style="font-size:12px;color:#ffb020;margin-left:8px"></span></label>
+  <div style="margin:6px 0">
+    <button id="frames-btn" onclick="doExtractFrames()" disabled>Extract frames</button>
+    <span id="frames-btn-reason" class="status" style="margin-left:8px"></span>
+  </div>
+  <div id="frames-manifest-content"></div>
+</div>
+
 <script>
 const NODES = [
   {id:"upload",  label:"Upload & check"},
@@ -114,6 +125,9 @@ const NODES = [
 
 let currentRunId = null;
 let sseSource = null;
+let locateNodeStatus = 'waiting';
+let framesNodeStatus = 'waiting';
+let framesIsRunning = false;
 
 // Load config on start
 fetch('/api/config').then(r => r.json()).then(cfg => {
@@ -191,6 +205,9 @@ function doUpload() {
 function loadRun(runId) {
   if (!runId) return;
   currentRunId = runId;
+  locateNodeStatus = 'waiting';
+  framesNodeStatus = 'waiting';
+  framesIsRunning = false;
   document.getElementById('run-id-input').value = runId;
   document.getElementById('run-section').style.display = '';
 
@@ -207,11 +224,16 @@ function loadRun(runId) {
     {path:'events.jsonl', label:'events.jsonl'},
     {path:'01_locate/request.json', label:'01_locate/request.json'},
     {path:'01_locate/response.json', label:'01_locate/response.json'},
+    {path:'02_frames/manifest.json', label:'02_frames/manifest.json'},
   ].map(f =>
     `<a class="file-link" href="/api/runs/${runId}/files/${f.path}" target="_blank">${f.label}</a>`
   ).join('');
 
   document.getElementById('locate-section').style.display = '';
+  document.getElementById('frames-section').style.display = '';
+  document.getElementById('frames-manifest-content').innerHTML = '';
+  document.getElementById('frames-progress-msg').textContent = '';
+  updateFramesButton();
 
   // Load meta.json
   fetch(`/api/runs/${runId}/files/meta.json`)
@@ -229,6 +251,8 @@ function loadRun(runId) {
       if (d.nodes) updateNodeStatuses(d.nodes);
       const ls = d.nodes && d.nodes['locate'];
       if (ls === 'done' || ls === 'failed') loadLocateFiles(runId);
+      const fs = d.nodes && d.nodes['frames'];
+      if (fs === 'done') loadFramesManifest(runId);
     })
     .catch(() => {});
 
@@ -259,8 +283,26 @@ function loadRun(runId) {
             document.getElementById('locate-progress-msg').textContent = ev.data.message || '';
           }
           if (ev.type === 'node_done' || ev.type === 'node_failed') {
+            locateNodeStatus = ev.type === 'node_done' ? 'done' : 'failed';
             document.getElementById('locate-progress-msg').textContent = '';
             loadLocateFiles(currentRunId);
+            updateFramesButton();
+          }
+        }
+        if (ev.node === 'frames') {
+          if (ev.type === 'node_started') {
+            framesIsRunning = true;
+            updateFramesButton();
+          }
+          if (ev.type === 'node_progress') {
+            document.getElementById('frames-progress-msg').textContent = ev.data.message || '';
+          }
+          if (ev.type === 'node_done' || ev.type === 'node_failed' || ev.type === 'node_skipped') {
+            framesIsRunning = false;
+            framesNodeStatus = ev.type === 'node_done' ? 'done' : ev.type === 'node_failed' ? 'failed' : 'skipped';
+            document.getElementById('frames-progress-msg').textContent = '';
+            if (ev.type === 'node_done') loadFramesManifest(currentRunId);
+            updateFramesButton();
           }
         }
       }
@@ -275,7 +317,10 @@ function updateNodeStatuses(nodes) {
   for (const [id, status] of Object.entries(nodes)) {
     const cell = document.getElementById('node-' + id);
     if (cell) cell.className = 'node-cell node-' + status;
+    if (id === 'locate') locateNodeStatus = status;
+    if (id === 'frames') { framesNodeStatus = status; framesIsRunning = (status === 'running'); }
   }
+  updateFramesButton();
 }
 
 function addEventLine(ev) {
@@ -350,6 +395,95 @@ function loadLocateFiles(runId) {
 
 function escHtml(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function updateFramesButton() {
+  const btn = document.getElementById('frames-btn');
+  const reason = document.getElementById('frames-btn-reason');
+  if (!btn) return;
+  if (locateNodeStatus !== 'done') {
+    btn.disabled = true;
+    btn.textContent = 'Extract frames';
+    reason.textContent = 'Locate has no result for this run';
+    return;
+  }
+  if (framesIsRunning) {
+    btn.disabled = true;
+    btn.textContent = 'Extract frames';
+    reason.textContent = 'Running…';
+    return;
+  }
+  btn.disabled = false;
+  btn.textContent = (framesNodeStatus === 'done' || framesNodeStatus === 'failed')
+    ? 'Re-run extract frames' : 'Extract frames';
+  reason.textContent = '';
+}
+
+function doExtractFrames() {
+  if (!currentRunId) return;
+  document.getElementById('frames-btn').disabled = true;
+  document.getElementById('frames-btn-reason').textContent = 'Starting…';
+  fetch('/api/runs/' + currentRunId + '/frames', {method: 'POST'})
+    .then(r => r.json().then(d => ({ok: r.ok, data: d})))
+    .then(({ok, data}) => {
+      if (!ok) {
+        const msg = data.error ? data.error.message : JSON.stringify(data);
+        document.getElementById('frames-btn-reason').textContent = msg;
+        updateFramesButton();
+      }
+    })
+    .catch(e => {
+      document.getElementById('frames-btn-reason').textContent = 'Error: ' + e;
+      updateFramesButton();
+    });
+}
+
+function loadFramesManifest(runId) {
+  fetch('/api/runs/' + runId + '/files/02_frames/manifest.json')
+    .then(r => r.json())
+    .then(manifest => renderFramesManifest(runId, manifest))
+    .catch(() => {});
+}
+
+function renderFramesManifest(runId, manifest) {
+  const t = manifest.totals || {};
+  let html = '<div style="color:#aaa;font-size:12px;margin-bottom:8px">'
+    + (t.items || 0) + ' items &nbsp; '
+    + (t.frames_extracted || 0) + ' frames scored &nbsp; '
+    + (t.elapsed_s || 0) + ' s &nbsp; '
+    + (t.workers || 0) + ' threads'
+    + '</div>';
+  html += '<table><tr><th>Item</th><th>Category</th><th>Time</th><th>Frames</th>'
+    + '<th>Seek</th><th>Decode</th><th>Score</th><th>Total</th>'
+    + '<th>Best t</th><th>Sharpness</th><th>Image</th></tr>';
+  for (const item of (manifest.items || [])) {
+    if (item.skipped) {
+      html += '<tr><td>' + escHtml(item.item_id) + '</td><td>' + escHtml(item.category || '') + '</td>'
+        + '<td>' + escHtml(item.t_text || '') + '</td>'
+        + '<td colspan="8"><span class="warn">Skipped: ' + escHtml(item.skipped) + '</span></td></tr>';
+      continue;
+    }
+    const tm = item.timings_s || {};
+    const best = item.sharpest || {};
+    const imgPath = '02_frames/' + encodeURIComponent(best.file || '');
+    const imgUrl = '/api/runs/' + runId + '/files/' + imgPath;
+    html += '<tr>'
+      + '<td>' + escHtml(item.item_id) + '</td>'
+      + '<td>' + escHtml(item.category || '') + '</td>'
+      + '<td>' + escHtml(item.t_text || '') + '</td>'
+      + '<td>' + (item.frames_extracted || 0) + '</td>'
+      + '<td>' + (tm.seek || 0).toFixed(2) + '</td>'
+      + '<td>' + (tm.decode || 0).toFixed(2) + '</td>'
+      + '<td>' + (tm.score || 0).toFixed(2) + '</td>'
+      + '<td>' + (tm.total || 0).toFixed(2) + '</td>'
+      + '<td>' + (best.t || 0).toFixed(3) + '</td>'
+      + '<td>' + (best.sharpness || 0).toFixed(0) + '</td>'
+      + '<td><img src="' + imgUrl + '" class="frames-thumb" '
+      + 'onclick="window.open(\'' + imgUrl + '\',\'_blank\')" loading="lazy"></td>'
+      + '</tr>';
+  }
+  html += '</table>';
+  document.getElementById('frames-manifest-content').innerHTML = html;
 }
 
 // Auto-load run from ?run= URL param

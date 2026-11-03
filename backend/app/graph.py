@@ -8,6 +8,7 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 
 from .config import PROJECT_ROOT, get_config
 from .nodes.locate import run_locate
+from .nodes.frames import run_frames
 from .runs import append_event
 
 _conn: sqlite3.Connection | None = None
@@ -28,6 +29,7 @@ def _get_checkpointer() -> SqliteSaver:
 class GraphState(TypedDict):
     run_id: str
     locate_status: str
+    frames_status: str
 
 
 def _locate_node(state: GraphState) -> GraphState:
@@ -35,11 +37,18 @@ def _locate_node(state: GraphState) -> GraphState:
     return {**state, "locate_status": "done"}
 
 
+def _frames_node(state: GraphState) -> GraphState:
+    run_frames(state["run_id"])
+    return {**state, "frames_status": "done"}
+
+
 def _build_graph() -> object:
     g = StateGraph(GraphState)
     g.add_node("locate", _locate_node)
+    g.add_node("frames", _frames_node)
     g.set_entry_point("locate")
-    g.add_edge("locate", END)
+    g.add_edge("locate", "frames")
+    g.add_edge("frames", END)
     return g.compile(checkpointer=_get_checkpointer())
 
 
@@ -61,7 +70,7 @@ def run_graph(run_id: str) -> None:
     graph = get_graph()
     config = {"configurable": {"thread_id": run_id}}
     try:
-        graph.invoke({"run_id": run_id, "locate_status": "waiting"}, config=config)
+        graph.invoke({"run_id": run_id, "locate_status": "waiting", "frames_status": "waiting"}, config=config)
     except Exception as exc:
         _glog.exception("graph.invoke failed for %s: %s", run_id, exc)
     finally:
