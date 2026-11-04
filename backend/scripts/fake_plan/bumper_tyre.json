@@ -1,0 +1,16 @@
+{ "note": "Bumper crack (replace) + scratch on the same bumper, one bald tyre, one fair tyre. Expect one bumper part covering L4+L6, two tyres judged (L11 likely replace, L12 likely minor_wear).",
+  "confirm": { "car": { "make": "Hyundai", "model": "i20", "variant": "Asta", "year": 2019, "fuel": "Petrol" },
+               "plate": "MH12AB1234", "city": "Pune", "state": "Maharashtra", "odometer_km": 68500,
+               "changed": ["variant"], "skipped": [], "photos": [] },
+  "findings": [
+    { "item_id": "L4", "confirmed": true, "part": "front_bumper", "issue": "crack", "severity": "severe", "action": "replace",
+      "description": "Crack across the lower front bumper, a clip is broken and the bumper sags on the left." },
+    { "item_id": "L6", "confirmed": true, "part": "front_bumper", "issue": "scratch", "severity": "minor", "action": "repair",
+      "description": "Scratches on the right corner of the front bumper, paint scraped." },
+    { "item_id": "L8", "confirmed": true, "part": "left_mirror", "issue": "no visible damage", "severity": null, "action": "none",
+      "description": "Mirror intact." },
+    { "item_id": "L11", "confirmed": true, "part": "rear_left_tyre", "issue": "worn tread", "severity": null, "action": "none",
+      "description": "Tread almost flat in the centre, wear bars visible.", "tyre": { "position": "rear_left", "tyre_score": 2, "tread": "bald" } },
+    { "item_id": "L12", "confirmed": true, "part": "front_left_tyre", "issue": "some wear", "severity": null, "action": "none",
+      "description": "Tread visible but shallower on the outer edge.", "tyre": { "position": "front_left", "tyre_score": 5, "tread": "fair" } }
+  ] }

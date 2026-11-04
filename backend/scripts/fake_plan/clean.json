@@ -1,0 +1,12 @@
+{ "note": "Clean car (like car2): no damage, tyres fine. Expect no LLM call, listing queries only.",
+  "confirm": { "car": { "make": "Maruti Suzuki", "model": "Ertiga", "variant": "VXI", "year": 2022, "fuel": "Petrol" },
+               "plate": "MH04HX3404", "city": "Thane", "state": "Maharashtra", "odometer_km": 52956,
+               "changed": ["year"], "skipped": [], "photos": [] },
+  "findings": [
+    { "item_id": "L1", "confirmed": true, "part": "windshield", "issue": "no visible damage", "severity": null, "action": "none",
+      "description": "Front windshield is clear with only reflections, no cracks or chips." },
+    { "item_id": "L3", "confirmed": true, "part": "front_right_tyre", "issue": "no visible damage", "severity": null, "action": "none",
+      "description": "Front right tyre shows good tread and even wear.", "tyre": { "position": "front_right", "tyre_score": 7, "tread": "fair" } },
+    { "item_id": "L5", "confirmed": true, "part": "rear_right_tyre", "issue": "no visible damage", "severity": null, "action": "none",
+      "description": "Rear right tyre shows good tread and even wear.", "tyre": { "position": "rear_right", "tyre_score": 7, "tread": "fair" } }
+  ] }

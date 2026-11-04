@@ -133,6 +133,15 @@
   <div id="confirm-content"></div>
 </div>
 
+<div class="section" id="plan-section" style="display:none">
+  <label>Plan searches <span id="plan-progress-msg" style="font-size:12px;color:#ffb020;margin-left:8px"></span></label>
+  <div style="margin:6px 0">
+    <button id="plan-btn" onclick="doRunPlan()" disabled>Generate queries</button>
+    <span id="plan-btn-reason" class="status" style="margin-left:8px"></span>
+  </div>
+  <div id="plan-content"></div>
+</div>
+
 <script>
 const NODES = [
   {id:"upload",  label:"Upload & check"},
@@ -156,6 +165,8 @@ let verifyNodeStatus = 'waiting';
 let verifyIsRunning = false;
 let confirmPayload = null;
 let confirmDone = false;
+let planNodeStatus = 'waiting';
+let planIsRunning = false;
 
 // Load config on start
 fetch('/api/config').then(r => r.json()).then(cfg => {
@@ -240,6 +251,8 @@ function loadRun(runId) {
   verifyIsRunning = false;
   confirmPayload = null;
   confirmDone = false;
+  planNodeStatus = 'waiting';
+  planIsRunning = false;
   document.getElementById('run-id-input').value = runId;
   document.getElementById('run-section').style.display = '';
 
@@ -262,6 +275,9 @@ function loadRun(runId) {
     {path:'03_verify/response.json', label:'03_verify/response.json'},
     {path:'04_confirm_payload.json', label:'04_confirm_payload.json'},
     {path:'04_confirm.json', label:'04_confirm.json'},
+    {path:'06_plan/request.json', label:'06_plan/request.json'},
+    {path:'06_plan/response.json', label:'06_plan/response.json'},
+    {path:'06_plan/queries.json', label:'06_plan/queries.json'},
   ].map(f =>
     `<a class="file-link" href="/api/runs/${runId}/files/${f.path}" target="_blank">${f.label}</a>`
   ).join('');
@@ -275,6 +291,10 @@ function loadRun(runId) {
   document.getElementById('verify-progress-msg').textContent = '';
   document.getElementById('confirm-section').style.display = '';
   document.getElementById('confirm-content').innerHTML = '';
+  document.getElementById('plan-section').style.display = '';
+  document.getElementById('plan-content').innerHTML = '';
+  document.getElementById('plan-progress-msg').textContent = '';
+  updatePlanButton();
   updateFramesButton();
   updateVerifyButton();
   updateConfirmButton();
@@ -371,6 +391,18 @@ function loadRun(runId) {
           if (ev.type === 'node_done') { confirmDone = true; loadConfirmRecord(currentRunId); }
           if (ev.type === 'node_skipped') { document.getElementById('confirm-content').innerHTML = '<em>Skipped: ' + escHtml(ev.data.reason || '') + '</em>'; }
           updateConfirmButton();
+          updatePlanButton();
+        }
+        if (ev.node === 'plan') {
+          if (ev.type === 'node_started') { planIsRunning = true; document.getElementById('plan-content').innerHTML = ''; }
+          if (ev.type === 'node_progress') document.getElementById('plan-progress-msg').textContent = ev.data.message || '';
+          if (ev.type === 'node_done' || ev.type === 'node_failed' || ev.type === 'node_skipped') {
+            planIsRunning = false;
+            planNodeStatus = ev.type === 'node_done' ? 'done' : ev.type === 'node_failed' ? 'failed' : 'skipped';
+            document.getElementById('plan-progress-msg').textContent = '';
+            loadPlanFiles(currentRunId, ev);
+          }
+          updatePlanButton();
         }
       }
     } catch {}
@@ -812,6 +844,11 @@ function renderConfirmForm() {
 function doConfirm() {
   const get = id => { const el = document.getElementById(id); const t = el ? el.value.trim() : ''; return t === '' ? null : t; };
   const year = get('cf-year'), km = get('cf-km'), city = get('cf-city');
+  if (!get('cf-make') || !get('cf-model')) {
+    document.getElementById('cf-form').style.display = '';
+    document.getElementById('cf-error').textContent = 'Make and model are needed.';
+    return;
+  }
   const skipped = [];
   const tyre = document.getElementById('cf-skip-tyre');
   if (tyre && tyre.checked) skipped.push('tyre_photo');
@@ -838,6 +875,51 @@ function loadConfirmRecord(runId) {
     document.getElementById('confirm-content').innerHTML =
       '<div class="status">Saved 04_confirm.json — changed: ' + escHtml(rec.changed.join(', ') || 'nothing') + '</div><pre>' + escHtml(JSON.stringify(rec, null, 2)) + '</pre>';
   }).catch(() => {});
+}
+
+// ---- Plan (Stage 7) ----
+function updatePlanButton() {
+  const btn = document.getElementById('plan-btn');
+  const reason = document.getElementById('plan-btn-reason');
+  if (!btn) return;
+  btn.disabled = !confirmDone || planIsRunning;
+  btn.textContent = (planNodeStatus === 'done' || planNodeStatus === 'failed') ? 'Re-generate queries' : 'Generate queries';
+  reason.textContent = !confirmDone ? 'Confirm not done' : planIsRunning ? 'Running…' : '';
+}
+
+function doRunPlan() {
+  if (!currentRunId) return;
+  document.getElementById('plan-btn').disabled = true;
+  fetch('/api/runs/' + currentRunId + '/plan', {method: 'POST'})
+    .then(r => r.json().then(d => ({ok: r.ok, data: d})))
+    .then(({ok, data}) => {
+      if (!ok) document.getElementById('plan-btn-reason').textContent = data.error ? data.error.message : JSON.stringify(data);
+      updatePlanButton();
+    })
+    .catch(e => { document.getElementById('plan-btn-reason').textContent = 'Error: ' + e; updatePlanButton(); });
+}
+
+function loadPlanFiles(runId, ev) {
+  const get = f => fetch('/api/runs/' + runId + '/files/06_plan/' + f).then(r => r.ok ? r.json() : null).catch(() => null);
+  Promise.all([get('queries.json'), get('request.json'), get('response.json')]).then(([q, req, res]) => {
+    const list = qs => '<ul>' + (qs || []).map(x => '<li>' + escHtml(x) + '</li>').join('') + '</ul>';
+    let html = '';
+    if (ev.type !== 'node_done') html += '<div class="cf-note">' + escHtml(ev.data.error || ev.data.reason || '') + '</div>';
+    if (q) {
+      html += '<div class="status">' + (q.llm_called ? 'LLM called' : 'No damage: listing queries only, no LLM call')
+        + (res && res.answered_by ? ' — answered by ' + escHtml(res.answered_by.model) : '') + '</div>';
+      html += '<b>Listing</b> (seed ' + q.listing_seed + ')' + list(q.listing);
+      q.parts.forEach(p => { html += '<b>' + escHtml(p.part) + '</b> ' + escHtml((p.finding_ids || []).join(', '))
+        + ' · ' + escHtml([p.issue, p.severity, p.action].filter(Boolean).join(' / ')) + list(p.queries); });
+      q.tyres.forEach(t => { html += '<b>Tyre ' + escHtml(t.item_id) + ' ' + escHtml(t.position || '') + '</b>: '
+        + escHtml(t.tier) + ' — ' + escHtml(t.reason || '') + list(t.queries); });
+      html += '<div>Tyres not seen: ' + escHtml(q.tyres_not_seen.join(', ') || 'none') + '</div>';
+      html += '<div>Problems: ' + (q.problems.length ? list(q.problems) : 'none') + '</div>';
+    }
+    if (req) html += '<details><summary>Sent (prompts)</summary><pre>' + escHtml(req.system_prompt + '\n\n---\n\n' + req.user_prompt) + '</pre></details>';
+    if (res) html += '<details><summary>Received (attempts, raw JSON)</summary><pre>' + escHtml(JSON.stringify(res, null, 2)) + '</pre></details>';
+    document.getElementById('plan-content').innerHTML = html;
+  });
 }
 
 // Auto-load run from ?run= URL param

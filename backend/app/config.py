@@ -36,7 +36,8 @@ class ModelsConfig(BaseModel):
     locate: ModelEntry
     verify_chain: list[ModelEntry]
     photos: ModelEntry
-    plan: ModelEntry
+    plan_chain: list[ModelEntry]
+    plan_timeout_per_model_sec: int = 120
     extract: ModelEntry
     temperature: float
     timeout_sec: int
@@ -68,9 +69,17 @@ class ConfirmConfig(BaseModel):
     year_range: int = 8
 
 
+class PlanConfig(BaseModel):
+    queries_per_part: int
+    listing_queries_per_run: int
+    tyre_ok_score: int
+    listing_templates: list[str]
+
+
 class PricingConfig(BaseModel):
     year_tolerance: int
     min_comparables: int
+    tyre_minor_wear_deduction_inr: int
 
 
 class PathsConfig(BaseModel):
@@ -84,6 +93,7 @@ class AppConfig(BaseModel):
     models: ModelsConfig
     frames: FramesConfig
     confirm: ConfirmConfig
+    plan: PlanConfig
     pricing: PricingConfig
     paths: PathsConfig
     locate_video: LocateVideoConfig
