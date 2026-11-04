@@ -20,6 +20,8 @@ from .nodes.confirm import PAYLOAD_FILE, RECORD_FILE, finish_confirm, load_verif
 from .nodes.frames import load_locate_items, run_frames
 from .nodes.frames import try_claim as frames_try_claim
 from .nodes.verify import run_verify
+from .nodes.plan import run_plan
+from .nodes.plan import try_claim as plan_try_claim
 from .nodes.verify import try_claim as verify_try_claim
 from .llm.tracing import _get_client as _warmup_tracing
 from .nodes.upload import process_upload
@@ -197,8 +199,8 @@ def api_run_verify(run_id: str):
 
 
 class CarAnswer(BaseModel):
-    make: Optional[str] = None
-    model: Optional[str] = None
+    make: str = Field(min_length=1)    # required: plan needs make and model to build queries
+    model: str = Field(min_length=1)
     variant: Optional[str] = None
     year: Optional[int] = Field(None, ge=1950, le=2100)
     fuel: Optional[str] = None
@@ -260,10 +262,34 @@ def api_confirm(run_id: str, answer: ConfirmAnswer):
         else:  # dev path: run started with "Start confirm", no graph waiting
             finish_confirm(run_id, json.loads(payload_path.read_text(encoding="utf-8")), data)
             skip_photos(run_id)
-            append_event(run_id, "pipeline", "run_done", {"status": "partial"})
+
+            def _plan_then_done():
+                run_plan(run_id)
+                append_event(run_id, "pipeline", "run_done", {"status": "partial"})
+            threading.Thread(target=_plan_then_done, daemon=True).start()
     finally:
         _confirming.discard(run_id)  # 04_confirm.json now guards repeats
     return {"confirmed": True}
+
+
+@app.post("/api/runs/{run_id}/plan", status_code=202)
+def api_run_plan(run_id: str):
+    """Dev (used by /inspector): re-run only the plan node on a confirmed run; deletes old 06_plan/."""
+    rd = run_dir(run_id)
+    if not rd.exists():
+        raise HTTPException(404, detail=f"Run '{run_id}' not found.")
+    if not (rd / RECORD_FILE).exists():
+        return JSONResponse(status_code=409, content={
+            "error": {"code": "not_confirmed", "message": "Confirm is not done for this run."}
+        })
+    if not plan_try_claim(run_id):
+        return JSONResponse(status_code=409, content={
+            "error": {"code": "already_running", "message": "Plan is already running for this run."}
+        })
+    if (rd / "06_plan").exists():
+        shutil.rmtree(rd / "06_plan")
+    threading.Thread(target=run_plan, args=(run_id,), kwargs={"claimed": True}, daemon=True).start()
+    return {"started": True}
 
 
 @app.get("/api/cities")

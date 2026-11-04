@@ -1,0 +1,11 @@
+{ "note": "One minor dent, variant skipped by the user. Expect one part with 4 queries, no tyres.",
+  "confirm": { "car": { "make": "Maruti Suzuki", "model": "Swift", "variant": null, "year": 2017, "fuel": "Petrol" },
+               "plate": "RJ47CA5010", "city": "Jaipur", "state": "Rajasthan", "odometer_km": 40003,
+               "changed": [], "skipped": [], "photos": [] },
+  "findings": [
+    { "item_id": "L9", "confirmed": true, "part": "left_rear_door", "issue": "dent", "severity": "minor", "action": "repair",
+      "description": "Small dent below the window line, paint intact." },
+    { "item_id": "L6", "confirmed": false, "reason": "Reflection of a lamp post, not damage." },
+    { "item_id": "L3", "confirmed": true, "part": "front_right_tyre", "issue": "no visible damage", "severity": null, "action": "none",
+      "description": "Tread visible, even wear.", "tyre": { "position": "front_right", "tyre_score": 8, "tread": "good" } }
+  ] }

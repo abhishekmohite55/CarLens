@@ -12,6 +12,7 @@ from .nodes.locate import run_locate
 from .nodes.frames import run_frames
 from .nodes.verify import run_verify
 from .nodes.confirm import finish_confirm, skip_photos, start_confirm
+from .nodes.plan import run_plan
 from .runs import append_event
 
 _conn: sqlite3.Connection | None = None
@@ -35,6 +36,7 @@ class GraphState(TypedDict):
     frames_status: str
     verify_status: str
     confirm_status: str
+    plan_status: str
 
 
 def _locate_node(state: GraphState) -> GraphState:
@@ -66,6 +68,11 @@ def _photos_node(state: GraphState) -> GraphState:
     return state
 
 
+def _plan_node(state: GraphState) -> GraphState:
+    run_plan(state["run_id"])
+    return {**state, "plan_status": "done"}
+
+
 def _build_graph() -> object:
     g = StateGraph(GraphState)
     g.add_node("locate", _locate_node)
@@ -78,7 +85,9 @@ def _build_graph() -> object:
     g.add_node("photos", _photos_node)
     g.add_edge("verify", "confirm")
     g.add_edge("confirm", "photos")
-    g.add_edge("photos", END)
+    g.add_node("plan", _plan_node)
+    g.add_edge("photos", "plan")
+    g.add_edge("plan", END)
     return g.compile(checkpointer=_get_checkpointer())
 
 
@@ -113,7 +122,7 @@ def _invoke(run_id: str, graph_input) -> None:
 
 def run_graph(run_id: str) -> None:
     _invoke(run_id, {"run_id": run_id, "locate_status": "waiting", "frames_status": "waiting",
-                     "verify_status": "waiting", "confirm_status": "waiting"})
+                     "verify_status": "waiting", "confirm_status": "waiting", "plan_status": "waiting"})
 
 
 def resume_graph(run_id: str, answer: dict) -> None:
