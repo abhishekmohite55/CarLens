@@ -76,6 +76,16 @@ class PlanConfig(BaseModel):
     listing_templates: list[str]
 
 
+class SearchConfig(BaseModel):
+    depth: str
+    max_results: int
+    include_raw_content: bool
+    include_domains: list[str]
+    exclude_domains: list[str] = []
+    country: Optional[str] = None
+    workers: int
+
+
 class PricingConfig(BaseModel):
     year_tolerance: int
     min_comparables: int
@@ -94,6 +104,7 @@ class AppConfig(BaseModel):
     frames: FramesConfig
     confirm: ConfirmConfig
     plan: PlanConfig
+    search: SearchConfig
     pricing: PricingConfig
     paths: PathsConfig
     locate_video: LocateVideoConfig

@@ -22,6 +22,8 @@ from .nodes.frames import try_claim as frames_try_claim
 from .nodes.verify import run_verify
 from .nodes.plan import run_plan
 from .nodes.plan import try_claim as plan_try_claim
+from .nodes.search import run_search
+from .nodes.search import try_claim as search_try_claim
 from .nodes.verify import try_claim as verify_try_claim
 from .llm.tracing import _get_client as _warmup_tracing
 from .nodes.upload import process_upload
@@ -265,6 +267,7 @@ def api_confirm(run_id: str, answer: ConfirmAnswer):
 
             def _plan_then_done():
                 run_plan(run_id)
+                run_search(run_id)
                 append_event(run_id, "pipeline", "run_done", {"status": "partial"})
             threading.Thread(target=_plan_then_done, daemon=True).start()
     finally:
@@ -289,6 +292,26 @@ def api_run_plan(run_id: str):
     if (rd / "06_plan").exists():
         shutil.rmtree(rd / "06_plan")
     threading.Thread(target=run_plan, args=(run_id,), kwargs={"claimed": True}, daemon=True).start()
+    return {"started": True}
+
+
+@app.post("/api/runs/{run_id}/search", status_code=202)
+def api_run_search(run_id: str):
+    """Dev (used by /inspector): re-run only the search node on a run with plan queries; deletes old 07_search/."""
+    rd = run_dir(run_id)
+    if not rd.exists():
+        raise HTTPException(404, detail=f"Run '{run_id}' not found.")
+    if not (rd / "06_plan" / "queries.json").exists():
+        return JSONResponse(status_code=409, content={
+            "error": {"code": "no_queries", "message": "Plan has no queries for this run."}
+        })
+    if not search_try_claim(run_id):
+        return JSONResponse(status_code=409, content={
+            "error": {"code": "already_running", "message": "Search is already running for this run."}
+        })
+    if (rd / "07_search").exists():
+        shutil.rmtree(rd / "07_search")
+    threading.Thread(target=run_search, args=(run_id,), kwargs={"claimed": True}, daemon=True).start()
     return {"started": True}
 
 
