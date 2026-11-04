@@ -38,7 +38,9 @@ class ModelsConfig(BaseModel):
     photos: ModelEntry
     plan_chain: list[ModelEntry]
     plan_timeout_per_model_sec: int = 120
-    extract: ModelEntry
+    extract_chain: list[ModelEntry]
+    extract_timeout_per_model_sec: int = 120
+    extract_reasoning_effort: Optional[str] = None
     temperature: float
     timeout_sec: int
     locate_media_resolution: str
@@ -74,6 +76,8 @@ class PlanConfig(BaseModel):
     listing_queries_per_run: int
     tyre_ok_score: int
     listing_templates: list[str]
+    new_price_queries_per_run: int = 2
+    new_price_templates: list[str] = []
 
 
 class SearchConfig(BaseModel):
@@ -86,10 +90,20 @@ class SearchConfig(BaseModel):
     workers: int
 
 
+class ExtractConfig(BaseModel):
+    max_results_per_group: int
+    max_snippet_chars: int
+    listing_min_inr: int
+    listing_max_inr: int
+    outlier_factor: float
+
+
 class PricingConfig(BaseModel):
     year_tolerance: int
     min_comparables: int
     tyre_minor_wear_deduction_inr: int
+    min_listings_with_year: int = 3
+    max_from_top: int = 3
 
 
 class PathsConfig(BaseModel):
@@ -105,6 +119,7 @@ class AppConfig(BaseModel):
     confirm: ConfirmConfig
     plan: PlanConfig
     search: SearchConfig
+    extract: ExtractConfig
     pricing: PricingConfig
     paths: PathsConfig
     locate_video: LocateVideoConfig

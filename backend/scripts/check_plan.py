@@ -42,6 +42,7 @@ def run_case(path: Path) -> None:
     if result["response"] and result["response"]["answered_by"]:
         print("answered by", result["response"]["answered_by"]["model"])
     print("listing:", *q["listing"], sep="\n  ")
+    print("new price:", *q.get("new_price", []), sep="\n  ")
     for p in q["parts"]:
         print(f"part {p.get('part')} {p.get('finding_ids')}:", *p["queries"], sep="\n  ")
     for t in q["tyres"]:

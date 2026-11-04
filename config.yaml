@@ -22,7 +22,14 @@ models: # fill model names before each stage
     - { provider: openrouter, model: nvidia/nemotron-3.5-super-vl:free }
     - { provider: openrouter, model: google/gemma-4-26b-a4b-it:free }
   plan_timeout_per_model_sec: 120
-  extract: { provider: google_genai, model: TBD }
+  extract_chain: # copies prices out of trimmed search snippets; tried top to bottom. crouton-alpha: 54 s vs Nemotron 187 s on bumper_tyre (4 Nov); stealth model, may disappear
+    - { provider: openrouter, model: stealth/crouton-alpha }
+    - { provider: openrouter, model: nvidia/nemotron-3.5-super-vl:free }
+    - { provider: google_genai, model: gemini-3.8-flash }
+    - { provider: google_genai, model: gemini-3.5-flash }
+    - { provider: openrouter, model: google/gemma-4-26b-a4b-it:free }
+  extract_timeout_per_model_sec: 300
+  extract_reasoning_effort: low # OpenRouter entries only: none | minimal | low | medium | high; empty = model default
   temperature: 0.2
   timeout_sec: 180
   locate_media_resolution: medium
@@ -63,6 +70,13 @@ plan:
     - "buy used {make} {model} {year} {state} cars24 spinny cardekho"
     - "pre-owned {make} {model} {variant} {fuel} {year} price"
     - "used {make} {model} {year} price list {state}"
+  new_price_queries_per_run: 2 # today's new-car price (on-road / ex-showroom), picked at random from new_price_templates
+  new_price_templates: # no {year}: we want today's price of the model; {variant} templates skipped when variant is empty
+    - "{make} {model} {variant} on road price {city}"
+    - "{make} {model} {variant} ex-showroom price"
+    - "{make} {model} on road price {city} all variants"
+    - "{make} {model} {fuel} ex-showroom price list variants"
+    - "new {make} {model} {variant} {fuel} price {state}"
 
 search: # Tavily (node 7); free plan 1,000 credits/month, basic = 1 credit, advanced = 2
   depth: basic # basic | advanced
@@ -73,7 +87,16 @@ search: # Tavily (node 7); free plan 1,000 credits/month, basic = 1 credit, adva
   country: india # boosts results from this country
   workers: 4 # queries run in parallel
 
+extract: # trimming before the extract LLM (node 8)
+  max_results_per_group: 15 # per listing / part / tyre group, best Tavily score first
+  max_snippet_chars: 800
+  listing_min_inr: 100000 # car prices (listing / new price) under ₹1 lakh are dropped; nothing above listing_max_inr
+  listing_max_inr: 10000000
+  outlier_factor: 3 # parts/tyres (and several prices in one figure): drop above 3x or below 1/3 of the median (2+ values)
+
 pricing:
+  max_from_top: 3 # price max = average of the top 3 yearly rates, so one odd listing can't set the top
+  min_listings_with_year: 3 # fewer listings with a stated year → valuation unavailable
   tyre_minor_wear_deduction_inr: 5000 # fixed deduction per tyre the plan LLM marks minor_wear (from config, not the internet)
   year_tolerance: 1
   min_comparables: 3
