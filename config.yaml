@@ -52,7 +52,7 @@ confirm:
 plan:
   queries_per_part: 4          # LLM queries per damaged part and per tyre marked "replace"
   listing_queries_per_run: 4   # picked at random from listing_templates each run
-  tyre_ok_score: 7             # tyres scored this or higher skip the LLM; unscored tyres are not judged
+  tyre_ok_score: 7             # tyres scored below this, or with tread worn/bald (even unscored), go to the plan LLM
   listing_templates:           # Python fills these from 04_confirm.json; a template with an empty field is skipped.
                                # Keep at most 2 with {city}: small RTO towns (e.g. Dudu) find no listings, so any 4 picked include 2+ state/India queries.
     - "used {make} {model} {year} {fuel} price in {city}"
