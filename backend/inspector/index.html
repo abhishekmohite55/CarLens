@@ -26,6 +26,12 @@
   .node-waiting { opacity: 0.5; }
   .node-running { border: 1px solid #ffb020; color: #ffb020; }
   .node-done { border: 1px solid #8fd5b5; color: #8fd5b5; }
+  .cf-row { display: grid; grid-template-columns: 90px 260px 1fr; gap: 8px; align-items: center; margin: 4px 0; font-size: 13px; }
+  .cf-row input, .cf-row select { background: #111; color: #eee; border: 1px solid #444; padding: 4px 6px; font-family: monospace; }
+  .cf-flag input, .cf-flag select { border-color: #ffb020; }
+  .chip { display: inline-block; background: #2a2a2a; border: 1px solid #555; border-radius: 10px; padding: 1px 8px; margin: 0 4px 2px 0; cursor: pointer; font-size: 12px; }
+  .chip:hover { border-color: #a08fd6; }
+  .cf-note { background: #222; border-left: 3px solid #ffb020; padding: 6px 8px; margin: 6px 0; font-size: 13px; }
   .node-failed { border: 1px solid #e5484d; color: #e5484d; }
   .node-skipped { opacity: 0.4; text-decoration: line-through; }
   pre { background: #0a0a0a; padding: 10px; border-radius: 3px; overflow-x: auto; font-size: 11px; max-height: 300px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; }
@@ -118,6 +124,15 @@
   <div id="verify-content"></div>
 </div>
 
+<div class="section" id="confirm-section" style="display:none">
+  <label>You confirm</label>
+  <div style="margin:6px 0">
+    <button id="confirm-start-btn" onclick="doStartConfirm()" disabled>Start confirm</button>
+    <span id="confirm-btn-reason" class="status" style="margin-left:8px"></span>
+  </div>
+  <div id="confirm-content"></div>
+</div>
+
 <script>
 const NODES = [
   {id:"upload",  label:"Upload & check"},
@@ -139,6 +154,8 @@ let framesNodeStatus = 'waiting';
 let framesIsRunning = false;
 let verifyNodeStatus = 'waiting';
 let verifyIsRunning = false;
+let confirmPayload = null;
+let confirmDone = false;
 
 // Load config on start
 fetch('/api/config').then(r => r.json()).then(cfg => {
@@ -221,6 +238,8 @@ function loadRun(runId) {
   framesIsRunning = false;
   verifyNodeStatus = 'waiting';
   verifyIsRunning = false;
+  confirmPayload = null;
+  confirmDone = false;
   document.getElementById('run-id-input').value = runId;
   document.getElementById('run-section').style.display = '';
 
@@ -241,6 +260,8 @@ function loadRun(runId) {
     {path:'03_verify/ocr.json', label:'03_verify/ocr.json'},
     {path:'03_verify/request.json', label:'03_verify/request.json'},
     {path:'03_verify/response.json', label:'03_verify/response.json'},
+    {path:'04_confirm_payload.json', label:'04_confirm_payload.json'},
+    {path:'04_confirm.json', label:'04_confirm.json'},
   ].map(f =>
     `<a class="file-link" href="/api/runs/${runId}/files/${f.path}" target="_blank">${f.label}</a>`
   ).join('');
@@ -252,8 +273,11 @@ function loadRun(runId) {
   document.getElementById('verify-section').style.display = '';
   document.getElementById('verify-content').innerHTML = '';
   document.getElementById('verify-progress-msg').textContent = '';
+  document.getElementById('confirm-section').style.display = '';
+  document.getElementById('confirm-content').innerHTML = '';
   updateFramesButton();
   updateVerifyButton();
+  updateConfirmButton();
 
   // Load meta.json
   fetch(`/api/runs/${runId}/files/meta.json`)
@@ -339,7 +363,14 @@ function loadRun(runId) {
             document.getElementById('verify-progress-msg').textContent = '';
             loadVerifyFiles(currentRunId);
             updateVerifyButton();
+            updateConfirmButton();
           }
+        }
+        if (ev.node === 'confirm') {
+          if (ev.type === 'awaiting_confirm') { confirmPayload = ev.data; confirmDone = false; renderConfirmForm(); }
+          if (ev.type === 'node_done') { confirmDone = true; loadConfirmRecord(currentRunId); }
+          if (ev.type === 'node_skipped') { document.getElementById('confirm-content').innerHTML = '<em>Skipped: ' + escHtml(ev.data.reason || '') + '</em>'; }
+          updateConfirmButton();
         }
       }
     } catch {}
@@ -432,7 +463,7 @@ function loadLocateFiles(runId) {
 }
 
 function escHtml(s) {
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
 function updateFramesButton() {
@@ -689,6 +720,124 @@ function showVerifyTab(name) {
   document.querySelectorAll('#verify-section .tab-btn').forEach((b, i) => {
     b.classList.toggle('active', ['plate','attempts','findings','read','sent'][i] === name);
   });
+}
+
+// ---- Confirm (Stage 5) ----
+function updateConfirmButton() {
+  const btn = document.getElementById('confirm-start-btn');
+  const reason = document.getElementById('confirm-btn-reason');
+  if (!btn) return;
+  const waiting = confirmPayload && !confirmDone;
+  btn.disabled = verifyNodeStatus !== 'done' || waiting;
+  btn.textContent = confirmDone ? 'Re-start confirm' : 'Start confirm';
+  reason.textContent = verifyNodeStatus !== 'done' ? 'Verify not done' : waiting ? 'Waiting for you below' : '';
+}
+
+function doStartConfirm() {
+  if (!currentRunId) return;
+  document.getElementById('confirm-start-btn').disabled = true;
+  fetch('/api/runs/' + currentRunId + '/confirm/start', {method: 'POST'})
+    .then(r => r.json().then(d => ({ok: r.ok, data: d})))
+    .then(({ok, data}) => {
+      if (!ok) document.getElementById('confirm-btn-reason').textContent = data.error ? data.error.message : JSON.stringify(data);
+      updateConfirmButton();
+    })
+    .catch(e => { document.getElementById('confirm-btn-reason').textContent = 'Error: ' + e; updateConfirmButton(); });
+}
+
+function cfVal(f) { return f && typeof f === 'object' ? f.value : null; }
+function cfLow(f) {
+  return !f || f.value === null || f.value === '' || (f.confidence || 0) < confirmPayload.expand_threshold;
+}
+function cfChips(id, values) {
+  return (values || []).filter(v => v !== null && v !== '').map(v =>
+    `<span class="chip" data-v="${escHtml(String(v))}" onclick="document.getElementById('${id}').value=this.dataset.v">${escHtml(String(v))}</span>`).join('');
+}
+function cfSummary() {
+  const v = confirmPayload.vehicle || {};
+  const km = cfVal(confirmPayload.odometer_km);
+  return ['make','model','variant','year'].map(k => cfVal(v[k])).filter(Boolean).join(' ')
+    + (cfVal(v.fuel) ? ' · ' + cfVal(v.fuel) : '')
+    + (confirmPayload.city.value ? ' · ' + confirmPayload.city.value : '')
+    + (km !== null && km !== undefined ? ' · ' + Number(km).toLocaleString('en-IN') + ' km' : '');
+}
+
+function renderConfirmForm() {
+  const p = confirmPayload, v = p.vehicle || {};
+  const row = (label, id, field, flag, note) => `<div class="cf-row ${flag ? 'cf-flag' : ''}"><span>${label}</span>
+    <input id="${id}" value="${escHtml(cfVal(field) ?? '')}" placeholder="${note || ''}">
+    <span>${cfChips(id, field && field.alternatives)}</span></div>`;
+  const year = cfVal(v.year);
+  const yearOpts = ['<option value="">—</option>'].concat((p.year_options || []).map(y =>
+    `<option value="${y}" ${y === year ? 'selected' : ''}>${y}</option>`)).join('');
+  const kmVal = cfVal(p.odometer_km);
+  let html = `<div class="cf-note">AI detected: ${escHtml(cfSummary()) || '(nothing)'}
+    <button onclick="document.getElementById('cf-form').style.display=''" style="margin-left:8px">Edit details</button>
+    <button onclick="doConfirm()">Confirm and continue</button></div>`;
+  html += `<div id="cf-form" style="display:${p.expand ? '' : 'none'}">`;
+  html += row('Make', 'cf-make', v.make, cfLow(v.make));
+  html += row('Model', 'cf-model', v.model, cfLow(v.model));
+  html += row('Variant', 'cf-variant', v.variant, false, 'optional');
+  html += `<div class="cf-row ${cfLow(v.year) ? 'cf-flag' : ''}"><span>Year</span><select id="cf-year">${yearOpts}</select>
+    <span>${cfChips('cf-year', [year].concat((v.year && v.year.alternatives) || []))}</span></div>`;
+  html += row('Fuel', 'cf-fuel', v.fuel, false);
+  html += `<div class="cf-row"><span>Plate</span><input id="cf-plate" value="${escHtml((p.plate || {}).text || '')}">
+    <span>${cfChips('cf-plate', (p.plate || {}).alternatives)}</span></div>`;
+  html += `<div class="cf-row ${p.city.value ? '' : 'cf-flag'}"><span>City</span>
+    <input id="cf-city" list="cf-city-list" value="${escHtml(p.city.value || '')}" placeholder="type 2 letters">
+    <span>${cfChips('cf-city', p.city.candidates.slice(0, 8).map(c => c.city))}</span></div><datalist id="cf-city-list"></datalist>`;
+  if (p.odometer_found) {
+    html += `<div class="cf-row"><span>Km</span><input id="cf-km" type="number" min="0" value="${kmVal ?? ''}"><span></span></div>`;
+  }
+  html += '</div>';
+  if (!p.tyres_assessed) {
+    html += `<div class="cf-note">Tyres weren't visible. This may affect the report.
+      <button disabled title="Coming in Stage 6">Upload photo</button>
+      <label><input type="checkbox" id="cf-skip-tyre" checked> Skip</label></div>`;
+  }
+  if (!p.odometer_found) {
+    html += `<div class="cf-note">Odometer wasn't visible.
+      <input id="cf-km" type="number" min="0" placeholder="Type km" style="width:120px">
+      <button disabled title="Coming in Stage 6">Upload photo</button> (leave empty to skip)</div>`;
+  }
+  html += '<div id="cf-error" class="status"></div>';
+  document.getElementById('confirm-content').innerHTML = html;
+  const q = p.city.state ? '?state=' + encodeURIComponent(p.city.state) : '';
+  fetch('/api/cities' + q).then(r => r.json()).then(list => {
+    window.cfCities = list;
+    document.getElementById('cf-city-list').innerHTML = list.map(c => `<option value="${escHtml(c.city)}">`).join('');
+  }).catch(() => {});
+}
+
+function doConfirm() {
+  const get = id => { const el = document.getElementById(id); const t = el ? el.value.trim() : ''; return t === '' ? null : t; };
+  const year = get('cf-year'), km = get('cf-km'), city = get('cf-city');
+  const skipped = [];
+  const tyre = document.getElementById('cf-skip-tyre');
+  if (tyre && tyre.checked) skipped.push('tyre_photo');
+  if (!confirmPayload.odometer_found && km === null) skipped.push('odometer');
+  const known = (confirmPayload.city.candidates || []).concat(window.cfCities || []).find(c => c.city === city);
+  const body = {
+    car: {make: get('cf-make'), model: get('cf-model'), variant: get('cf-variant'),
+          year: year === null ? null : Number(year), fuel: get('cf-fuel')},
+    plate: get('cf-plate'), city: city,
+    state: known ? known.state : (city ? confirmPayload.city.state : null),
+    odometer_km: km === null ? null : Number(km), skipped: skipped,
+  };
+  fetch('/api/runs/' + currentRunId + '/confirm', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)})
+    .then(r => r.json().then(d => ({ok: r.ok, data: d})))
+    .then(({ok, data}) => {
+      if (!ok) document.getElementById('cf-error').textContent = data.error ? data.error.message : JSON.stringify(data.detail || data);
+    })
+    .catch(e => { document.getElementById('cf-error').textContent = 'Error: ' + e; });
+}
+
+function loadConfirmRecord(runId) {
+  fetch('/api/runs/' + runId + '/files/04_confirm.json').then(r => r.ok ? r.json() : null).then(rec => {
+    if (!rec) return;
+    document.getElementById('confirm-content').innerHTML =
+      '<div class="status">Saved 04_confirm.json — changed: ' + escHtml(rec.changed.join(', ') || 'nothing') + '</div><pre>' + escHtml(JSON.stringify(rec, null, 2)) + '</pre>';
+  }).catch(() => {});
 }
 
 // Auto-load run from ?run= URL param

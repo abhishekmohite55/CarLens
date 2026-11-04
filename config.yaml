@@ -41,7 +41,8 @@ frames:
   jpeg_quality: 90
 
 confirm:
-  expand_below_confidence: 0.6
+  expand_below_confidence: 0.6   # open the form if make, model or year is missing or below this (variant is optional)
+  year_range: 8                  # year picker shows the AI's year +- this, never past the current year
 
 pricing:
   year_tolerance: 1
@@ -50,3 +51,4 @@ pricing:
 paths:
   runs_dir: runs
   prompts_dir: prompts
+  rto_csv: rto_codes.csv   # RTO code -> city table (not in git)

@@ -65,6 +65,7 @@ class FramesConfig(BaseModel):
 
 class ConfirmConfig(BaseModel):
     expand_below_confidence: float
+    year_range: int = 8
 
 
 class PricingConfig(BaseModel):
@@ -75,6 +76,7 @@ class PricingConfig(BaseModel):
 class PathsConfig(BaseModel):
     runs_dir: str
     prompts_dir: str
+    rto_csv: str = "rto_codes.csv"
 
 
 class AppConfig(BaseModel):
