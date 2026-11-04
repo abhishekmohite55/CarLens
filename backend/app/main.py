@@ -8,17 +8,22 @@ from pathlib import Path
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from typing import Literal, Optional
 
-from .config import get_config
+from pydantic import BaseModel, Field
+
+from .config import PROJECT_ROOT, get_config
+from .confirm import load_rto
 from .events import sse_stream
-from .graph import run_graph
+from .graph import is_paused, resume_graph, run_graph
+from .nodes.confirm import PAYLOAD_FILE, RECORD_FILE, finish_confirm, load_verify_answer, skip_photos, start_confirm
 from .nodes.frames import load_locate_items, run_frames
 from .nodes.frames import try_claim as frames_try_claim
 from .nodes.verify import run_verify
 from .nodes.verify import try_claim as verify_try_claim
 from .llm.tracing import _get_client as _warmup_tracing
 from .nodes.upload import process_upload
-from .runs import events_path, run_dir
+from .runs import append_event, events_path, run_dir
 
 # run_ids that have started or are starting the graph
 _started: set[str] = set()
@@ -189,6 +194,90 @@ def api_run_verify(run_id: str):
 
     threading.Thread(target=run_verify, args=(run_id,), kwargs={"claimed": True}, daemon=True).start()
     return {"started": True}
+
+
+class CarAnswer(BaseModel):
+    make: Optional[str] = None
+    model: Optional[str] = None
+    variant: Optional[str] = None
+    year: Optional[int] = Field(None, ge=1950, le=2100)
+    fuel: Optional[str] = None
+
+
+class ConfirmAnswer(BaseModel):
+    car: CarAnswer
+    plate: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    odometer_km: Optional[int] = Field(None, ge=0, le=2_000_000)
+    skipped: list[Literal["tyre_photo", "odometer"]] = []
+
+
+_confirming: set[str] = set()
+_confirm_lock = threading.Lock()
+
+
+@app.post("/api/runs/{run_id}/confirm/start")
+def api_confirm_start(run_id: str):
+    """Dev (used by /inspector): show the confirm step on a run whose graph already ended after verify."""
+    rd = run_dir(run_id)
+    if not rd.exists():
+        raise HTTPException(404, detail=f"Run '{run_id}' not found.")
+    if not load_verify_answer(run_id):
+        return JSONResponse(status_code=409, content={
+            "error": {"code": "no_verify_result", "message": "Verify has no answer for this run."}
+        })
+    if is_paused(run_id):
+        return JSONResponse(status_code=409, content={
+            "error": {"code": "already_waiting", "message": "This run is already waiting for confirm."}
+        })
+    (rd / PAYLOAD_FILE).unlink(missing_ok=True)
+    (rd / RECORD_FILE).unlink(missing_ok=True)
+    start_confirm(run_id)
+    return {"started": True}
+
+
+@app.post("/api/runs/{run_id}/confirm")
+def api_confirm(run_id: str, answer: ConfirmAnswer):
+    rd = run_dir(run_id)
+    if not rd.exists():
+        raise HTTPException(404, detail=f"Run '{run_id}' not found.")
+    payload_path = rd / PAYLOAD_FILE
+    with _confirm_lock:
+        if not payload_path.exists():
+            return JSONResponse(status_code=409, content={
+                "error": {"code": "not_waiting", "message": "This run is not waiting for confirm."}
+            })
+        if (rd / RECORD_FILE).exists() or run_id in _confirming:
+            return JSONResponse(status_code=409, content={
+                "error": {"code": "already_confirmed", "message": "This run is already confirmed."}
+            })
+        _confirming.add(run_id)
+    data = answer.model_dump()
+    try:
+        if is_paused(run_id):
+            threading.Thread(target=resume_graph, args=(run_id, data), daemon=True).start()
+        else:  # dev path: run started with "Start confirm", no graph waiting
+            finish_confirm(run_id, json.loads(payload_path.read_text(encoding="utf-8")), data)
+            skip_photos(run_id)
+            append_event(run_id, "pipeline", "run_done", {"status": "partial"})
+    finally:
+        _confirming.discard(run_id)  # 04_confirm.json now guards repeats
+    return {"confirmed": True}
+
+
+@app.get("/api/cities")
+def api_cities(state: str = ""):
+    """City type-ahead list from the RTO table, optionally one state. The browser filters as you type."""
+    rows = load_rto(PROJECT_ROOT / get_config().paths.rto_csv)
+    seen, out = set(), []
+    for r in rows:
+        if r["city"].lower().startswith("statewide") or (state and r["state"] != state):
+            continue
+        if (r["city"], r["state"]) not in seen:
+            seen.add((r["city"], r["state"]))
+            out.append({"city": r["city"], "state": r["state"]})
+    return sorted(out, key=lambda c: c["city"])
 
 
 @app.get("/api/runs/{run_id}/files/{path:path}")
