@@ -2,10 +2,11 @@ from app.search import dedupe_urls, flatten_queries, search_totals
 
 
 def test_flatten_queries_order_and_kinds():
-    q = {"listing": ["l1"], "parts": [{"part": "door", "queries": ["p1", "p2"]}],
+    q = {"listing": ["l1"], "new_price": ["n1"], "parts": [{"part": "door", "queries": ["p1", "p2"]}],
          "tyres": [{"item_id": "L5", "tier": "replace", "queries": ["t1"]}, {"item_id": "L6", "tier": "ok", "queries": []}]}
     assert flatten_queries(q) == [
         {"kind": "listing", "for": None, "query": "l1"},
+        {"kind": "new_price", "for": None, "query": "n1"},
         {"kind": "part", "for": "door", "query": "p1"},
         {"kind": "part", "for": "door", "query": "p2"},
         {"kind": "tyre", "for": "L5", "query": "t1"},

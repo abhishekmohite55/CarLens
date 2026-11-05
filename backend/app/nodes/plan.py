@@ -47,7 +47,9 @@ def make_plan(confirm: dict, findings: list[dict], emit, callbacks: list, metada
                                      cfg.plan.listing_templates, cfg.plan.listing_queries_per_run, random.Random(seed))
     damage = damage_findings(findings)
     tyres = tyres_to_judge(findings, cfg.plan.tyre_ok_score)
-    queries = {"listing": listing, "listing_seed": seed, "llm_called": bool(damage or tyres),
+    new_price, _ = listing_queries(confirm.get("car") or {}, {"city": confirm.get("city"), "state": confirm.get("state")},
+                                   cfg.plan.new_price_templates, cfg.plan.new_price_queries_per_run, random.Random(seed))
+    queries = {"listing": listing, "new_price": new_price, "listing_seed": seed, "llm_called": bool(damage or tyres),
                "parts": [], "tyres": [], "tyres_not_seen": tyres_not_seen(findings), "problems": []}
     if len(listing) < cfg.plan.listing_queries_per_run:
         queries["problems"].append(f"{len(listing)} of {cfg.plan.listing_queries_per_run} listing queries"
@@ -125,10 +127,10 @@ def _run_plan_inner(run_id: str) -> None:
     if q["llm_called"] and result["response"]["parsed"] is None:
         append_event(run_id, "plan", "node_failed", {"error": "Every plan model failed", "files": files})
         return
-    total = len(q["listing"]) + sum(len(p["queries"]) for p in q["parts"]) + sum(len(t["queries"]) for t in q["tyres"])
+    total = len(q["listing"]) + len(q.get("new_price") or []) + sum(len(p["queries"]) for p in q["parts"]) + sum(len(t["queries"]) for t in q["tyres"])
     who = result["response"]["answered_by"]["model"] if q["llm_called"] else "no LLM (no damage)"
     append_event(run_id, "plan", "packet", {"from": "plan", "to": "search", "label": f"{total} queries"})
     append_event(run_id, "plan", "node_done", {
-        "summary": f"{total} queries ({len(q['listing'])} listing, {len(q['parts'])} parts, "
+        "summary": f"{total} queries ({len(q['listing'])} listing, {len(q.get('new_price') or [])} new price, {len(q['parts'])} parts, "
                    f"{len(q['tyres'])} tyres) by {who}; {len(q['problems'])} problems",
         "files": files})

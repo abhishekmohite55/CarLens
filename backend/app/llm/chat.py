@@ -13,15 +13,16 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 
 def make_chat_model(provider: str, model: str, temperature: float, timeout_sec: int,
-                    thinking_level: str | None):
+                    thinking_level: str | None, reasoning_effort: str | None = None):
     if provider == "google_genai":
         extra = {"thinking_level": thinking_level} if thinking_level else {}
         return init_chat_model(model, model_provider=provider, temperature=temperature,
                                timeout=timeout_sec, max_retries=1,
                                response_mime_type="application/json", **extra)
     if provider == "openrouter":
+        extra = {"reasoning": {"effort": reasoning_effort}} if reasoning_effort else {}
         return init_chat_model(model, model_provider=provider, temperature=temperature,
-                               timeout=timeout_sec * 1000, max_retries=0)
+                               timeout=timeout_sec * 1000, max_retries=0, **extra)
     raise ValueError(f"unknown provider {provider!r}")
 
 
@@ -60,6 +61,7 @@ def ask_chain(
     callbacks: list,
     metadata: dict | None = None,
     normalise: Callable[[Any], tuple[Any, list[str]]] | None = None,
+    reasoning_effort: str | None = None,  # OpenRouter entries only (thinking_level is Gemini only)
 ) -> dict:
     """Try entries in order; per-model timeout enforced via daemon thread.
 
@@ -78,7 +80,7 @@ def ask_chain(
         def call(e=entry) -> None:
             try:
                 msgs = build_messages(e)
-                m = make_chat_model(e.provider, e.model, temperature, timeout_sec, thinking_level)
+                m = make_chat_model(e.provider, e.model, temperature, timeout_sec, thinking_level, reasoning_effort)
                 cfg = {"callbacks": callbacks, "metadata": metadata or {}} if callbacks else {}
                 box["msg"] = m.invoke(msgs, config=cfg)
             except Exception as exc:  # noqa: BLE001
