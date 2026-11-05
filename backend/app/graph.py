@@ -14,6 +14,8 @@ from .nodes.verify import run_verify
 from .nodes.confirm import finish_confirm, skip_photos, start_confirm
 from .nodes.plan import run_plan
 from .nodes.search import run_search
+from .nodes.extract import run_extract
+from .nodes.pricing import run_pricing
 from .runs import append_event
 
 _conn: sqlite3.Connection | None = None
@@ -39,6 +41,8 @@ class GraphState(TypedDict):
     confirm_status: str
     plan_status: str
     search_status: str
+    extract_status: str
+    pricing_status: str
 
 
 def _locate_node(state: GraphState) -> GraphState:
@@ -80,6 +84,16 @@ def _search_node(state: GraphState) -> GraphState:
     return {**state, "search_status": "done"}
 
 
+def _extract_node(state: GraphState) -> GraphState:
+    run_extract(state["run_id"])
+    return {**state, "extract_status": "done"}
+
+
+def _pricing_node(state: GraphState) -> GraphState:
+    run_pricing(state["run_id"])
+    return {**state, "pricing_status": "done"}
+
+
 def _build_graph() -> object:
     g = StateGraph(GraphState)
     g.add_node("locate", _locate_node)
@@ -96,7 +110,11 @@ def _build_graph() -> object:
     g.add_edge("photos", "plan")
     g.add_node("search", _search_node)
     g.add_edge("plan", "search")
-    g.add_edge("search", END)
+    g.add_node("extract", _extract_node)
+    g.add_edge("search", "extract")
+    g.add_node("pricing", _pricing_node)
+    g.add_edge("extract", "pricing")
+    g.add_edge("pricing", END)
     return g.compile(checkpointer=_get_checkpointer())
 
 
@@ -131,7 +149,8 @@ def _invoke(run_id: str, graph_input) -> None:
 
 def run_graph(run_id: str) -> None:
     _invoke(run_id, {"run_id": run_id, "locate_status": "waiting", "frames_status": "waiting",
-                     "verify_status": "waiting", "confirm_status": "waiting", "plan_status": "waiting", "search_status": "waiting"})
+                     "verify_status": "waiting", "confirm_status": "waiting", "plan_status": "waiting", "search_status": "waiting",
+                     "extract_status": "waiting", "pricing_status": "waiting"})
 
 
 def resume_graph(run_id: str, answer: dict) -> None:

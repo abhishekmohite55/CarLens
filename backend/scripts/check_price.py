@@ -17,6 +17,7 @@ from datetime import datetime
 from pathlib import Path
 
 from app.config import PROJECT_ROOT, get_config
+from app.nodes.pricing import pricing_settings
 from app.pricing import price_report
 
 RUNS = PROJECT_ROOT / "runs"
@@ -45,10 +46,8 @@ def latest_extracts() -> list[Path]:
 def run(extract: Path) -> None:
     p = get_config().pricing
     figs = _load(extract / "figures.json")
-    settings = {"min_listings_with_year": p.min_listings_with_year, "max_from_top": p.max_from_top, "min_listing_age": p.min_listing_age,
-                "tyre_minor_wear_deduction_inr": p.tyre_minor_wear_deduction_inr}
     out = price_report(figs["kept"], plan_queries_for(extract).get("tyres") or [], figs["car"],
-                       datetime.now().year, settings)
+                       datetime.now().year, pricing_settings())
     (extract / "price.json").write_text(json.dumps(out, indent=2, ensure_ascii=False), encoding="utf-8")
 
     car = figs["car"]

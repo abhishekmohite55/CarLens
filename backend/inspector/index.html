@@ -151,6 +151,24 @@
   <div id="search-content"></div>
 </div>
 
+<div class="section" id="extract-section" style="display:none">
+  <label>Read prices (LLM) <span id="extract-progress-msg" style="font-size:12px;color:#ffb020;margin-left:8px"></span></label>
+  <div style="margin:6px 0">
+    <button id="extract-btn" onclick="doRunExtract()" disabled>Run extract</button>
+    <span id="extract-btn-reason" class="status" style="margin-left:8px"></span>
+  </div>
+  <div id="extract-content"></div>
+</div>
+
+<div class="section" id="pricing-section" style="display:none">
+  <label>Price (Python) <span id="pricing-progress-msg" style="font-size:12px;color:#ffb020;margin-left:8px"></span></label>
+  <div style="margin:6px 0">
+    <button id="pricing-btn" onclick="doRunPricing()" disabled>Run pricing</button>
+    <span id="pricing-btn-reason" class="status" style="margin-left:8px"></span>
+  </div>
+  <div id="pricing-content"></div>
+</div>
+
 <script>
 const NODES = [
   {id:"upload",  label:"Upload & check"},
@@ -178,6 +196,10 @@ let planNodeStatus = 'waiting';
 let planIsRunning = false;
 let searchNodeStatus = 'waiting';
 let searchIsRunning = false;
+let extractNodeStatus = 'waiting';
+let extractIsRunning = false;
+let pricingNodeStatus = 'waiting';
+let pricingIsRunning = false;
 
 // Load config on start
 fetch('/api/config').then(r => r.json()).then(cfg => {
@@ -266,6 +288,10 @@ function loadRun(runId) {
   planIsRunning = false;
   searchNodeStatus = 'waiting';
   searchIsRunning = false;
+  extractNodeStatus = 'waiting';
+  extractIsRunning = false;
+  pricingNodeStatus = 'waiting';
+  pricingIsRunning = false;
   document.getElementById('run-id-input').value = runId;
   document.getElementById('run-section').style.display = '';
 
@@ -292,6 +318,12 @@ function loadRun(runId) {
     {path:'06_plan/response.json', label:'06_plan/response.json'},
     {path:'06_plan/queries.json', label:'06_plan/queries.json'},
     {path:'07_search/results.json', label:'07_search/results.json'},
+    {path:'08_extract/trimmed.txt', label:'08_extract/trimmed.txt'},
+    {path:'08_extract/trimmed.json', label:'08_extract/trimmed.json'},
+    {path:'08_extract/request.json', label:'08_extract/request.json'},
+    {path:'08_extract/response.json', label:'08_extract/response.json'},
+    {path:'08_extract/figures.json', label:'08_extract/figures.json'},
+    {path:'09_report/price.json', label:'09_report/price.json'},
   ].map(f =>
     `<a class="file-link" href="/api/runs/${runId}/files/${f.path}" target="_blank">${f.label}</a>`
   ).join('');
@@ -311,8 +343,15 @@ function loadRun(runId) {
   document.getElementById('search-section').style.display = '';
   document.getElementById('search-content').innerHTML = '';
   document.getElementById('search-progress-msg').textContent = '';
+  ['extract', 'pricing'].forEach(n => {
+    document.getElementById(n + '-section').style.display = '';
+    document.getElementById(n + '-content').innerHTML = '';
+    document.getElementById(n + '-progress-msg').textContent = '';
+  });
   updatePlanButton();
   updateSearchButton();
+  updateExtractButton();
+  updatePricingButton();
   updateFramesButton();
   updateVerifyButton();
   updateConfirmButton();
@@ -433,6 +472,28 @@ function loadRun(runId) {
             loadSearchResults(currentRunId, ev);
           }
           updateSearchButton();
+          updateExtractButton();
+        }
+        if (ev.node === 'extract') {
+          if (ev.type === 'node_started') { extractIsRunning = true; document.getElementById('extract-content').innerHTML = ''; }
+          if (ev.type === 'node_progress') document.getElementById('extract-progress-msg').textContent = ev.data.message || '';
+          if (ev.type === 'node_done' || ev.type === 'node_failed' || ev.type === 'node_skipped') {
+            extractIsRunning = false;
+            extractNodeStatus = ev.type === 'node_done' ? 'done' : ev.type === 'node_failed' ? 'failed' : 'skipped';
+            document.getElementById('extract-progress-msg').textContent = '';
+            loadExtractFiles(currentRunId, ev);
+          }
+          updateExtractButton();
+          updatePricingButton();
+        }
+        if (ev.node === 'pricing') {
+          if (ev.type === 'node_started') { pricingIsRunning = true; document.getElementById('pricing-content').innerHTML = ''; }
+          if (ev.type === 'node_done' || ev.type === 'node_failed' || ev.type === 'node_skipped') {
+            pricingIsRunning = false;
+            pricingNodeStatus = ev.type === 'node_done' ? 'done' : ev.type === 'node_failed' ? 'failed' : 'skipped';
+            loadPricing(currentRunId, ev);
+          }
+          updatePricingButton();
         }
       }
     } catch {}
@@ -939,6 +1000,7 @@ function loadPlanFiles(runId, ev) {
       html += '<div class="status">' + (q.llm_called ? 'LLM called' : 'No damage: listing queries only, no LLM call')
         + (res && res.answered_by ? ' — answered by ' + escHtml(res.answered_by.model) : '') + '</div>';
       html += '<b>Listing</b> (seed ' + q.listing_seed + ')' + list(q.listing);
+      html += '<b>New price</b>' + list(q.new_price);
       q.parts.forEach(p => { html += '<b>' + escHtml(p.part) + '</b> ' + escHtml((p.finding_ids || []).join(', '))
         + ' · ' + escHtml([p.issue, p.severity, p.action].filter(Boolean).join(' / ')) + list(p.queries); });
       q.tyres.forEach(t => { html += '<b>Tyre ' + escHtml(t.item_id) + ' ' + escHtml(t.position || '') + '</b>: '
@@ -989,6 +1051,95 @@ function loadSearchResults(runId, ev) {
       });
     }
     document.getElementById('search-content').innerHTML = html;
+  });
+}
+
+// ---- Extract + pricing (Stage 7) ----
+const inr = v => v == null ? '-' : '₹' + Math.round(v).toLocaleString('en-IN');
+const link = (url, text) => url ? '<a href="' + escHtml(url) + '" target="_blank" rel="noopener">' + escHtml(text) + '</a>' : escHtml(text);
+
+function updateRerunButton(node, prevStatus, prevLabel, status, running, label) {
+  const btn = document.getElementById(node + '-btn');
+  if (!btn) return;
+  btn.disabled = prevStatus !== 'done' || running;
+  btn.textContent = (status === 'done' || status === 'failed') ? 'Re-run ' + label : 'Run ' + label;
+  document.getElementById(node + '-btn-reason').textContent = prevStatus !== 'done' ? prevLabel + ' not done' : running ? 'Running…' : '';
+}
+function updateExtractButton() { updateRerunButton('extract', searchNodeStatus, 'Search', extractNodeStatus, extractIsRunning, 'extract'); }
+function updatePricingButton() { updateRerunButton('pricing', extractNodeStatus, 'Extract', pricingNodeStatus, pricingIsRunning, 'pricing'); }
+
+function doRunNode(node) {
+  if (!currentRunId) return;
+  document.getElementById(node + '-btn').disabled = true;
+  fetch('/api/runs/' + currentRunId + '/' + node, {method: 'POST'})
+    .then(r => r.json().then(d => ({ok: r.ok, data: d})))
+    .then(({ok, data}) => {
+      if (!ok) document.getElementById(node + '-btn-reason').textContent = data.error ? data.error.message : JSON.stringify(data);
+    })
+    .catch(e => { document.getElementById(node + '-btn-reason').textContent = 'Error: ' + e; });
+}
+function doRunExtract() { doRunNode('extract'); }
+function doRunPricing() { doRunNode('pricing'); }
+
+function loadExtractFiles(runId, ev) {
+  const get = f => fetch('/api/runs/' + runId + '/files/08_extract/' + f).then(r => r.ok ? r.json() : null).catch(() => null);
+  Promise.all([get('trimmed.json'), get('request.json'), get('response.json'), get('figures.json')]).then(([t, req, res, f]) => {
+    let html = ev.type !== 'node_done' ? '<div class="cf-note">' + escHtml(ev.data.error || ev.data.reason || '') + '</div>' : '';
+    if (t) html += '<div class="status">Trimmed: ' + escHtml(JSON.stringify(t.stats)) + '</div>';
+    if (res) {
+      const a = (res.attempts || []).slice(-1)[0] || {};
+      html += '<div class="status">' + (res.answered_by ? 'Answered by ' + escHtml(res.answered_by.model) : 'No model answered')
+        + ' · ' + (a.seconds ?? '-') + ' s · tokens ' + escHtml(JSON.stringify(a.tokens || {})) + ' · ' + (res.attempts || []).length + ' attempt(s)</div>';
+    }
+    if (f) {
+      html += '<b>Per group</b><table><tr><th>group</th><th>figures</th><th>min</th><th>max</th></tr>'
+        + Object.entries(f.summary).map(([g, s]) => '<tr><td>' + escHtml(g) + '</td><td>' + s.figures + '</td><td>' + inr(s.min_inr) + '</td><td>' + inr(s.max_inr) + '</td></tr>').join('')
+        + '</table>';
+      const row = x => '<tr><td>' + escHtml(x.source || '') + '</td><td>' + escHtml(x.group || '') + '</td><td>' + escHtml(x.type || '') + '</td><td>'
+        + escHtml((x.price_text || []).join(' – ')) + '</td><td>' + (x.inr ? x.inr.map(inr).join(' – ') : '-') + '</td><td>'
+        + escHtml([x.year, x.km != null ? x.km + ' km' : null, x.variant, x.tyre_size].filter(v => v != null).join(' · ')) + '</td><td>'
+        + (x.reason ? escHtml(x.reason) : link(x.url, 'link')) + '</td></tr>';
+      const head = '<tr><th>S</th><th>group</th><th>type</th><th>price text</th><th>₹</th><th>year · km · variant · tyre</th><th>link / reason</th></tr>';
+      html += '<b>Kept (' + f.kept.length + ')</b><table>' + head + f.kept.map(row).join('') + '</table>';
+      const dropped = f.rejected.concat(f.outliers);
+      html += '<details><summary>Rejected + outliers (' + dropped.length + ')</summary><table>' + head + dropped.map(row).join('') + '</table></details>';
+    }
+    if (req) html += '<details><summary>Sent (prompts)</summary><pre>' + escHtml(req.system_prompt + '\n\n---\n\n' + req.user_prompt) + '</pre></details>';
+    if (res) html += '<details><summary>Received (attempts, raw JSON)</summary><pre>' + escHtml(JSON.stringify(res, null, 2)) + '</pre></details>';
+    document.getElementById('extract-content').innerHTML = html;
+  });
+}
+
+function loadPricing(runId, ev) {
+  const get = f => fetch('/api/runs/' + runId + '/files/' + f).then(r => r.ok ? r.json() : null).catch(() => null);
+  Promise.all([get('09_report/price.json'), get('08_extract/figures.json')]).then(([p, f]) => {
+    let html = ev.type === 'node_failed' || ev.type === 'node_skipped' ? '<div class="cf-note">' + escHtml(ev.data.error || ev.data.reason || '') + '</div>' : '';
+    if (p) {
+      const urls = {};
+      ((f && f.kept) || []).forEach(x => { urls[x.source] = urls[x.source] || x.url; });
+      const src = list => (list || []).map(s => link(urls[s], s)).join(', ');
+      const np = p.new_price;
+      html += '<b>New price</b>: ' + (np ? inr(np.value) + ' (' + escHtml(np.type) + ', variant match: ' + escHtml(np.variant_match || String(np.variant_matched))
+        + ', from ' + src(np.sources) + ')' : 'none found') + '<br>';
+      if (p.listings_used) {
+        html += '<b>Listings used (' + p.listings_used.length + ')</b><table><tr><th>S</th><th>year</th><th>₹</th><th>age</th><th>kept / year</th></tr>'
+          + p.listings_used.map(x => '<tr><td>' + link(urls[x.source], x.source) + '</td><td>' + x.year + '</td><td>' + inr(x.price) + '</td><td>' + x.age + '</td><td>' + x.rate.toFixed(3) + '</td></tr>').join('')
+          + '</table>';
+        html += '<details><summary>Listings dropped (' + p.listings_dropped.length + ')</summary><ul>'
+          + p.listings_dropped.map(x => '<li>' + link(urls[x.source], x.source) + ' ' + x.year + ' ' + inr(x.price) + ': ' + escHtml(x.reason) + '</li>').join('') + '</ul></details>';
+      }
+      html += '<b>Repairs</b> (total ' + inr(p.repairs.total) + ')<ul>' + p.repairs.items.map(i => '<li>' + escHtml(i.for) + ': ' + inr(i.cost) + ' — '
+        + escHtml(i.note || i.fixed || '') + (i.sources ? ' · ' + i.sources.map((u, n) => link(u, 'link ' + (n + 1))).join(', ') : '') + '</li>').join('') + '</ul>';
+      if (p.status === 'ok') {
+        const k = p.yearly_value_kept;
+        html += '<div>Yearly value kept: median ' + k.median.toFixed(3) + ', top-3 average ' + k.max.toFixed(3) + '; car age ' + p.car_age_years + ' years</div>';
+        html += '<div>Fair value: ' + inr(p.fair_value.median) + ' – ' + inr(p.fair_value.max) + '</div>';
+        html += '<div style="font-size:18px;margin-top:6px"><b>Price after repairs: ' + inr(p.after_repairs.median) + ' – ' + inr(p.after_repairs.max) + '</b></div>';
+      } else {
+        html += '<div class="cf-note">Valuation unavailable: ' + escHtml(p.reason) + '</div>';
+      }
+    }
+    document.getElementById('pricing-content').innerHTML = html;
   });
 }
 

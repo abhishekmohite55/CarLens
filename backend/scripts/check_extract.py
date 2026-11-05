@@ -20,11 +20,8 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 
-from langchain_core.messages import HumanMessage, SystemMessage
-
 from app.config import PROJECT_ROOT, ModelEntry, get_config  # also loads .env
-from app.extract import check_figures, drop_outliers, group_summary
-from app.llm.chat import ask_chain
+from app.nodes.extract import make_extract
 
 RUNS = PROJECT_ROOT / "runs"
 FAKE = Path(__file__).parent / "fake_plan"
@@ -51,47 +48,25 @@ def latest_trims() -> list[Path]:
 
 def run_trim(trim: Path, entries: list[ModelEntry] | None = None, tag: str = "", quiet: bool = False) -> dict:
     """Extract one trim folder through `entries` (default models.extract_chain). Returns a one-line summary."""
-    cfg = get_config()
-    entries = entries or cfg.models.extract_chain
+    entries = entries or get_config().models.extract_chain
     say = (lambda *a, **k: None) if quiet else print
-    e = cfg.extract
     trimmed, text, car = _load(trim / "trimmed.json"), (trim / "trimmed.txt").read_text(encoding="utf-8"), car_for(trim)
-    prompts = PROJECT_ROOT / cfg.paths.prompts_dir
-    system_prompt = (prompts / "extract_prices.system.md").read_text(encoding="utf-8")
-    user_prompt = (prompts / "extract_prices.user.md").read_text(encoding="utf-8").format(trimmed_text=text)
     out = trim / f"extract_{datetime.now():%H%M%S}{tag}"
     out.mkdir()
-    say(f"\n== {trim.relative_to(RUNS)} ({len(user_prompt)} chars)")
-    (out / "request.json").write_text(json.dumps({
-        "node": "extract", "chain": [{"provider": m.provider, "model": m.model} for m in entries],
-        "timeout_per_model_sec": cfg.models.extract_timeout_per_model_sec,
-        "reasoning_effort": cfg.models.extract_reasoning_effort,
-        "system_prompt": system_prompt, "user_prompt": user_prompt, "sent_at": datetime.now().isoformat()},
-        indent=2, ensure_ascii=False), encoding="utf-8")
-
-    answer = ask_chain(
-        entries,
-        lambda entry: [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)],
-        temperature=cfg.models.temperature, timeout_sec=cfg.models.extract_timeout_per_model_sec, thinking_level=None,
-        validate=lambda p: None if isinstance(p, dict) and isinstance(p.get("figures"), list) else "no figures list",
-        emit=say, callbacks=[], reasoning_effort=cfg.models.extract_reasoning_effort)
-    (out / "response.json").write_text(json.dumps(answer, indent=2, ensure_ascii=False), encoding="utf-8")
+    say(f"\n== {trim.relative_to(RUNS)} ({len(text)} chars trimmed)")
+    result = make_extract(trimmed, text, car, emit=say, callbacks=[], entries=entries)
+    for name in ("request", "response", "figures"):
+        if result[name] is not None:
+            (out / f"{name}.json").write_text(json.dumps(result[name], indent=2, ensure_ascii=False), encoding="utf-8")
+    answer, figs = result["response"], result["figures"]
     last = answer["attempts"][-1] if answer["attempts"] else {}
     row = {"model": entries[-1].model, "seconds": last.get("seconds"), "tokens": last.get("tokens"),
            "error": last.get("error"), "figures": None, "kept": None, "rejected": None, "folder": out}
-    if answer["parsed"] is None:
+    if figs is None:
         say("every extract model failed; saved", out)
         return row
 
-    limits = {"listing_min_inr": e.listing_min_inr, "listing_max_inr": e.listing_max_inr,
-              "year_tolerance": cfg.pricing.year_tolerance, "outlier_factor": e.outlier_factor}
-    kept, rejected = check_figures(answer["parsed"]["figures"], trimmed, car, limits)
-    kept, outliers = drop_outliers(kept, e.outlier_factor)
-    summary = group_summary(kept)
-    (out / "figures.json").write_text(json.dumps({"answered_by": answer["answered_by"], "car": car, "summary": summary,
-                                                  "kept": kept, "rejected": rejected, "outliers": outliers},
-                                                 indent=2, ensure_ascii=False), encoding="utf-8")
-
+    kept, rejected, outliers, summary = figs["kept"], figs["rejected"], figs["outliers"], figs["summary"]
     row.update(figures=len(answer["parsed"]["figures"]), kept=len(kept), rejected=len(rejected) + len(outliers))
     say("answered by", answer["answered_by"]["model"],
           f"| figures {len(answer['parsed']['figures'])}: kept {len(kept)}, rejected {len(rejected)}, outliers {len(outliers)}")

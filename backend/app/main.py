@@ -24,6 +24,10 @@ from .nodes.plan import run_plan
 from .nodes.plan import try_claim as plan_try_claim
 from .nodes.search import run_search
 from .nodes.search import try_claim as search_try_claim
+from .nodes.extract import run_extract
+from .nodes.extract import try_claim as extract_try_claim
+from .nodes.pricing import run_pricing
+from .nodes.pricing import try_claim as pricing_try_claim
 from .nodes.verify import try_claim as verify_try_claim
 from .llm.tracing import _get_client as _warmup_tracing
 from .nodes.upload import process_upload
@@ -268,6 +272,8 @@ def api_confirm(run_id: str, answer: ConfirmAnswer):
             def _plan_then_done():
                 run_plan(run_id)
                 run_search(run_id)
+                run_extract(run_id)
+                run_pricing(run_id)
                 append_event(run_id, "pipeline", "run_done", {"status": "partial"})
             threading.Thread(target=_plan_then_done, daemon=True).start()
     finally:
@@ -312,6 +318,46 @@ def api_run_search(run_id: str):
     if (rd / "07_search").exists():
         shutil.rmtree(rd / "07_search")
     threading.Thread(target=run_search, args=(run_id,), kwargs={"claimed": True}, daemon=True).start()
+    return {"started": True}
+
+
+@app.post("/api/runs/{run_id}/extract", status_code=202)
+def api_run_extract(run_id: str):
+    """Dev (used by /inspector): re-run only the extract node on a run with search results; deletes old 08_extract/."""
+    rd = run_dir(run_id)
+    if not rd.exists():
+        raise HTTPException(404, detail=f"Run '{run_id}' not found.")
+    if not (rd / "07_search" / "results.json").exists():
+        return JSONResponse(status_code=409, content={
+            "error": {"code": "no_results", "message": "Search has no results for this run."}
+        })
+    if not extract_try_claim(run_id):
+        return JSONResponse(status_code=409, content={
+            "error": {"code": "already_running", "message": "Extract is already running for this run."}
+        })
+    if (rd / "08_extract").exists():
+        shutil.rmtree(rd / "08_extract")
+    threading.Thread(target=run_extract, args=(run_id,), kwargs={"claimed": True}, daemon=True).start()
+    return {"started": True}
+
+
+@app.post("/api/runs/{run_id}/pricing", status_code=202)
+def api_run_pricing(run_id: str):
+    """Dev (used by /inspector): re-run only the pricing node on a run with extract figures; deletes old 09_report/."""
+    rd = run_dir(run_id)
+    if not rd.exists():
+        raise HTTPException(404, detail=f"Run '{run_id}' not found.")
+    if not (rd / "08_extract" / "figures.json").exists():
+        return JSONResponse(status_code=409, content={
+            "error": {"code": "no_figures", "message": "Extract has no figures for this run."}
+        })
+    if not pricing_try_claim(run_id):
+        return JSONResponse(status_code=409, content={
+            "error": {"code": "already_running", "message": "Pricing is already running for this run."}
+        })
+    if (rd / "09_report").exists():
+        shutil.rmtree(rd / "09_report")
+    threading.Thread(target=run_pricing, args=(run_id,), kwargs={"claimed": True}, daemon=True).start()
     return {"started": True}
 
 
