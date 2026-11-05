@@ -15,7 +15,12 @@ models: # fill model names before each stage
     - { provider: google_genai, model: gemini-3.5-flash }
     - { provider: openrouter, model: nvidia/nemotron-3.5-super-vl:free }
     - { provider: openrouter, model: google/gemma-4-26b-a4b-it:free }
-  photos: { provider: google_genai, model: TBD }
+  photos_chain: # reads the extra tyre/odometer photos added at confirm (Stage 6); tried top to bottom like verify_chain
+    - { provider: google_genai, model: gemini-3.8-flash }
+    - { provider: google_genai, model: gemini-3.5-flash }
+    - { provider: openrouter, model: nvidia/nemotron-3.5-super-vl:free }
+    - { provider: openrouter, model: google/gemma-4-26b-a4b-it:free }
+  photos_timeout_per_model_sec: 180
   plan_chain: # writes part/tyre search queries; tried top to bottom like verify_chain. Reorder freely.
     - { provider: google_genai, model: gemini-3.8-flash }
     - { provider: google_genai, model: gemini-3.5-flash }
@@ -55,6 +60,11 @@ frames:
 confirm:
   expand_below_confidence: 0.6 # open the form if make, model or year is missing or below this (variant is optional)
   year_range: 8 # year picker shows the AI's year +- this, never past the current year
+
+photos: # extra photos at confirm (Stage 6): 4 optional tyre slots + 1 odometer slot (only when the video read no km)
+  allowed_types: [jpg, jpeg, png, webp, heic] # heic: iPhone photos, decoded with pillow-heif
+  max_size_mb: 10
+  km_min_confidence: 0.8 # photo km replaces the confirmed km only at this confidence or higher (owner, 5 Nov)
 
 plan:
   queries_per_part: 4 # LLM queries per damaged part and per tyre marked "replace"

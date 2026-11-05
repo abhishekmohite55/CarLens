@@ -98,8 +98,8 @@ def prefill(payload: dict) -> dict:
     }
 
 
-def build_record(payload: dict, answer: dict) -> dict:
-    """04_confirm.json: final values, fields the user changed, skipped prompts, photos (empty until Stage 6)."""
+def build_record(payload: dict, answer: dict, photos: list[dict] | None = None) -> dict:
+    """04_confirm.json: final values, fields the user changed, skipped prompts, uploaded photos (05_photos/)."""
     start = prefill(payload)
     final = {
         "car": {name: (answer.get("car") or {}).get(name) for name in CAR_FIELDS},
@@ -110,4 +110,4 @@ def build_record(payload: dict, answer: dict) -> dict:
     }
     changed = [n for n in CAR_FIELDS if final["car"][n] != start["car"][n]]
     changed += [n for n in ("plate", "city", "state", "odometer_km") if final[n] != start[n]]
-    return {**final, "changed": changed, "skipped": list(answer.get("skipped") or []), "photos": []}
+    return {**final, "changed": changed, "skipped": list(answer.get("skipped") or []), "photos": list(photos or [])}

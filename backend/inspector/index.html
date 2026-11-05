@@ -133,6 +133,11 @@
   <div id="confirm-content"></div>
 </div>
 
+<div class="section" id="photos-section" style="display:none">
+  <label>Extra photos (AI) <span id="photos-progress-msg" style="font-size:12px;color:#ffb020;margin-left:8px"></span></label>
+  <div id="photos-content"></div>
+</div>
+
 <div class="section" id="plan-section" style="display:none">
   <label>Plan searches <span id="plan-progress-msg" style="font-size:12px;color:#ffb020;margin-left:8px"></span></label>
   <div style="margin:6px 0">
@@ -314,6 +319,9 @@ function loadRun(runId) {
     {path:'03_verify/response.json', label:'03_verify/response.json'},
     {path:'04_confirm_payload.json', label:'04_confirm_payload.json'},
     {path:'04_confirm.json', label:'04_confirm.json'},
+    {path:'05_photos/request.json', label:'05_photos/request.json'},
+    {path:'05_photos/response.json', label:'05_photos/response.json'},
+    {path:'05_photos/applied.json', label:'05_photos/applied.json'},
     {path:'06_plan/request.json', label:'06_plan/request.json'},
     {path:'06_plan/response.json', label:'06_plan/response.json'},
     {path:'06_plan/queries.json', label:'06_plan/queries.json'},
@@ -343,7 +351,7 @@ function loadRun(runId) {
   document.getElementById('search-section').style.display = '';
   document.getElementById('search-content').innerHTML = '';
   document.getElementById('search-progress-msg').textContent = '';
-  ['extract', 'pricing'].forEach(n => {
+  ['photos', 'extract', 'pricing'].forEach(n => {
     document.getElementById(n + '-section').style.display = '';
     document.getElementById(n + '-content').innerHTML = '';
     document.getElementById(n + '-progress-msg').textContent = '';
@@ -449,6 +457,13 @@ function loadRun(runId) {
           if (ev.type === 'node_skipped') { document.getElementById('confirm-content').innerHTML = '<em>Skipped: ' + escHtml(ev.data.reason || '') + '</em>'; }
           updateConfirmButton();
           updatePlanButton();
+        }
+        if (ev.node === 'photos') {
+          if (ev.type === 'node_progress') document.getElementById('photos-progress-msg').textContent = ev.data.message || '';
+          if (ev.type === 'node_done' || ev.type === 'node_failed' || ev.type === 'node_skipped') {
+            document.getElementById('photos-progress-msg').textContent = '';
+            loadPhotosFiles(currentRunId, ev);
+          }
         }
         if (ev.node === 'plan') {
           if (ev.type === 'node_started') { planIsRunning = true; document.getElementById('plan-content').innerHTML = ''; }
@@ -915,16 +930,25 @@ function renderConfirmForm() {
   html += '</div>';
   if (!p.tyres_assessed) {
     html += `<div class="cf-note">Tyres weren't visible. This may affect the report.
-      <button disabled title="Coming in Stage 6">Upload photo</button>
-      <label><input type="checkbox" id="cf-skip-tyre" checked> Skip</label></div>`;
+      Add tyre photos below, or <label><input type="checkbox" id="cf-skip-tyre" checked> Skip</label></div>`;
   }
   if (!p.odometer_found) {
     html += `<div class="cf-note">Odometer wasn't visible.
       <input id="cf-km" type="number" min="0" placeholder="Type km" style="width:120px">
-      <button disabled title="Coming in Stage 6">Upload photo</button> (leave empty to skip)</div>`;
+      or add an odometer photo below (leave both empty to skip)</div>`;
   }
+  const slots = PHOTO_TYRE_SLOTS.concat(p.odometer_found ? [] : ['odometer']);
+  html += '<div class="cf-note"><b>Extra photos (optional)</b>: a tyre photo replaces what the video showed for that tyre'
+    + (p.odometer_found ? '' : '; the odometer photo km is used when the AI is sure') + '.'
+    + '<div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:6px">' + slots.map(s =>
+      `<div style="width:130px"><div class="status">${s.replace('_', ' ')}</div>
+        <img id="ph-img-${s}" style="width:120px;display:none"><br>
+        <input type="file" accept="image/jpeg,image/png,image/webp,image/heic,.heic" style="width:125px" onchange="uploadPhoto('${s}', this)">
+        <button id="ph-rm-${s}" style="display:none" onclick="removePhoto('${s}')">Remove</button></div>`).join('')
+    + '</div><div id="ph-error" class="status"></div></div>';
   html += '<div id="cf-error" class="status"></div>';
   document.getElementById('confirm-content').innerHTML = html;
+  slots.forEach(s => showPhoto(s));
   const q = p.city.state ? '?state=' + encodeURIComponent(p.city.state) : '';
   fetch('/api/cities' + q).then(r => r.json()).then(list => {
     window.cfCities = list;
@@ -942,8 +966,8 @@ function doConfirm() {
   }
   const skipped = [];
   const tyre = document.getElementById('cf-skip-tyre');
-  if (tyre && tyre.checked) skipped.push('tyre_photo');
-  if (!confirmPayload.odometer_found && km === null) skipped.push('odometer');
+  if (tyre && tyre.checked && !PHOTO_TYRE_SLOTS.some(photoShown)) skipped.push('tyre_photo');
+  if (!confirmPayload.odometer_found && km === null && !photoShown('odometer')) skipped.push('odometer');
   const known = (confirmPayload.city.candidates || []).concat(window.cfCities || []).find(c => c.city === city);
   const body = {
     car: {make: get('cf-make'), model: get('cf-model'), variant: get('cf-variant'),
@@ -958,6 +982,71 @@ function doConfirm() {
       if (!ok) document.getElementById('cf-error').textContent = data.error ? data.error.message : JSON.stringify(data.detail || data);
     })
     .catch(e => { document.getElementById('cf-error').textContent = 'Error: ' + e; });
+}
+
+// ---- Extra photos (Stage 6) ----
+const PHOTO_TYRE_SLOTS = ['front_left', 'front_right', 'rear_left', 'rear_right'];
+function photoShown(slot) { const img = document.getElementById('ph-img-' + slot); return !!img && img.style.display !== 'none'; }
+function showPhoto(slot) {
+  const img = document.getElementById('ph-img-' + slot);
+  if (!img) return;
+  img.onload = () => { img.style.display = ''; document.getElementById('ph-rm-' + slot).style.display = ''; };
+  img.onerror = () => { img.style.display = 'none'; document.getElementById('ph-rm-' + slot).style.display = 'none'; };
+  img.src = '/api/runs/' + currentRunId + '/files/05_photos/' + slot + '.jpg?t=' + Date.now();
+}
+function uploadPhoto(slot, input) {
+  if (!input.files.length) return;
+  const fd = new FormData();
+  fd.append('photo', input.files[0]);
+  document.getElementById('ph-error').textContent = 'Uploading ' + slot + '…';
+  fetch('/api/runs/' + currentRunId + '/photos/' + slot, {method: 'POST', body: fd})
+    .then(r => r.json().then(d => ({ok: r.ok, data: d})))
+    .then(({ok, data}) => {
+      document.getElementById('ph-error').textContent = ok ? '' : (data.error ? data.error.message : JSON.stringify(data.detail || data));
+      input.value = '';
+      showPhoto(slot);
+    })
+    .catch(e => { document.getElementById('ph-error').textContent = 'Error: ' + e; });
+}
+function removePhoto(slot) {
+  fetch('/api/runs/' + currentRunId + '/photos/' + slot, {method: 'DELETE'})
+    .then(r => r.json().then(d => ({ok: r.ok, data: d})))
+    .then(({ok, data}) => {
+      document.getElementById('ph-error').textContent = ok ? '' : (data.error ? data.error.message : JSON.stringify(data.detail || data));
+      showPhoto(slot);
+    })
+    .catch(e => { document.getElementById('ph-error').textContent = 'Error: ' + e; });
+}
+function loadPhotosFiles(runId, ev) {
+  const get = f => fetch('/api/runs/' + runId + '/files/05_photos/' + f).then(r => r.ok ? r.json() : null).catch(() => null);
+  Promise.all([get('request.json'), get('response.json'), get('applied.json')]).then(([req, res, applied]) => {
+    let html = ev.type !== 'node_done' ? '<div class="cf-note">' + escHtml(ev.data.error || ev.data.reason || '') + '</div>' : '';
+    const answers = {};
+    ((res && res.parsed && res.parsed.photos) || []).forEach(a => { answers[a.slot] = a; });
+    if (res) html += '<div class="status">' + (res.answered_by ? 'Answered by ' + escHtml(res.answered_by.model) : 'No model answered')
+      + ' · ' + (res.attempts || []).length + ' attempt(s)</div>';
+    if (req) {
+      html += '<div style="display:flex;gap:12px;flex-wrap:wrap">' + req.media.map(m => {
+        const a = answers[m.slot] || {};
+        const t = a.tyre ? 'score ' + a.tyre.tyre_score + ', tread ' + a.tyre.tread
+          : a.odometer_km != null ? a.odometer_km.toLocaleString('en-IN') + ' km (confidence ' + a.confidence + ')' : '';
+        return '<div style="width:160px"><img src="/api/runs/' + runId + '/files/' + m.file + '" style="width:150px"><br><b>'
+          + escHtml(m.slot) + '</b> ' + escHtml(t) + '<br><span class="status">' + escHtml(a.description || '') + '</span></div>';
+      }).join('') + '</div>';
+    }
+    if (applied) {
+      const km = applied.km;
+      html += '<b>Used by plan and extract</b><ul>'
+        + applied.tyres_replaced.map(x => '<li>' + escHtml(x.slot) + ' tyre: photo replaces video finding ' + escHtml(x.replaced.join(', ')) + '</li>').join('')
+        + applied.tyres_added.map(s => '<li>' + escHtml(s) + ' tyre: added from photo (video did not show it)</li>').join('')
+        + (km ? '<li>Km: photo ' + km.photo_km.toLocaleString('en-IN') + ' (confidence ' + km.confidence + ') — '
+          + (km.used ? 'used instead of ' : 'not used (below threshold); keeps ') + escHtml(String(km.confirm_km ?? 'none')) + '</li>' : '')
+        + '</ul>';
+    }
+    if (req) html += '<details><summary>Sent (prompts)</summary><pre>' + escHtml(req.system_prompt + '\n\n---\n\n' + req.user_prompt) + '</pre></details>';
+    if (res) html += '<details><summary>Received (attempts, raw JSON)</summary><pre>' + escHtml(JSON.stringify(res, null, 2)) + '</pre></details>';
+    document.getElementById('photos-content').innerHTML = html;
+  });
 }
 
 function loadConfirmRecord(runId) {

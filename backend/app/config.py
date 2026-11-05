@@ -35,7 +35,6 @@ class UploadConfig(BaseModel):
 class ModelsConfig(BaseModel):
     locate: ModelEntry
     verify_chain: list[ModelEntry]
-    photos: ModelEntry
     plan_chain: list[ModelEntry]
     plan_timeout_per_model_sec: int = 120
     extract_chain: list[ModelEntry]
@@ -48,6 +47,8 @@ class ModelsConfig(BaseModel):
     verify_thinking_level: Optional[str] = None
     verify_timeout_per_model_sec: int = 180
     locate_thinking_level: Optional[str] = None
+    photos_chain: list[ModelEntry] = []  # empty = use verify_chain
+    photos_timeout_per_model_sec: int = 180
 
 
 class LocateVideoConfig(BaseModel):
@@ -69,6 +70,12 @@ class FramesConfig(BaseModel):
 class ConfirmConfig(BaseModel):
     expand_below_confidence: float
     year_range: int = 8
+
+
+class PhotosConfig(BaseModel):
+    allowed_types: list[str] = ["jpg", "jpeg", "png", "webp", "heic"]
+    max_size_mb: int = 10
+    km_min_confidence: float = 0.8
 
 
 class PlanConfig(BaseModel):
@@ -118,6 +125,7 @@ class AppConfig(BaseModel):
     models: ModelsConfig
     frames: FramesConfig
     confirm: ConfirmConfig
+    photos: PhotosConfig = PhotosConfig()
     plan: PlanConfig
     search: SearchConfig
     extract: ExtractConfig
