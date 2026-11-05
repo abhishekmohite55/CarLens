@@ -16,7 +16,9 @@ from .config import PROJECT_ROOT, get_config
 from .confirm import load_rto
 from .events import sse_stream
 from .graph import is_paused, resume_graph, run_graph
-from .nodes.confirm import PAYLOAD_FILE, RECORD_FILE, finish_confirm, load_verify_answer, skip_photos, start_confirm
+from .nodes.confirm import PAYLOAD_FILE, RECORD_FILE, finish_confirm, load_verify_answer, start_confirm
+from .nodes.photos import run_photos, save_photo
+from .photos import SLOTS
 from .nodes.frames import load_locate_items, run_frames
 from .nodes.frames import try_claim as frames_try_claim
 from .nodes.verify import run_verify
@@ -241,6 +243,8 @@ def api_confirm_start(run_id: str):
         })
     (rd / PAYLOAD_FILE).unlink(missing_ok=True)
     (rd / RECORD_FILE).unlink(missing_ok=True)
+    if (rd / "05_photos").exists():  # a fresh confirm starts without old photos
+        shutil.rmtree(rd / "05_photos")
     start_confirm(run_id)
     return {"started": True}
 
@@ -267,9 +271,9 @@ def api_confirm(run_id: str, answer: ConfirmAnswer):
             threading.Thread(target=resume_graph, args=(run_id, data), daemon=True).start()
         else:  # dev path: run started with "Start confirm", no graph waiting
             finish_confirm(run_id, json.loads(payload_path.read_text(encoding="utf-8")), data)
-            skip_photos(run_id)
 
             def _plan_then_done():
+                run_photos(run_id)  # skips itself when no photos were uploaded
                 run_plan(run_id)
                 run_search(run_id)
                 run_extract(run_id)
@@ -279,6 +283,46 @@ def api_confirm(run_id: str, answer: ConfirmAnswer):
     finally:
         _confirming.discard(run_id)  # 04_confirm.json now guards repeats
     return {"confirmed": True}
+
+
+def _photo_guard(run_id: str, slot: str):
+    """Photos can change only while confirm waits; the odometer slot only when the video read no km."""
+    rd = run_dir(run_id)
+    if not rd.exists():
+        raise HTTPException(404, detail=f"Run '{run_id}' not found.")
+    if slot not in SLOTS:
+        raise HTTPException(404, detail=f"Unknown photo slot '{slot}'.")
+    if not (rd / PAYLOAD_FILE).exists() or (rd / RECORD_FILE).exists():
+        return rd, JSONResponse(status_code=409, content={
+            "error": {"code": "not_waiting", "message": "Photos can only be changed while confirm is waiting."}
+        })
+    if slot == "odometer" and json.loads((rd / PAYLOAD_FILE).read_text(encoding="utf-8")).get("odometer_found"):
+        return rd, JSONResponse(status_code=409, content={
+            "error": {"code": "odometer_read", "message": "The video already read the odometer."}
+        })
+    return rd, None
+
+
+@app.post("/api/runs/{run_id}/photos/{slot}")
+async def api_upload_photo(run_id: str, slot: str, photo: UploadFile = File(...)):
+    """Stage 6: one extra photo per slot (front_left, front_right, rear_left, rear_right, odometer); replaces the old one."""
+    rd, err = _photo_guard(run_id, slot)
+    if err:
+        return err
+    data = await photo.read(get_config().photos.max_size_mb * 1024 * 1024 + 1)
+    problem = save_photo(rd / "05_photos", slot, photo.filename or "", data)
+    if problem:
+        return JSONResponse(status_code=422, content={"error": {"code": "bad_photo", "message": problem}})
+    return {"saved": f"05_photos/{slot}.jpg"}
+
+
+@app.delete("/api/runs/{run_id}/photos/{slot}")
+def api_delete_photo(run_id: str, slot: str):
+    rd, err = _photo_guard(run_id, slot)
+    if err:
+        return err
+    (rd / "05_photos" / f"{slot}.jpg").unlink(missing_ok=True)
+    return {"deleted": True}
 
 
 @app.post("/api/runs/{run_id}/plan", status_code=202)

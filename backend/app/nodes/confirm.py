@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 from ..config import PROJECT_ROOT, get_config
 from ..confirm import build_payload, build_record, load_rto
+from ..photos import list_photos
 from ..runs import append_event, run_dir, write_json_atomic
 
 PAYLOAD_FILE = "04_confirm_payload.json"
@@ -41,7 +42,7 @@ def start_confirm(run_id: str) -> dict | None:
 
 
 def finish_confirm(run_id: str, payload: dict, answer: dict) -> dict:
-    record = build_record(payload, answer)
+    record = build_record(payload, answer, list_photos(run_dir(run_id) / "05_photos"))
     record["confirmed_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     write_json_atomic(run_dir(run_id) / RECORD_FILE, record)
     car = record["car"]
@@ -53,7 +54,3 @@ def finish_confirm(run_id: str, payload: dict, answer: dict) -> dict:
     })
     return record
 
-
-def skip_photos(run_id: str) -> None:
-    # shortcut: photo upload is disabled until Stage 6, so photos always skips
-    append_event(run_id, "photos", "node_skipped", {"reason": "No photos uploaded"})

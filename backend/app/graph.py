@@ -11,7 +11,8 @@ from .config import PROJECT_ROOT, get_config
 from .nodes.locate import run_locate
 from .nodes.frames import run_frames
 from .nodes.verify import run_verify
-from .nodes.confirm import finish_confirm, skip_photos, start_confirm
+from .nodes.confirm import finish_confirm, start_confirm
+from .nodes.photos import run_photos
 from .nodes.plan import run_plan
 from .nodes.search import run_search
 from .nodes.extract import run_extract
@@ -70,7 +71,7 @@ def _confirm_node(state: GraphState) -> GraphState:
 
 
 def _photos_node(state: GraphState) -> GraphState:
-    skip_photos(state["run_id"])
+    run_photos(state["run_id"])  # skips itself when no photos were uploaded
     return state
 
 
