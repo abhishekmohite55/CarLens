@@ -46,7 +46,7 @@ def test_ask_chain_first_raises_second_answers():
     e1, e2 = _entry("bad"), _entry("good")
     call_n = [0]
 
-    def fake_make(provider, model, temp, timeout, thinking):
+    def fake_make(provider, model, temp, timeout, thinking, reasoning_effort=None):
         call_n[0] += 1
         m = MagicMock()
         m.invoke = MagicMock(
@@ -67,7 +67,7 @@ def test_ask_chain_first_raises_second_answers():
 def test_ask_chain_first_hangs_second_answers():
     e1, e2 = _entry("slow"), _entry("fast")
 
-    def fake_make(provider, model, temp, timeout, thinking):
+    def fake_make(provider, model, temp, timeout, thinking, reasoning_effort=None):
         m = MagicMock()
         if model == "slow":
             def hang(msgs, config=None):
@@ -90,7 +90,7 @@ def test_ask_chain_first_hangs_second_answers():
 def test_ask_chain_invalid_answer_tries_next():
     call_n = [0]
 
-    def fake_make(provider, model, temp, timeout, thinking):
+    def fake_make(provider, model, temp, timeout, thinking, reasoning_effort=None):
         call_n[0] += 1
         m = MagicMock()
         data = {"findings": "not a list"} if call_n[0] == 1 else VALID
@@ -109,7 +109,7 @@ def test_ask_chain_invalid_answer_tries_next():
 
 
 def test_ask_chain_all_fail():
-    def fake_make(provider, model, temp, timeout, thinking):
+    def fake_make(provider, model, temp, timeout, thinking, reasoning_effort=None):
         m = MagicMock()
         m.invoke = MagicMock(side_effect=RuntimeError("error"))
         return m
