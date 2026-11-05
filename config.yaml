@@ -96,6 +96,7 @@ extract: # trimming before the extract LLM (node 8)
 
 pricing:
   max_from_top: 3 # price max = average of the top 3 yearly rates, so one odd listing can't set the top
+  min_listing_age: 2 # listings younger than 2 years are skipped: year-1 prices swing too much to give a reliable yearly rate
   min_listings_with_year: 3 # fewer listings with a stated year → valuation unavailable
   tyre_minor_wear_deduction_inr: 5000 # fixed deduction per tyre the plan LLM marks minor_wear (from config, not the internet)
   year_tolerance: 3 # listings within ±3 years of the car feed the depreciation rate (owner, 5 Nov)

@@ -45,7 +45,7 @@ def latest_extracts() -> list[Path]:
 def run(extract: Path) -> None:
     p = get_config().pricing
     figs = _load(extract / "figures.json")
-    settings = {"min_listings_with_year": p.min_listings_with_year, "max_from_top": p.max_from_top,
+    settings = {"min_listings_with_year": p.min_listings_with_year, "max_from_top": p.max_from_top, "min_listing_age": p.min_listing_age,
                 "tyre_minor_wear_deduction_inr": p.tyre_minor_wear_deduction_inr}
     out = price_report(figs["kept"], plan_queries_for(extract).get("tyres") or [], figs["car"],
                        datetime.now().year, settings)
@@ -54,7 +54,7 @@ def run(extract: Path) -> None:
     car = figs["car"]
     print(f"\n== {extract.relative_to(RUNS)}\n{car.get('make')} {car.get('model')} {car.get('variant') or ''} {car.get('year')}")
     np = out["new_price"]
-    print("new price:", f"₹{np['value']:,.0f} ({np['type']}, variant matched: {np['variant_matched']}, from {np['sources']})" if np else "none")
+    print("new price:", f"₹{np['value']:,.0f} ({np['type']}, variant match: {np['variant_match']}, from {np['sources']})" if np else "none")
     for x in out.get("listings_used", []):
         print(f"  listing {x['source']} {x['year']} ₹{x['price']:,.0f} → keeps {x['rate']:.3f}/year")
     for x in out.get("listings_dropped", []):

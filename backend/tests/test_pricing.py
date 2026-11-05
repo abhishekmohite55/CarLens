@@ -40,3 +40,17 @@ def test_repairs_and_report():
     assert out["after_repairs"] == {"median": 498_000, "max": 507_000}
     few = price_report(FIGS[:4], [], {"year": 2019}, 2026, SETTINGS)
     assert few["status"] == "unavailable" and "1 listings" in few["reason"]
+
+def test_new_price_exact_variant_beats_contains():
+    figs = [{"group": "new_price", "type": "on_road", "inr": [901_000], "source": "A", "variant": "VXi CNG"},
+            {"group": "new_price", "type": "on_road", "inr": [723_000], "source": "B", "variant": "VXI"}]
+    np = new_price(figs, "VXi")
+    assert np["value"] == 723_000 and np["variant_match"] == "exact"
+    np = new_price(figs[:1], "VXi")                                     # no exact name: loose match is the fallback
+    assert np["value"] == 901_000 and np["variant_match"] == "contains"
+
+
+def test_yearly_rates_min_age():
+    rates, dropped = yearly_rates(FIGS, 1_000_000, 2026, min_age=3)
+    assert [x["source"] for x in rates] == ["S4", "S10"]                # S6 (2024, age 2) too young
+    assert ("S6", "under 3 years old") in [(d["source"], d["reason"]) for d in dropped]

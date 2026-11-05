@@ -104,6 +104,7 @@ class PricingConfig(BaseModel):
     tyre_minor_wear_deduction_inr: int
     min_listings_with_year: int = 3
     max_from_top: int = 3
+    min_listing_age: int = 2
 
 
 class PathsConfig(BaseModel):
