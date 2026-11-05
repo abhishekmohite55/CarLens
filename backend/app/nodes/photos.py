@@ -2,6 +2,7 @@
 Writes 05_photos/request.json, response.json, applied.json (what plan and extract will use). Skipped without photos."""
 from __future__ import annotations
 
+import io
 import json
 import logging
 from datetime import datetime, timezone
@@ -34,12 +35,25 @@ def save_photo(folder: Path, slot: str, filename: str, data: bytes) -> str | Non
         return f"Only {', '.join(p.allowed_types)} photos are accepted."
     if len(data) > p.max_size_mb * 1024 * 1024:
         return f"Photo is over {p.max_size_mb} MB."
-    img = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+    img = _decode_heic(data) if ext == "heic" else cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
     if img is None:
         return "This file could not be read as an image."
     folder.mkdir(parents=True, exist_ok=True)
     save_jpeg(img, folder / f"{slot}.jpg", f.max_long_edge_px, f.jpeg_quality)
     return None
+
+
+def _decode_heic(data: bytes):
+    """iPhone HEIC to an OpenCV image (OpenCV cannot read HEIC). None if it does not decode."""
+    try:
+        from PIL import Image
+        from pillow_heif import register_heif_opener
+        register_heif_opener()
+        rgb = Image.open(io.BytesIO(data)).convert("RGB")
+        return cv2.cvtColor(np.array(rgb), cv2.COLOR_RGB2BGR)
+    except Exception as exc:
+        log.warning("HEIC decode failed: %s", exc)
+        return None
 
 
 def load_photos_answer(rd: Path) -> dict | None:

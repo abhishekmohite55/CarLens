@@ -943,7 +943,7 @@ function renderConfirmForm() {
     + '<div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:6px">' + slots.map(s =>
       `<div style="width:130px"><div class="status">${s.replace('_', ' ')}</div>
         <img id="ph-img-${s}" style="width:120px;display:none"><br>
-        <input type="file" accept="image/jpeg,image/png,image/webp" style="width:125px" onchange="uploadPhoto('${s}', this)">
+        <input type="file" accept="image/jpeg,image/png,image/webp,image/heic,.heic" style="width:125px" onchange="uploadPhoto('${s}', this)">
         <button id="ph-rm-${s}" style="display:none" onclick="removePhoto('${s}')">Remove</button></div>`).join('')
     + '</div><div id="ph-error" class="status"></div></div>';
   html += '<div id="cf-error" class="status"></div>';

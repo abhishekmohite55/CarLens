@@ -73,7 +73,7 @@ class ConfirmConfig(BaseModel):
 
 
 class PhotosConfig(BaseModel):
-    allowed_types: list[str] = ["jpg", "jpeg", "png", "webp"]
+    allowed_types: list[str] = ["jpg", "jpeg", "png", "webp", "heic"]
     max_size_mb: int = 10
     km_min_confidence: float = 0.8
 

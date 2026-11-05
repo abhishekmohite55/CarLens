@@ -62,7 +62,7 @@ confirm:
   year_range: 8 # year picker shows the AI's year +- this, never past the current year
 
 photos: # extra photos at confirm (Stage 6): 4 optional tyre slots + 1 odometer slot (only when the video read no km)
-  allowed_types: [jpg, jpeg, png, webp]
+  allowed_types: [jpg, jpeg, png, webp, heic] # heic: iPhone photos, decoded with pillow-heif
   max_size_mb: 10
   km_min_confidence: 0.8 # photo km replaces the confirmed km only at this confidence or higher (owner, 5 Nov)
 
