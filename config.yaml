@@ -66,10 +66,10 @@ plan:
     - "second hand {make} {model} {year} for sale {state}"
     - "{make} {model} {variant} {year} used car price {city}"
     - "used {model} {year} {fuel} price {state}"
-    - "{year} {make} {model} resale value India"
+    - "used {make} {model} {variant} price {state}"
     - "buy used {make} {model} {year} {state} cars24 spinny cardekho"
-    - "pre-owned {make} {model} {variant} {fuel} {year} price"
-    - "used {make} {model} {year} price list {state}"
+    - "second hand {make} {model} {fuel} price list {state}"
+    - "used {make} {model} cars for sale {state} all years"
   new_price_queries_per_run: 2 # today's new-car price (on-road / ex-showroom), picked at random from new_price_templates
   new_price_templates: # no {year}: we want today's price of the model; {variant} templates skipped when variant is empty
     - "{make} {model} {variant} on road price {city}"
@@ -98,7 +98,7 @@ pricing:
   max_from_top: 3 # price max = average of the top 3 yearly rates, so one odd listing can't set the top
   min_listings_with_year: 3 # fewer listings with a stated year → valuation unavailable
   tyre_minor_wear_deduction_inr: 5000 # fixed deduction per tyre the plan LLM marks minor_wear (from config, not the internet)
-  year_tolerance: 1
+  year_tolerance: 3 # listings within ±3 years of the car feed the depreciation rate (owner, 5 Nov)
   min_comparables: 3
 
 paths:
