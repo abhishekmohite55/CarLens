@@ -17,6 +17,7 @@ from .nodes.plan import run_plan
 from .nodes.search import run_search
 from .nodes.extract import run_extract
 from .nodes.pricing import run_pricing
+from .nodes.report import run_report
 from .runs import TERMINAL, append_event, node_result, read_events
 
 _conn: sqlite3.Connection | None = None
@@ -35,7 +36,7 @@ def _get_checkpointer() -> SqliteSaver:
 
 
 # Pipeline order after upload. A failed node stops the run there; resume_from() starts again at that node.
-ORDER = ("locate", "frames", "verify", "confirm", "photos", "plan", "search", "extract", "pricing")
+ORDER = ("locate", "frames", "verify", "confirm", "photos", "plan", "search", "extract", "pricing", "report")
 
 
 class GraphState(TypedDict):
@@ -50,6 +51,7 @@ class GraphState(TypedDict):
     search_status: str
     extract_status: str
     pricing_status: str
+    report_status: str
 
 
 def _step(node: str, fn):
@@ -73,7 +75,8 @@ def _confirm_node(state: GraphState) -> GraphState:
 
 _RUNNERS = {"locate": run_locate, "frames": run_frames, "verify": run_verify,
             "photos": run_photos,  # skips itself when no photos were uploaded
-            "plan": run_plan, "search": run_search, "extract": run_extract, "pricing": run_pricing}
+            "plan": run_plan, "search": run_search, "extract": run_extract, "pricing": run_pricing,
+            "report": run_report}
 
 
 def _build_graph() -> object:

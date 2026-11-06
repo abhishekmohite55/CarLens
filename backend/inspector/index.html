@@ -179,6 +179,15 @@
   <div id="pricing-content"></div>
 </div>
 
+<div class="section" id="report-section" style="display:none">
+  <label>Report <span id="report-progress-msg" style="font-size:12px;color:#ffb020;margin-left:8px"></span></label>
+  <div style="margin:6px 0">
+    <button id="report-btn" onclick="doRunNode('report')" disabled>Run report</button>
+    <span id="report-btn-reason" class="status" style="margin-left:8px"></span>
+  </div>
+  <div id="report-content"></div>
+</div>
+
 <script>
 const NODES = [
   {id:"upload",  label:"Upload & check"},
@@ -190,7 +199,8 @@ const NODES = [
   {id:"plan",    label:"Plan searches (LLM)"},
   {id:"search",  label:"Search web (Tavily)"},
   {id:"extract", label:"Read prices (LLM)"},
-  {id:"pricing", label:"Price & report"},
+  {id:"pricing", label:"Price (Python)"},
+  {id:"report",  label:"Report"},
 ];
 
 let currentRunId = null;
@@ -211,6 +221,8 @@ let extractNodeStatus = 'waiting';
 let extractIsRunning = false;
 let pricingNodeStatus = 'waiting';
 let pricingIsRunning = false;
+let reportNodeStatus = 'waiting';
+let reportIsRunning = false;
 
 // Load config on start
 fetch('/api/config').then(r => r.json()).then(cfg => {
@@ -305,6 +317,8 @@ function loadRun(runId) {
   extractIsRunning = false;
   pricingNodeStatus = 'waiting';
   pricingIsRunning = false;
+  reportNodeStatus = 'waiting';
+  reportIsRunning = false;
   document.getElementById('run-id-input').value = runId;
   document.getElementById('run-section').style.display = '';
 
@@ -340,6 +354,7 @@ function loadRun(runId) {
     {path:'08_extract/response.json', label:'08_extract/response.json'},
     {path:'08_extract/figures.json', label:'08_extract/figures.json'},
     {path:'09_report/price.json', label:'09_report/price.json'},
+    {path:'09_report/report.json', label:'09_report/report.json'},
   ].map(f =>
     `<a class="file-link" href="/api/runs/${runId}/files/${f.path}" target="_blank">${f.label}</a>`
   ).join('');
@@ -359,7 +374,7 @@ function loadRun(runId) {
   document.getElementById('search-section').style.display = '';
   document.getElementById('search-content').innerHTML = '';
   document.getElementById('search-progress-msg').textContent = '';
-  ['photos', 'extract', 'pricing'].forEach(n => {
+  ['photos', 'extract', 'pricing', 'report'].forEach(n => {
     document.getElementById(n + '-section').style.display = '';
     document.getElementById(n + '-content').innerHTML = '';
     document.getElementById(n + '-progress-msg').textContent = '';
@@ -368,6 +383,7 @@ function loadRun(runId) {
   updateSearchButton();
   updateExtractButton();
   updatePricingButton();
+  updateReportButton();
   updateFramesButton();
   updateVerifyButton();
   updateConfirmButton();
@@ -523,6 +539,16 @@ function loadRun(runId) {
             loadPricing(currentRunId, ev);
           }
           updatePricingButton();
+          updateReportButton();
+        }
+        if (ev.node === 'report') {
+          if (ev.type === 'node_started') { reportIsRunning = true; document.getElementById('report-content').innerHTML = ''; }
+          if (ev.type === 'node_done' || ev.type === 'node_failed' || ev.type === 'node_skipped') {
+            reportIsRunning = false;
+            reportNodeStatus = ev.type === 'node_done' ? 'done' : ev.type === 'node_failed' ? 'failed' : 'skipped';
+            loadReport(currentRunId, ev);
+          }
+          updateReportButton();
         }
       }
     } catch {}
@@ -1200,7 +1226,53 @@ function doRunNode(node) {
     })
     .catch(e => { document.getElementById(node + '-btn-reason').textContent = 'Error: ' + e; });
 }
+function updateReportButton() { updateRerunButton('report', pricingNodeStatus, 'Pricing', reportNodeStatus, reportIsRunning, 'report'); }
 function doRunExtract() { doRunNode('extract'); }
+
+function loadReport(runId, ev) {
+  fetch('/api/runs/' + runId + '/files/09_report/report.json').then(r => r.ok ? r.json() : null).catch(() => null).then(r => {
+    let html = ev.type !== 'node_done' ? '<div class="cf-note">' + escHtml(ev.data.error || ev.data.reason || '') + '</div>' : '';
+    if (!r) { document.getElementById('report-content').innerHTML = html; return; }
+    const file = f => '/api/runs/' + runId + '/files/' + f;
+    const w = s => escHtml(String(s ?? '').replace(/_/g, ' '));
+    const v = r.vehicle, p = r.price;
+    html += '<div class="cf-note"><b style="font-size:15px">' + w([v.make, v.model, v.variant, v.year, v.fuel].filter(Boolean).join(' ')) + '</b><br>'
+      + 'Plate ' + w(v.plate) + ' (' + w(v.plate_from) + ') · ' + w([v.city, v.state].filter(Boolean).join(', '))
+      + ' · ' + (v.odometer_km != null ? v.odometer_km.toLocaleString('en-IN') + ' km (' + w(v.km_from) + ')' : 'km not read')
+      + (v.changed.length ? '<br><span class="status">Changed by the user: ' + w(v.changed.join(', ')) + '</span>' : '') + '</div>';
+    html += p.status === 'ok'
+      ? '<div style="font-size:22px;margin:8px 0"><b>' + inr(p.low) + ' – ' + inr(p.high) + '</b> <span class="status">after repairs</span></div>'
+        + '<ul>' + p.how.map(x => '<li>' + escHtml(x) + '</li>').join('') + '</ul>'
+      : '<div class="cf-note">Valuation unavailable: ' + escHtml(p.reason) + '</div>';
+    html += '<b>Condition summary</b><ul>' + r.condition_summary.map(x => '<li>' + escHtml(x) + '</li>').join('') + '</ul>';
+    if (r.damage.length) html += '<b>Damage</b><div style="display:flex;gap:12px;flex-wrap:wrap">' + r.damage.map(d =>
+      '<div style="width:220px">' + (d.frame ? '<img src="' + file(d.frame) + '" style="width:210px">' : '')
+      + '<br><b>' + w(d.part) + '</b>: ' + w([d.severity, d.issue].filter(Boolean).join(' ')) + (d.action && d.action !== 'none' ? ' · ' + w(d.action) : '')
+      + '<br><span class="status">' + (d.time ? 'video ' + escHtml(d.time) + ' · ' : '') + escHtml(d.description || '') + '</span></div>').join('') + '</div>';
+    if (r.tyres.length) html += '<b>Tyres</b><div style="display:flex;gap:12px;flex-wrap:wrap">' + r.tyres.map(t =>
+      '<div style="width:160px">' + (t.frame ? '<img src="' + file(t.frame) + '" style="width:150px">' : '')
+      + '<br><b>' + w(t.position) + '</b> ' + (t.tyre_score ?? '?') + '/10 ' + w(t.tread) + '<br><span class="status">' + w(t.from)
+      + (t.time ? ' ' + escHtml(t.time) : '') + ' · ' + w(t.tier) + '</span></div>').join('') + '</div>';
+    const rp = r.repairs;
+    html += '<b>Repairs</b> (total ' + inr(rp.total) + ')<table><tr><th>for</th><th>cost</th><th>note</th><th>sources</th></tr>'
+      + rp.items.map(i => '<tr><td>' + w(i.for) + '</td><td>' + inr(i.cost) + '</td><td>' + escHtml(i.note || '') + '</td><td>'
+        + i.sources.map((u, n) => link(u, 'link ' + (n + 1))).join(', ') + '</td></tr>').join('') + '</table>'
+      + (rp.cost_unavailable.length ? '<div class="status">Cost unavailable: ' + w(rp.cost_unavailable.join(', ')) + '</div>' : '');
+    if (p.status === 'ok') {
+      html += '<b>New price sources</b><ul>' + p.new_price.sources.map(s => '<li>' + link(s.url, s.title || s.id) + '</li>').join('') + '</ul>';
+      html += '<b>Listings used</b><table><tr><th>year</th><th>price</th><th>kept / year</th><th>source</th></tr>'
+        + p.listings_used.map(x => '<tr><td>' + x.year + '</td><td>' + inr(x.price) + '</td><td>' + x.rate + '</td><td>'
+          + link(x.source.url, x.source.title || x.source.id) + '</td></tr>').join('') + '</table>';
+    }
+    const c = r.coverage;
+    html += '<b>Coverage</b><ul><li>Sides seen: ' + w(c.sides_seen.join(', ') || 'none') + (c.sides_not_seen.length ? '; not seen: ' + w(c.sides_not_seen.join(', ')) : '') + '</li>'
+      + '<li>Tyres not seen: ' + w(c.tyres_not_seen.join(', ') || 'none') + '</li><li>Odometer: ' + w(c.odometer) + ' · Plate: ' + w(c.plate) + '</li>'
+      + (c.skipped.length ? '<li>Skipped by the user: ' + w(c.skipped.join(', ')) + '</li>' : '')
+      + c.not_confirmed.map(x => '<li>Not confirmed: ' + escHtml(x.item_id) + ' ' + escHtml(x.label || '') + ' — ' + escHtml(x.reason || '') + '</li>').join('')
+      + '</ul>';
+    document.getElementById('report-content').innerHTML = html;
+  });
+}
 function doRunPricing() { doRunNode('pricing'); }
 
 function loadExtractFiles(runId, ev) {

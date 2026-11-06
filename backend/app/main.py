@@ -32,6 +32,8 @@ from .nodes.extract import run_extract
 from .nodes.extract import try_claim as extract_try_claim
 from .nodes.pricing import run_pricing
 from .nodes.pricing import try_claim as pricing_try_claim
+from .nodes.report import run_report
+from .nodes.report import try_claim as report_try_claim
 from .nodes.verify import try_claim as verify_try_claim
 from .llm.tracing import _get_client as _warmup_tracing
 from .nodes.upload import process_upload
@@ -69,7 +71,8 @@ _NODES = [
     {"id": "plan",    "label": "Plan searches (LLM)"},
     {"id": "search",  "label": "Search web (Tavily)"},
     {"id": "extract", "label": "Read prices (LLM)"},
-    {"id": "pricing", "label": "Price & report"},
+    {"id": "pricing", "label": "Price (Python)"},
+    {"id": "report",  "label": "Report"},
 ]
 
 
@@ -168,7 +171,8 @@ async def api_run_events(run_id: str):
 _NODE_FILES = {"locate": ["01_locate/request.json", "01_locate/response.json"],
                "verify": ["03_verify"],
                "photos": ["05_photos/request.json", "05_photos/response.json", "05_photos/applied.json"],
-               "plan": ["06_plan"], "search": ["07_search"], "extract": ["08_extract"], "pricing": ["09_report"]}
+               "plan": ["06_plan"], "search": ["07_search"], "extract": ["08_extract"],
+               "pricing": ["09_report/price.json"], "report": ["09_report/report.json"]}
 _resuming: set[str] = set()
 _resume_lock = threading.Lock()
 
@@ -455,9 +459,26 @@ def api_run_pricing(run_id: str):
         return JSONResponse(status_code=409, content={
             "error": {"code": "already_running", "message": "Pricing is already running for this run."}
         })
-    if (rd / "09_report").exists():
-        shutil.rmtree(rd / "09_report")
+    (rd / "09_report" / "price.json").unlink(missing_ok=True)  # report.json stays until the report is re-run
     threading.Thread(target=run_pricing, args=(run_id,), kwargs={"claimed": True}, daemon=True).start()
+    return {"started": True}
+
+
+@app.post("/api/runs/{run_id}/report", status_code=202)
+def api_run_report(run_id: str):
+    """Dev (used by /inspector): rebuild only the report from the files already in the run folder (no AI call)."""
+    rd = run_dir(run_id)
+    if not rd.exists():
+        raise HTTPException(404, detail=f"Run '{run_id}' not found.")
+    if not (rd / RECORD_FILE).exists():
+        return JSONResponse(status_code=409, content={
+            "error": {"code": "not_confirmed", "message": "Confirm is not done for this run."}
+        })
+    if not report_try_claim(run_id):
+        return JSONResponse(status_code=409, content={
+            "error": {"code": "already_running", "message": "Report is already running for this run."}
+        })
+    threading.Thread(target=run_report, args=(run_id,), kwargs={"claimed": True}, daemon=True).start()
     return {"started": True}
 
 
