@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -81,16 +82,35 @@ def _read_prompt(name: str) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def run_locate(run_id: str) -> None:
-    append_event(run_id, "locate", "node_started", {"label": "Asking Gemini to locate items"})
+_running: set[str] = set()
+_running_lock = threading.Lock()
+
+
+def try_claim(run_id: str) -> bool:
+    with _running_lock:
+        if run_id in _running:
+            return False
+        _running.add(run_id)
+        return True
+
+
+def run_locate(run_id: str, claimed: bool = False) -> None:
+    if not claimed and not try_claim(run_id):
+        log.warning("locate already running for %s", run_id)
+        return
     try:
-        _run_locate_inner(run_id)
-    except Exception as exc:
-        log.exception("run_locate unhandled exception for %s", run_id)
+        append_event(run_id, "locate", "node_started", {"label": "Asking Gemini to locate items"})
         try:
-            append_event(run_id, "locate", "node_failed", {"error": f"Unexpected error: {exc}"})
-        except Exception:
-            pass
+            _run_locate_inner(run_id)
+        except Exception as exc:
+            log.exception("run_locate unhandled exception for %s", run_id)
+            try:
+                append_event(run_id, "locate", "node_failed", {"error": f"Unexpected error: {exc}"})
+            except Exception:
+                pass
+    finally:
+        with _running_lock:
+            _running.discard(run_id)
 
 
 def _run_locate_inner(run_id: str) -> None:
@@ -128,8 +148,14 @@ def _run_locate_inner(run_id: str) -> None:
         small_path = out_dir / "video_small.mp4"
         try:
             emit_fn_tmp = lambda msg: append_event(run_id, "locate", "node_progress", {"message": msg})
-            emit_fn_tmp("Shrinking video")
-            shrink_video(video_path, small_path, height=lv.height, fps=lv.fps, crf=lv.crf)
+            if small_path.exists():  # re-run / resume: shrink already done (only a finished shrink is renamed here)
+                # shortcut: locate_video settings changed since the first shrink are not noticed; delete the file to redo
+                emit_fn_tmp("Using the shrunk video from the earlier attempt")
+            else:
+                emit_fn_tmp("Shrinking video")
+                tmp_path = out_dir / "video_small.part.mp4"
+                shrink_video(video_path, tmp_path, height=lv.height, fps=lv.fps, crf=lv.crf)
+                tmp_path.replace(small_path)
             send_path = small_path
             shrink_settings = {"height": lv.height, "fps": lv.fps, "crf": lv.crf}
         except Exception as exc:

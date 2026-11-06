@@ -1,61 +1,62 @@
-# CarLens — Setup and Run (Windows)
+# CarLens
 
-## Prerequisites
+Upload a walkaround video of a used car and get a supported price range in INR. An AI pipeline finds the car's details, damage and tyre condition, searches the web for prices, and Python works out the price. Every step shows what was sent to each AI call and what came back.
 
-- Python 3.12 (`py -3.12 --version` to confirm)
-- Node 20+ (for the frontend, Stage 2+)
-- `.env` in `F:\CarLens\` with keys: `GEMINI_API_KEY`, `TAVILY_API_KEY`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST`
-
-## Backend setup (once)
+## How it works
 
 ```
-cd F:\CarLens\backend
-"C:\Users\abhis\AppData\Local\Programs\Python\Python312\python.exe" -m venv .venv
+upload -> locate -> frames -> verify -> confirm -> photos -> plan -> search -> extract -> pricing
+```
+
+| Step | What it does |
+|---|---|
+| locate | Gemini watches the video and lists where the plate, badge, odometer, tyres and damage appear |
+| frames | OpenCV keeps the sharpest frame for each item |
+| verify | An AI model checks each frame: damage, tyre condition, plate, km, make/model/year |
+| confirm | You check the car details (pre-filled) and can add tyre or odometer photos |
+| photos | Reads the extra photos, if any |
+| plan | Builds web search queries for listings, new-car price and repairs |
+| search | Runs the queries on Tavily |
+| extract | An AI model copies prices out of the search results; Python checks each one |
+| pricing | Python: new price, yearly depreciation from listings, minus repairs, gives the range |
+
+Each run is saved in `runs/<run_id>/`, one folder per step. If a step fails, the run stops there and can be resumed from that step.
+
+## Setup (Windows, once)
+
+You need Python 3.12 and a `.env` file in the project root with `GEMINI_API_KEY`, `TAVILY_API_KEY`, `OPENROUTER_API_KEY`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` and `LANGFUSE_HOST`.
+
+```
+cd backend
+py -3.12 -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
 pip install --no-deps rapidocr==3.10.0
 ```
 
-> `--no-deps` keeps the project's `opencv-python`; `rapidocr` would otherwise pull in `opencv-python-headless` which conflicts with it.
+`--no-deps` keeps the project's `opencv-python` (rapidocr would pull in a conflicting OpenCV).
 
-## Start the backend
+## Run
 
 ```
-cd F:\CarLens\backend
+cd backend
 .venv\Scripts\activate
-uvicorn app.main:app --reload --port 8000
+uvicorn app.main:app --reload --port 8000 --timeout-graceful-shutdown 2
 ```
 
-Then open **http://localhost:8000/inspector** — the dev inspector page.
+Open **http://localhost:8000/inspector**, upload a video and follow the steps.
+`--timeout-graceful-shutdown 2` lets Ctrl+C stop the server while the inspector page is open.
 
-## Check external APIs
+## Tests
 
 ```
-cd F:\CarLens\backend
+cd backend
 .venv\Scripts\activate
-python -m scripts.check_apis
+python -m pytest -q
 ```
-
-Results are saved to `runs/_checks/<timestamp>.json`.
-
-## Endpoints (Stage 1)
-
-| Method | Path | Purpose |
-|---|---|---|
-| GET | `/api/config` | Upload limits and node list |
-| POST | `/api/runs` | Upload a video (multipart, field `video`) |
-| GET | `/api/runs/{run_id}` | Run snapshot |
-| GET | `/api/runs/{run_id}/events` | SSE stream (full replay on reconnect) |
-| GET | `/api/runs/{run_id}/files/{path}` | Files inside the run folder |
-| GET | `/inspector` | Dev inspector page |
 
 ## Config
 
-- **Limits and model names:** edit `config.yaml` at the project root. Changes apply on the next request — no restart needed.
-- **Secrets:** `.env` at the project root. Restart uvicorn after editing secrets.
-
-## Notes
-
-- `runs/` and `.env` are never committed (see `.gitignore`).
-- The venv is at `backend/.venv/` — not committed.
-- Python 3.12.10 (`C:\Users\abhis\AppData\Local\Programs\Python\Python312\python.exe`).
+- `config.yaml` (project root): models, limits and pricing settings. Changes apply without a restart.
+- `.env`: API keys only. Restart the server after changing it.
+- `runs/` and `.env` are never committed.

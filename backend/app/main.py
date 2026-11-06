@@ -15,9 +15,11 @@ from pydantic import BaseModel, Field
 from .config import PROJECT_ROOT, get_config
 from .confirm import load_rto
 from .events import sse_stream
-from .graph import is_paused, resume_graph, run_graph
+from .graph import is_paused, resume_from, resume_graph, run_graph
+from .nodes.locate import run_locate
+from .nodes.locate import try_claim as locate_try_claim
 from .nodes.confirm import PAYLOAD_FILE, RECORD_FILE, finish_confirm, load_verify_answer, start_confirm
-from .nodes.photos import run_photos, save_photo
+from .nodes.photos import save_photo
 from .photos import SLOTS
 from .nodes.frames import load_locate_items, run_frames
 from .nodes.frames import try_claim as frames_try_claim
@@ -33,7 +35,7 @@ from .nodes.pricing import try_claim as pricing_try_claim
 from .nodes.verify import try_claim as verify_try_claim
 from .llm.tracing import _get_client as _warmup_tracing
 from .nodes.upload import process_upload
-from .runs import append_event, events_path, run_dir
+from .runs import append_event, events_path, failed_at, run_dir
 
 # run_ids that have started or are starting the graph
 _started: set[str] = set()
@@ -162,6 +164,67 @@ async def api_run_events(run_id: str):
     )
 
 
+# What a node clears before it runs again (resume). Locate keeps video_small.mp4, photos keep the uploaded jpgs.
+_NODE_FILES = {"locate": ["01_locate/request.json", "01_locate/response.json"],
+               "verify": ["03_verify"],
+               "photos": ["05_photos/request.json", "05_photos/response.json", "05_photos/applied.json"],
+               "plan": ["06_plan"], "search": ["07_search"], "extract": ["08_extract"], "pricing": ["09_report"]}
+_resuming: set[str] = set()
+_resume_lock = threading.Lock()
+
+
+def _clear_node(rd: Path, node: str) -> None:
+    for rel in _NODE_FILES.get(node, []):
+        p = rd / rel
+        if p.is_dir():
+            shutil.rmtree(p)
+        else:
+            p.unlink(missing_ok=True)
+
+
+@app.post("/api/runs/{run_id}/locate", status_code=202)
+def api_run_locate(run_id: str):
+    """Dev (used by /inspector): re-run only locate; reuses 01_locate/video_small.mp4 when the shrink already finished."""
+    rd = run_dir(run_id)
+    if not rd.exists():
+        raise HTTPException(404, detail=f"Run '{run_id}' not found.")
+    if not locate_try_claim(run_id):
+        return JSONResponse(status_code=409, content={
+            "error": {"code": "already_running", "message": "Locate is already running for this run."}
+        })
+    _clear_node(rd, "locate")
+    threading.Thread(target=run_locate, args=(run_id,), kwargs={"claimed": True}, daemon=True).start()
+    return {"started": True}
+
+
+@app.post("/api/runs/{run_id}/resume", status_code=202)
+def api_resume(run_id: str):
+    """Start the pipeline again at the node the run stopped at, then carry on to the end."""
+    rd = run_dir(run_id)
+    if not rd.exists():
+        raise HTTPException(404, detail=f"Run '{run_id}' not found.")
+    node = failed_at(run_id)
+    if node is None:
+        return JSONResponse(status_code=409, content={
+            "error": {"code": "not_failed", "message": "Nothing to resume: the last run did not stop on a failure."}
+        })
+    with _resume_lock:
+        if run_id in _resuming or is_paused(run_id):
+            return JSONResponse(status_code=409, content={
+                "error": {"code": "already_running", "message": "This run is already running or waiting for confirm."}
+            })
+        _resuming.add(run_id)
+    _clear_node(rd, node)
+
+    def _go():
+        try:
+            resume_from(run_id, node)
+        finally:
+            _resuming.discard(run_id)
+    threading.Thread(target=_go, daemon=True).start()
+    return {"resuming_from": node}
+
+
 @app.post("/api/runs/{run_id}/frames", status_code=202)
 def api_run_frames(run_id: str):
     rd = run_dir(run_id)
@@ -271,15 +334,8 @@ def api_confirm(run_id: str, answer: ConfirmAnswer):
             threading.Thread(target=resume_graph, args=(run_id, data), daemon=True).start()
         else:  # dev path: run started with "Start confirm", no graph waiting
             finish_confirm(run_id, json.loads(payload_path.read_text(encoding="utf-8")), data)
-
-            def _plan_then_done():
-                run_photos(run_id)  # skips itself when no photos were uploaded
-                run_plan(run_id)
-                run_search(run_id)
-                run_extract(run_id)
-                run_pricing(run_id)
-                append_event(run_id, "pipeline", "run_done", {"status": "partial"})
-            threading.Thread(target=_plan_then_done, daemon=True).start()
+            # rest of the pipeline through the graph, so it stops at the first failed node like a normal run
+            threading.Thread(target=resume_from, args=(run_id, "photos"), daemon=True).start()
     finally:
         _confirming.discard(run_id)  # 04_confirm.json now guards repeats
     return {"confirmed": True}
