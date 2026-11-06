@@ -68,3 +68,34 @@ def append_event(run_id: str, node: str, type_: str, data: dict) -> dict:
     with open(events_path(run_id), "a", encoding="utf-8") as f:
         f.write(json.dumps(event) + "\n")
     return event
+
+
+TERMINAL = {"node_done": "done", "node_failed": "failed", "node_skipped": "skipped"}
+
+
+def read_events(run_id: str) -> list[dict]:
+    ep = events_path(run_id)
+    if not ep.exists():
+        return []
+    out = []
+    with open(ep, encoding="utf-8") as f:
+        for line in f:
+            try:
+                out.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    return out
+
+
+def node_result(run_id: str, node: str, after_seq: int = 0) -> dict | None:
+    """The node's last done/failed/skipped event after after_seq, or None if it emitted none."""
+    hits = [e for e in read_events(run_id)
+            if e.get("node") == node and e.get("type") in TERMINAL and e.get("seq", 0) > after_seq]
+    return hits[-1] if hits else None
+
+
+def failed_at(run_id: str) -> str | None:
+    """Node the run stopped at, from the last run_done event; None when the last run did not fail."""
+    done = [e for e in read_events(run_id) if e.get("node") == "pipeline" and e.get("type") == "run_done"]
+    data = done[-1].get("data", {}) if done else {}
+    return data.get("failed_at") if data.get("status") == "failed" else None

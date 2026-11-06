@@ -17,7 +17,7 @@ from .nodes.plan import run_plan
 from .nodes.search import run_search
 from .nodes.extract import run_extract
 from .nodes.pricing import run_pricing
-from .runs import append_event
+from .runs import TERMINAL, append_event, node_result, read_events
 
 _conn: sqlite3.Connection | None = None
 _checkpointer: SqliteSaver | None = None
@@ -34,31 +34,32 @@ def _get_checkpointer() -> SqliteSaver:
     return _checkpointer
 
 
+# Pipeline order after upload. A failed node stops the run there; resume_from() starts again at that node.
+ORDER = ("locate", "frames", "verify", "confirm", "photos", "plan", "search", "extract", "pricing")
+
+
 class GraphState(TypedDict):
     run_id: str
+    start_at: str
     locate_status: str
     frames_status: str
     verify_status: str
     confirm_status: str
+    photos_status: str
     plan_status: str
     search_status: str
     extract_status: str
     pricing_status: str
 
 
-def _locate_node(state: GraphState) -> GraphState:
-    run_locate(state["run_id"])
-    return {**state, "locate_status": "done"}
-
-
-def _frames_node(state: GraphState) -> GraphState:
-    run_frames(state["run_id"])
-    return {**state, "frames_status": "done"}
-
-
-def _verify_node(state: GraphState) -> GraphState:
-    run_verify(state["run_id"])
-    return {**state, "verify_status": "done"}
+def _step(node: str, fn):
+    """Run one node; its status is its own done/failed/skipped event (no event = did not finish = failed)."""
+    def run(state: GraphState) -> GraphState:
+        before = max((e.get("seq", 0) for e in read_events(state["run_id"])), default=0)
+        fn(state["run_id"])
+        ev = node_result(state["run_id"], node, before)
+        return {**state, f"{node}_status": TERMINAL[ev["type"]] if ev else "failed"}
+    return run
 
 
 def _confirm_node(state: GraphState) -> GraphState:
@@ -70,52 +71,19 @@ def _confirm_node(state: GraphState) -> GraphState:
     return {**state, "confirm_status": "done"}
 
 
-def _photos_node(state: GraphState) -> GraphState:
-    run_photos(state["run_id"])  # skips itself when no photos were uploaded
-    return state
-
-
-def _plan_node(state: GraphState) -> GraphState:
-    run_plan(state["run_id"])
-    return {**state, "plan_status": "done"}
-
-
-def _search_node(state: GraphState) -> GraphState:
-    run_search(state["run_id"])
-    return {**state, "search_status": "done"}
-
-
-def _extract_node(state: GraphState) -> GraphState:
-    run_extract(state["run_id"])
-    return {**state, "extract_status": "done"}
-
-
-def _pricing_node(state: GraphState) -> GraphState:
-    run_pricing(state["run_id"])
-    return {**state, "pricing_status": "done"}
+_RUNNERS = {"locate": run_locate, "frames": run_frames, "verify": run_verify,
+            "photos": run_photos,  # skips itself when no photos were uploaded
+            "plan": run_plan, "search": run_search, "extract": run_extract, "pricing": run_pricing}
 
 
 def _build_graph() -> object:
     g = StateGraph(GraphState)
-    g.add_node("locate", _locate_node)
-    g.add_node("frames", _frames_node)
-    g.add_node("verify", _verify_node)
-    g.set_entry_point("locate")
-    g.add_edge("locate", "frames")
-    g.add_edge("frames", "verify")
-    g.add_node("confirm", _confirm_node)
-    g.add_node("photos", _photos_node)
-    g.add_edge("verify", "confirm")
-    g.add_edge("confirm", "photos")
-    g.add_node("plan", _plan_node)
-    g.add_edge("photos", "plan")
-    g.add_node("search", _search_node)
-    g.add_edge("plan", "search")
-    g.add_node("extract", _extract_node)
-    g.add_edge("search", "extract")
-    g.add_node("pricing", _pricing_node)
-    g.add_edge("extract", "pricing")
-    g.add_edge("pricing", END)
+    for node in ORDER:
+        g.add_node(node, _confirm_node if node == "confirm" else _step(node, _RUNNERS[node]))
+    g.set_conditional_entry_point(lambda s: s.get("start_at") or "locate", list(ORDER))
+    for node, nxt in zip(ORDER, ORDER[1:] + (END,)):
+        g.add_conditional_edges(node, lambda s, node=node, nxt=nxt: END if s.get(f"{node}_status") == "failed" else nxt,
+                                list({nxt, END}))
     return g.compile(checkpointer=_get_checkpointer())
 
 
@@ -140,18 +108,36 @@ def is_paused(run_id: str) -> bool:
 
 
 def _invoke(run_id: str, graph_input) -> None:
+    config = {"configurable": {"thread_id": run_id}}
     try:
-        get_graph().invoke(graph_input, config={"configurable": {"thread_id": run_id}})
+        get_graph().invoke(graph_input, config=config)
     except Exception as exc:
         _glog.exception("graph.invoke failed for %s: %s", run_id, exc)
-    if not is_paused(run_id):
+        append_event(run_id, "pipeline", "run_done", {"status": "failed", "error": f"Pipeline error: {exc}"})
+        return
+    if is_paused(run_id):
+        return
+    values = get_graph().get_state(config).values
+    failed = next((n for n in ORDER if values.get(f"{n}_status") == "failed"), None)
+    if failed:  # stop here, nothing after it runs; POST /resume starts again at this node
+        ev = node_result(run_id, failed)
+        error = ((ev or {}).get("data") or {}).get("error") or f"{failed} did not finish"
+        append_event(run_id, "pipeline", "run_done", {"status": "failed", "failed_at": failed, "error": error})
+    else:
         append_event(run_id, "pipeline", "run_done", {"status": "partial"})
 
 
+def _start_state(run_id: str, start_at: str) -> dict:
+    return {"run_id": run_id, "start_at": start_at, **{f"{n}_status": "waiting" for n in ORDER}}
+
+
 def run_graph(run_id: str) -> None:
-    _invoke(run_id, {"run_id": run_id, "locate_status": "waiting", "frames_status": "waiting",
-                     "verify_status": "waiting", "confirm_status": "waiting", "plan_status": "waiting", "search_status": "waiting",
-                     "extract_status": "waiting", "pricing_status": "waiting"})
+    _invoke(run_id, _start_state(run_id, "locate"))
+
+
+def resume_from(run_id: str, node: str) -> None:
+    """Run the pipeline from `node` to the end (through the confirm pause when it is ahead)."""
+    _invoke(run_id, _start_state(run_id, node))
 
 
 def resume_graph(run_id: str, answer: dict) -> None:
