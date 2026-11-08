@@ -31,10 +31,7 @@ cd backend
 py -3.12 -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
-pip install --no-deps rapidocr==3.10.0
 ```
-
-`--no-deps` keeps the project's `opencv-python` (rapidocr would pull in a conflicting OpenCV).
 
 ## Run
 
