@@ -10,6 +10,7 @@ from pathlib import Path
 
 from ..config import get_config
 from ..report import build_report, inr
+from ..results import load_result
 from ..runs import append_event, run_dir, write_json_atomic
 from .confirm import RECORD_FILE, load_verify_answer
 from .photos import load_photos_answer
@@ -58,7 +59,7 @@ def _run_report_inner(run_id: str) -> None:
         "confirm": confirm,
         "verify": load_verify_answer(run_id),
         "manifest": _load(rd / "02_frames" / "manifest.json"),
-        "locate_items": ((_load(rd / "01_locate" / "response.json") or {}).get("parsed") or {}).get("items"),
+        "locate_items": ((load_result(run_id, "01_locate/response.json") or {}).get("parsed") or {}).get("items"),
         "queries": _load(rd / "06_plan" / "queries.json"),
         "photos_answer": load_photos_answer(rd),
         "price": _load(rd / "09_report" / "price.json"),

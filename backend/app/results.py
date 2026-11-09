@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert
 
 from .db import get_engine, require_engine
@@ -17,6 +17,8 @@ from .runs import run_dir
 # Run-folder path → (node, name) row in node_results. One node more per stage 2.x.
 FILES: dict[str, tuple[str, str]] = {
     "meta.json": ("upload", "meta.json"),
+    "01_locate/request.json": ("locate", "request.json"),
+    "01_locate/response.json": ("locate", "response.json"),
 }
 
 
@@ -27,6 +29,12 @@ def save_result(run_id: str, path: str, data: Any) -> None:
                                       set_={"data": stmt.excluded.data, "saved_at": func.now()})
     with require_engine().begin() as conn:
         conn.execute(stmt)
+
+
+def delete_results(run_id: str, node: str) -> None:
+    """Remove a node's saved rows before it runs again (re-run, resume)."""
+    with require_engine().begin() as conn:
+        conn.execute(delete(NodeResult).where(NodeResult.run_id == run_id, NodeResult.node == node))
 
 
 def load_result(run_id: str, path: str) -> Any | None:

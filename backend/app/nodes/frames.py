@@ -8,12 +8,12 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-import json
 
 import cv2
 
 from ..config import get_config
 from ..frames import best_frame, sample_indices, save_jpeg
+from ..results import load_result
 from ..runs import append_event, run_dir, write_json_atomic
 
 log = logging.getLogger(__name__)
@@ -32,11 +32,11 @@ def try_claim(run_id: str) -> bool:
         return True
 
 
-def load_locate_items(rd: Path) -> list | None:
-    """Locate items from 01_locate/response.json, or None if locate has no valid result."""
+def load_locate_items(run_id: str) -> list | None:
+    """Locate items from the saved locate response, or None if locate has no valid result."""
     try:
-        parsed = json.loads((rd / "01_locate" / "response.json").read_text(encoding="utf-8")).get("parsed")
-    except (OSError, ValueError):
+        parsed = (load_result(run_id, "01_locate/response.json") or {}).get("parsed")
+    except ValueError:  # an old run's file that is not valid JSON
         return None
     return parsed.get("items") if parsed else None
 
@@ -64,7 +64,7 @@ def run_frames(run_id: str, claimed: bool = False) -> None:
 def _run_frames_inner(run_id: str) -> None:
     rd = run_dir(run_id)
 
-    items = load_locate_items(rd)
+    items = load_locate_items(run_id)
     if items is None:
         append_event(run_id, "frames", "node_skipped", {"reason": "Locate did not finish"})
         return

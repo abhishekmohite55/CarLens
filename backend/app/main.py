@@ -37,7 +37,7 @@ from .nodes.report import try_claim as report_try_claim
 from .nodes.verify import try_claim as verify_try_claim
 from .llm.tracing import _get_client as _warmup_tracing
 from .nodes.upload import process_upload
-from .results import FILES as RESULT_FILES, load_result
+from .results import FILES as RESULT_FILES, delete_results, load_result
 from .runs import append_event, events_path, failed_at, run_dir
 
 # run_ids that have started or are starting the graph
@@ -176,6 +176,7 @@ _resume_lock = threading.Lock()
 
 
 def _clear_node(rd: Path, node: str) -> None:
+    delete_results(rd.name, node)  # rows saved in the database (stage 2.x); folder = run id
     for rel in _NODE_FILES.get(node, []):
         p = rd / rel
         if p.is_dir():
@@ -233,7 +234,7 @@ def api_run_frames(run_id: str):
     if not rd.exists():
         raise HTTPException(404, detail=f"Run '{run_id}' not found.")
 
-    if load_locate_items(rd) is None:
+    if load_locate_items(run_id) is None:
         return JSONResponse(status_code=409, content={
             "error": {"code": "no_locate_result", "message": "Locate has no valid result for this run."}
         })
