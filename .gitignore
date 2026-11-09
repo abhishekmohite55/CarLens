@@ -33,4 +33,5 @@ test_achievements/
 
 .superpowers/
 
-rto_codes.csv
+# root copy only; the seed copy in backend/alembic/seed/ is in git
+/rto_codes.csv

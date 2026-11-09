@@ -56,6 +56,15 @@ docker compose stop       # stop, keep data
 pgAdmin: **http://localhost:5050** (login `PGADMIN_EMAIL` / `PGADMIN_PASSWORD`). Add a server with host `postgres`, port `5432`, user `carlens`.
 `docker compose down -v` deletes all database data.
 
+Tables are created by Alembic migrations (`backend/alembic/versions/`). After `docker compose up -d`, from `backend` with the venv active:
+
+```
+alembic upgrade head
+```
+
+Tests use a separate database `carlens_test` (`TEST_DATABASE_URL` in `.env`), created once with
+`docker compose exec postgres createdb -U carlens carlens_test`.
+
 ## Tests
 
 ```
