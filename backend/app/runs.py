@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import secrets
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -13,16 +12,11 @@ from sqlalchemy import insert
 from .config import get_config, PROJECT_ROOT
 from .db import get_engine
 from .models import RunEvent
+from .run_index import TERMINAL, record_node_event  # noqa: F401  TERMINAL is imported from here by graph.py
 
 log = logging.getLogger(__name__)
 
 _seq: dict[str, int] = {}
-
-
-def new_run_id() -> str:
-    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    suffix = secrets.token_hex(2)  # 4 hex chars
-    return f"r_{ts}_{suffix}"
 
 
 def run_dir(run_id: str) -> Path:
@@ -92,9 +86,10 @@ def _record_event(event: dict, ts: datetime) -> None:
                 node=event["node"], type=event["type"], data=event["data"]))
     except Exception as e:
         log.warning("run_events write failed (run %s, seq %s): %s", event["run_id"], event["seq"], e)
-
-
-TERMINAL = {"node_done": "done", "node_failed": "failed", "node_skipped": "skipped"}
+    try:
+        record_node_event(event, ts)
+    except Exception as e:  # runs from before stage 2.1 have no runs row: logged, the run goes on
+        log.warning("node_runs update failed (run %s, seq %s): %s", event["run_id"], event["seq"], e)
 
 
 def read_events(run_id: str) -> list[dict]:

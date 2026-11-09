@@ -11,7 +11,9 @@ import cv2
 from fastapi import HTTPException, UploadFile
 
 from ..config import get_config
-from ..runs import append_event, create_run, events_path, new_run_id, write_json_atomic
+from ..results import save_result
+from ..run_index import create_run_row
+from ..runs import append_event, create_run
 
 _CHUNK = 1 * 1024 * 1024  # 1 MB
 
@@ -92,14 +94,15 @@ async def process_upload(video: UploadFile) -> dict:
                 },
             )
 
-        # Create run folder and move video in
-        run_id = new_run_id()
+        # runs row first: the primary key guarantees the random id is unique; then the folder
+        run_id = create_run_row(sha256=sha.hexdigest(), original_filename=name,
+                                size_bytes=size, duration_sec=round(duration_sec, 1))
         run_path = create_run(run_id)
         dest = run_path / f"video.{ext}"
         shutil.move(str(tmp_path), str(dest))
         tmp_path = None  # moved; do not delete in finally
 
-        # Write meta.json
+        # meta.json is a node_results row from stage 2.1 (no file in the folder)
         size_bytes = dest.stat().st_size
         meta = {
             "run_id": run_id,
@@ -109,7 +112,7 @@ async def process_upload(video: UploadFile) -> dict:
             "sha256": sha.hexdigest(),
             "created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         }
-        write_json_atomic(run_path / "meta.json", meta)
+        save_result(run_id, "meta.json", meta)
 
         # Append events (written before they would ever be streamed)
         mb_label = f"{size_bytes / (1024 * 1024):.0f} MB"

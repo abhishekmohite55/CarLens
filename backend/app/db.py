@@ -32,3 +32,11 @@ def get_engine() -> Engine | None:
             if url:
                 _engine = create_engine(url, pool_pre_ping=True, connect_args={"connect_timeout": 3})
         return _engine
+
+
+def require_engine() -> Engine:
+    """The engine, or a clear error: from stage 2.1 the database is the record, so writes cannot be skipped."""
+    engine = get_engine()
+    if engine is None:
+        raise RuntimeError("DATABASE_URL is not set in .env")
+    return engine

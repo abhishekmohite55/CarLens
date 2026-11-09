@@ -9,6 +9,7 @@ from pathlib import Path
 from ..config import PROJECT_ROOT, get_config
 from ..llm.gemini_video import call_gemini_video
 from ..llm.tracing import trace_locate
+from ..results import load_result
 from ..runs import append_event, run_dir, write_json_atomic
 from ..timecode import mmss_to_seconds, seconds_to_mmss
 from ..video import shrink_video
@@ -115,7 +116,7 @@ def run_locate(run_id: str, claimed: bool = False) -> None:
 
 def _run_locate_inner(run_id: str) -> None:
     rd = run_dir(run_id)
-    meta = json.loads((rd / "meta.json").read_text(encoding="utf-8"))
+    meta = load_result(run_id, "meta.json")
     duration_sec = meta["duration_sec"]
 
     # Find video file

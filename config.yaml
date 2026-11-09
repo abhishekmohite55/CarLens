@@ -112,6 +112,9 @@ pricing:
   year_tolerance: 3 # listings within ±3 years of the car feed the depreciation rate (owner, 5 Nov)
   min_comparables: 3
 
+dev:                     # platform step 2 testing: the pipeline ends after this node; re-run buttons start the next ones
+  stop_after: locate     # node name, or empty for the full pipeline
+
 paths:
   runs_dir: runs
   prompts_dir: prompts

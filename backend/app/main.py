@@ -37,6 +37,7 @@ from .nodes.report import try_claim as report_try_claim
 from .nodes.verify import try_claim as verify_try_claim
 from .llm.tracing import _get_client as _warmup_tracing
 from .nodes.upload import process_upload
+from .results import FILES as RESULT_FILES, load_result
 from .runs import append_event, events_path, failed_at, run_dir
 
 # run_ids that have started or are starting the graph
@@ -100,10 +101,7 @@ def api_get_run(run_id: str):
     if not rd.exists():
         raise HTTPException(404, detail=f"Run '{run_id}' not found.")
 
-    meta_path = rd / "meta.json"
-    meta: dict = {}
-    if meta_path.exists():
-        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    meta = load_result(run_id, "meta.json") or {}
 
     node_status: dict[str, str] = {n["id"]: "waiting" for n in _NODES}
     ev_path = rd / "events.jsonl"
@@ -513,6 +511,12 @@ def api_run_file(run_id: str, path: str):
 
     if target.is_symlink():
         raise HTTPException(400, detail="Symlinks are not served.")
+
+    if path in RESULT_FILES:  # saved in the database from stage 2.x, same JSON as the old file
+        data = load_result(run_id, path)
+        if data is None:
+            raise HTTPException(404, detail=f"File not found: {path}")
+        return JSONResponse(data)
 
     if not target.exists():
         raise HTTPException(404, detail=f"File not found: {path}")

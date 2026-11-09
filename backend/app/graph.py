@@ -79,14 +79,20 @@ _RUNNERS = {"locate": run_locate, "frames": run_frames, "verify": run_verify,
             "report": run_report}
 
 
+def _after(state: GraphState, node: str, nxt: str) -> str:
+    """Next node, or END when this node failed or config.yaml dev.stop_after names it (read on every run)."""
+    if state.get(f"{node}_status") == "failed" or get_config().dev.stop_after == node:
+        return END
+    return nxt
+
+
 def _build_graph() -> object:
     g = StateGraph(GraphState)
     for node in ORDER:
         g.add_node(node, _confirm_node if node == "confirm" else _step(node, _RUNNERS[node]))
     g.set_conditional_entry_point(lambda s: s.get("start_at") or "locate", list(ORDER))
     for node, nxt in zip(ORDER, ORDER[1:] + (END,)):
-        g.add_conditional_edges(node, lambda s, node=node, nxt=nxt: END if s.get(f"{node}_status") == "failed" else nxt,
-                                list({nxt, END}))
+        g.add_conditional_edges(node, lambda s, node=node, nxt=nxt: _after(s, node, nxt), list({nxt, END}))
     return g.compile(checkpointer=_get_checkpointer())
 
 

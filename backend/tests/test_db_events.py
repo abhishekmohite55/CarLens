@@ -1,5 +1,4 @@
 """run_events copy of every event (platform stage 2.0)."""
-import os
 import sys
 from pathlib import Path
 
@@ -39,15 +38,12 @@ def test_no_database_url_skips_the_copy(tmp_path, monkeypatch):
     assert runs_mod.append_event(run_id, "locate", "node_started", {})["seq"] == 1
 
 
-@pytest.mark.skipif(not os.environ.get("TEST_DATABASE_URL"), reason="TEST_DATABASE_URL not set (database carlens_test)")
-def test_event_is_copied_to_run_events(tmp_path, monkeypatch):
+def test_event_is_copied_to_run_events(tmp_path, monkeypatch, db_engine):
     from sqlalchemy import delete, select
 
-    from app.db import get_engine
-    from app.models import Base, RunEvent
+    from app.models import RunEvent
 
-    engine = get_engine()
-    Base.metadata.create_all(engine)
+    engine = db_engine
     run_id = "r_test_db_copy"
     with engine.begin() as conn:
         conn.execute(delete(RunEvent).where(RunEvent.run_id == run_id))

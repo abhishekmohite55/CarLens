@@ -1,0 +1,46 @@
+"""Node outputs in the database (platform step 2): what used to be JSON files in the run folder.
+
+Callers keep using the old file path as the name, so the API and the inspector see the same JSON.
+"""
+from __future__ import annotations
+
+import json
+from typing import Any
+
+from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert
+
+from .db import get_engine, require_engine
+from .models import NodeResult
+from .runs import run_dir
+
+# Run-folder path → (node, name) row in node_results. One node more per stage 2.x.
+FILES: dict[str, tuple[str, str]] = {
+    "meta.json": ("upload", "meta.json"),
+}
+
+
+def save_result(run_id: str, path: str, data: Any) -> None:
+    node, name = FILES[path]
+    stmt = insert(NodeResult).values(run_id=run_id, node=node, name=name, data=data)
+    stmt = stmt.on_conflict_do_update(index_elements=["run_id", "node", "name"],
+                                      set_={"data": stmt.excluded.data, "saved_at": func.now()})
+    with require_engine().begin() as conn:
+        conn.execute(stmt)
+
+
+def load_result(run_id: str, path: str) -> Any | None:
+    """The saved JSON, or None when the node has not saved it."""
+    node, name = FILES[path]
+    engine = get_engine()
+    if engine is not None:
+        with engine.connect() as conn:
+            row = conn.execute(select(NodeResult.data).where(
+                NodeResult.run_id == run_id, NodeResult.node == node, NodeResult.name == name)).first()
+        if row is not None:
+            return row[0]
+    # shortcut: runs from before step 2 only have the file; remove after they are imported (D4)
+    old = run_dir(run_id) / path
+    if old.exists():
+        return json.loads(old.read_text(encoding="utf-8"))
+    return None

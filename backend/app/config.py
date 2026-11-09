@@ -120,6 +120,10 @@ class PathsConfig(BaseModel):
     rto_csv: str = "rto_codes.csv"
 
 
+class DevConfig(BaseModel):
+    stop_after: Optional[str] = None  # node name: the pipeline ends after it (platform step 2 testing); empty = all
+
+
 class AppConfig(BaseModel):
     upload: UploadConfig
     models: ModelsConfig
@@ -132,6 +136,7 @@ class AppConfig(BaseModel):
     pricing: PricingConfig
     paths: PathsConfig
     locate_video: LocateVideoConfig
+    dev: DevConfig = DevConfig()
 
 
 def get_config() -> AppConfig:
