@@ -58,7 +58,7 @@ def _run_report_inner(run_id: str) -> None:
     report = build_report({
         "confirm": confirm,
         "verify": load_verify_answer(run_id),
-        "manifest": _load(rd / "02_frames" / "manifest.json"),
+        "manifest": load_result(run_id, "02_frames/manifest.json"),
         "locate_items": ((load_result(run_id, "01_locate/response.json") or {}).get("parsed") or {}).get("items"),
         "queries": _load(rd / "06_plan" / "queries.json"),
         "photos_answer": load_photos_answer(rd),

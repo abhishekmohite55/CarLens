@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import logging
 import threading
 import time
@@ -13,6 +12,7 @@ from ..config import get_config, PROJECT_ROOT
 from ..llm.chat import ask_chain, image_blocks
 from ..llm.tracing import langchain_callbacks
 from ..plate import normalise_plate, pick_plate, plates_in_texts
+from ..results import load_result
 from ..runs import append_event, run_dir, write_json_atomic
 from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -139,12 +139,11 @@ def run_verify(run_id: str, claimed: bool = False) -> None:
 
 def _run_verify_inner(run_id: str) -> None:
     rd = run_dir(run_id)
-    manifest_path = rd / "02_frames" / "manifest.json"
-    if not manifest_path.exists():
+    manifest = load_result(run_id, "02_frames/manifest.json")
+    if manifest is None:
         append_event(run_id, "verify", "node_skipped", {"reason": "Frames did not finish"})
         return
 
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     all_items = [i for i in manifest.get("items", []) if i.get("sharpest")]
     if not all_items:
         append_event(run_id, "verify", "node_skipped", {"reason": "Frames did not finish"})

@@ -254,7 +254,7 @@ def api_run_verify(run_id: str):
     if not rd.exists():
         raise HTTPException(404, detail=f"Run '{run_id}' not found.")
 
-    if not (rd / "02_frames" / "manifest.json").exists():
+    if load_result(run_id, "02_frames/manifest.json") is None:
         return JSONResponse(status_code=409, content={
             "error": {"code": "no_frames_result", "message": "Frames have no manifest for this run."}
         })

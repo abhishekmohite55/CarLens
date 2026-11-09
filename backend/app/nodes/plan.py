@@ -15,6 +15,7 @@ from ..llm.tracing import langchain_callbacks
 from ..plan import (build_user_prompt, car_problem, check_plan, damage_findings, listing_queries,
                     tyres_not_seen, tyres_to_judge)
 from ..photos import apply_photos
+from ..results import load_result
 from ..runs import append_event, run_dir, write_json_atomic
 from .photos import load_photos_answer
 
@@ -108,9 +109,9 @@ def _run_plan_inner(run_id: str) -> None:
         return
 
     findings = (json.loads((rd / "03_verify" / "response.json").read_text(encoding="utf-8")).get("parsed") or {}).get("findings") or []
-    manifest_path = rd / "02_frames" / "manifest.json"
-    if manifest_path.exists():  # locate category lets damage_findings tell a scratch from a badge
-        categories = {i["item_id"]: i.get("category") for i in json.loads(manifest_path.read_text(encoding="utf-8"))["items"]}
+    manifest = load_result(run_id, "02_frames/manifest.json")
+    if manifest is not None:  # locate category lets damage_findings tell a scratch from a badge
+        categories = {i["item_id"]: i.get("category") for i in manifest["items"]}
         findings = [{**f, "category": categories.get(f.get("item_id"))} for f in findings]
     # extra photos (Stage 6): tyre photos replace video tyres, a confident odometer photo sets km; no photos = unchanged
     confirm, findings, _ = apply_photos(confirm, findings, load_photos_answer(rd), get_config().photos.km_min_confidence)

@@ -19,6 +19,7 @@ FILES: dict[str, tuple[str, str]] = {
     "meta.json": ("upload", "meta.json"),
     "01_locate/request.json": ("locate", "request.json"),
     "01_locate/response.json": ("locate", "response.json"),
+    "02_frames/manifest.json": ("frames", "manifest.json"),
 }
 
 

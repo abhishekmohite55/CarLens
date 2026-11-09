@@ -13,7 +13,7 @@ import cv2
 
 from ..config import get_config
 from ..frames import best_frame, sample_indices, save_jpeg
-from ..results import load_result
+from ..results import delete_results, load_result, save_result
 from ..runs import append_event, run_dir, write_json_atomic
 
 log = logging.getLogger(__name__)
@@ -96,6 +96,7 @@ def _run_frames_inner(run_id: str) -> None:
     if out_dir.exists():
         shutil.rmtree(out_dir)
     out_dir.mkdir()
+    delete_results(run_id, "frames")  # old manifest row goes with the old JPEGs
 
     total_items = len(items)
     max_workers = fc.workers or os.cpu_count() or 1  # 0 = CPU count (pool default would be cpu+4)
@@ -188,7 +189,7 @@ def _run_frames_inner(run_id: str) -> None:
         },
         "items": records,
     }
-    write_json_atomic(out_dir / "manifest.json", manifest)
+    save_result(run_id, "02_frames/manifest.json", manifest)  # JPEGs stay files (stage 2.3)
 
     n = len(done_records)
     jpg_files = [f"02_frames/{r['sharpest']['file']}" for r in done_records]
