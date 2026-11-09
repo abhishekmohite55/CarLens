@@ -24,7 +24,7 @@ Each run is saved in `runs/<run_id>/`, one folder per step. If a step fails, the
 
 ## Setup (Windows, once)
 
-You need Python 3.12 and a `.env` file in the project root with `GEMINI_API_KEY`, `TAVILY_API_KEY`, `OPENROUTER_API_KEY`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` and `LANGFUSE_HOST`.
+You need Python 3.12 and a `.env` file in the project root: copy `.env.example` to `.env` and fill in every value.
 
 ```
 cd backend
@@ -43,6 +43,18 @@ uvicorn app.main:app --reload --port 8000 --timeout-graceful-shutdown 2
 
 Open **http://localhost:8000/inspector**, upload a video and follow the steps.
 `--timeout-graceful-shutdown 2` lets Ctrl+C stop the server while the inspector page is open.
+
+## Dev database
+
+Needs Docker Desktop. Postgres and pgAdmin run in containers; the backend does not use them yet.
+
+```
+docker compose up -d      # start
+docker compose stop       # stop, keep data
+```
+
+pgAdmin: **http://localhost:5050** (login `PGADMIN_EMAIL` / `PGADMIN_PASSWORD`). Add a server with host `postgres`, port `5432`, user `carlens`.
+`docker compose down -v` deletes all database data.
 
 ## Tests
 

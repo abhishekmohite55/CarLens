@@ -1,0 +1,30 @@
+# Dev database for the laptop (platform step 1). The backend still runs from its venv.
+# Values in ${...} come from .env next to this file (see .env.example).
+services:
+  postgres:
+    image: postgres:17 # same major version as Supabase (production)
+    environment:
+      POSTGRES_DB: carlens
+      POSTGRES_USER: carlens
+      # Read only on the first start with an empty volume; changing .env later does not change it.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:5432:5432" # this laptop only, not the Wi-Fi network
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  pgadmin:
+    image: dpage/pgadmin4:9.18
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:?set PGADMIN_EMAIL in .env}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:?set PGADMIN_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:5050:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      - postgres
+
+volumes:
+  pgdata:
+  pgadmin_data:
