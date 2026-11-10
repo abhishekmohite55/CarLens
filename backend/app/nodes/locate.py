@@ -10,7 +10,7 @@ from ..config import PROJECT_ROOT, get_config
 from ..llm.gemini_video import call_gemini_video
 from ..llm.tracing import trace_locate
 from ..results import load_result, save_result
-from ..runs import append_event, run_dir, write_json_atomic
+from ..runs import append_event, run_dir
 from ..timecode import mmss_to_seconds, seconds_to_mmss
 from ..video import shrink_video
 
@@ -223,7 +223,7 @@ def _run_locate_inner(run_id: str) -> None:
         if "fallback" in result:
             request_data["fallback"] = result["fallback"]
         save_result(run_id, "01_locate/request.json", request_data)
-    except Exception as exc:
+    except Exception:
         log.exception("Failed to update request.json for %s", run_id)
 
     # Trace to Langfuse (record the model that actually answered)

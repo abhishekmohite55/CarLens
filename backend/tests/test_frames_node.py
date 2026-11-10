@@ -1,5 +1,4 @@
 """Tests for nodes/frames.py: locate-result loading and the one-run-at-a-time claim."""
-import json
 import sys
 from pathlib import Path
 
@@ -8,15 +7,12 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from app import results
 from app.nodes import frames as frames_node
 
-RUN = "r_test_frames_old"  # no database row: load_result falls back to the old file
+RUN = "r_test_frames_fake"
 
 
 def _old_run(tmp_path, monkeypatch, parsed=None, write=True) -> None:
-    monkeypatch.setattr(results, "run_dir", lambda rid: tmp_path / rid)
-    monkeypatch.setattr(results, "get_engine", lambda: None)
-    if write:
-        (tmp_path / RUN / "01_locate").mkdir(parents=True)
-        (tmp_path / RUN / "01_locate" / "response.json").write_text(json.dumps({"parsed": parsed}), encoding="utf-8")
+    """Fake saved locate response (no database): write=False means locate saved nothing."""
+    monkeypatch.setattr(frames_node, "load_result", lambda rid, path: {"parsed": parsed} if write else None)
 
 
 def test_load_locate_items_missing_file(tmp_path, monkeypatch):

@@ -4,7 +4,6 @@ Callers keep using the old file path as the name, so the API and the inspector s
 """
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from sqlalchemy import delete, func, select
@@ -13,7 +12,6 @@ from sqlalchemy.dialects.postgresql import insert
 from .db import get_engine, require_engine
 from .models import NodeResult
 from .node_tables import NODE_TABLES, WRITERS
-from .runs import run_dir
 
 # Run-folder path → (node, name) row in node_results. One node more per stage 2.x.
 FILES: dict[str, tuple[str, str]] = {
@@ -72,9 +70,4 @@ def load_result(run_id: str, path: str) -> Any | None:
                 NodeResult.run_id == run_id, NodeResult.node == node, NodeResult.name == name)).first()
         if row is not None:
             return row[0]
-    # shortcut: runs from before step 2 only have the file; remove after they are imported (D4)
-    old = run_dir(run_id) / path
-    if old.exists():
-        text = old.read_text(encoding="utf-8")
-        return text if path.endswith(".txt") else json.loads(text)
     return None

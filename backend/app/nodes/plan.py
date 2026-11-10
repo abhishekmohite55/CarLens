@@ -1,7 +1,6 @@
 """Plan node: listing queries from templates (Python) + part/tyre queries from the plan LLM chain, saved in the database."""
 from __future__ import annotations
 
-import json
 import logging
 import random
 import threading
@@ -16,7 +15,7 @@ from ..plan import (build_user_prompt, car_problem, check_plan, damage_findings,
                     tyres_not_seen, tyres_to_judge)
 from ..photos import apply_photos
 from ..results import load_result, save_result
-from ..runs import append_event, run_dir, write_json_atomic
+from ..runs import append_event
 from .photos import load_photos_answer
 
 log = logging.getLogger(__name__)
@@ -96,7 +95,6 @@ def run_plan(run_id: str, claimed: bool = False) -> None:
 
 
 def _run_plan_inner(run_id: str) -> None:
-    rd = run_dir(run_id)
     confirm = load_result(run_id, "04_confirm.json")
     if confirm is None:
         append_event(run_id, "plan", "node_skipped", {"reason": "Confirm not done"})

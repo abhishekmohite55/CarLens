@@ -14,7 +14,7 @@ import cv2
 from ..config import get_config
 from ..frames import best_frame, sample_indices, save_jpeg
 from ..results import delete_results, load_result, save_result
-from ..runs import append_event, run_dir, write_json_atomic
+from ..runs import append_event, run_dir
 
 log = logging.getLogger(__name__)
 
