@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import shutil
 import threading
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -47,13 +48,15 @@ from .runs import append_event, events_path, failed_at, run_dir
 _started: set[str] = set()
 _start_lock = threading.Lock()
 
-app = FastAPI(title="CarLens backend")
-
-
-@app.on_event("startup")
-def _startup():
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    """Runs once when the server starts (before the first request), then the server runs."""
     _warmup_tracing()
     _mark_interrupted()
+    yield
+
+
+app = FastAPI(title="CarLens backend", lifespan=_lifespan)
 
 
 def _mark_interrupted() -> None:

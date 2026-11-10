@@ -5,7 +5,7 @@ from unittest.mock import patch, MagicMock
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import pytest
-from app.video import shrink_video, ffmpeg_exe
+from app.video import shrink_video
 
 
 def test_shrink_video_calls_correct_command(tmp_path):

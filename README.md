@@ -86,6 +86,19 @@ cd backend
 python -m pytest -q
 ```
 
+## CI
+
+Every push to GitHub runs `.github/workflows/ci.yml`: **lint** (ruff, pyflakes rules), **test** (`pytest` against a throwaway Postgres 17) and **image** (`docker build` of the backend). `main` only accepts a pull request whose 3 checks are green.
+
+Same lint on the laptop (venv active, from the project root):
+
+```
+pip install ruff==0.17.4
+ruff check --select F backend
+```
+
+Merging a stage: push the branch, open a pull request into `main` on GitHub, merge it when the checks are green, then `git checkout main` and `git pull`.
+
 ## Config
 
 - `config.yaml` (project root): models, limits and pricing settings. Changes apply without a restart.

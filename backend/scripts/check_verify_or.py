@@ -24,7 +24,7 @@ from pathlib import Path
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.config import PROJECT_ROOT, get_config  # also loads .env
-from app.llm.chat import ask_chain, image_blocks, parse_json
+from app.llm.chat import ask_chain, image_blocks
 from app.nodes.verify import normalise_answer, validate_answer
 
 CHECKS_DIR = PROJECT_ROOT / "runs" / "_checks"
