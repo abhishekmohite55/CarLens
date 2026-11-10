@@ -12,7 +12,7 @@ from sqlalchemy import delete, func, insert, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import Connection
 
-from .models import (ConfirmedCar, Frame, LocateItem, NodeResult, PhotoResult, PlanQuery, PriceFigure, SearchResult,
+from .models import (ConfirmedCar, Frame, LocateItem, NodeResult, PhotoResult, PlanQuery, Price, PriceFigure, SearchResult,
                      VerifyFinding, VerifyVehicle)
 from .search import flatten_queries
 
@@ -203,6 +203,16 @@ def _write_figures(conn: Connection, run_id: str, figures: Any) -> None:
     conn.execute(stmt.on_conflict_do_update(constraint="uq_price_figures_listing", set_={"last_seen_at": func.now()}))
 
 
+def price_row(price: dict) -> dict:
+    """The run's price in one row; low/high = the after-repairs range the report shows (median → max)."""
+    p = price or {}
+    np, after = p.get("new_price") or {}, p.get("after_repairs") or {}
+    return {"status": p.get("status"), "low_inr": _int(after.get("median")), "high_inr": _int(after.get("max")),
+            "new_price_inr": _int(np.get("value")), "variant_match": np.get("variant_match"),
+            "car_age_years": _int(p.get("car_age_years")), "listings_used": len(p.get("listings_used") or []),
+            "repairs_total_inr": _int(round((p.get("repairs") or {}).get("total") or 0)), "reason": p.get("reason")}
+
+
 def _write_verify(conn: Connection, run_id: str, response: Any) -> None:
     conn.execute(delete(VerifyFinding).where(VerifyFinding.run_id == run_id))
     conn.execute(delete(VerifyVehicle).where(VerifyVehicle.run_id == run_id))
@@ -240,7 +250,8 @@ WRITERS: dict[str, Callable[[Connection, str, Any], None]] = {
     "06_plan/queries.json": _replace(PlanQuery, plan_rows),
     "07_search/results.json": _write_search,
     "08_extract/figures.json": _write_figures,
+    "09_report/price.json": _replace(Price, lambda price: [price_row(price)]),
 }
 NODE_TABLES = {"locate": [LocateItem], "frames": [Frame], "verify": [VerifyFinding, VerifyVehicle],
                "confirm": [ConfirmedCar], "photos": [PhotoResult],
-               "plan": [PlanQuery]}
+               "plan": [PlanQuery], "pricing": [Price]}

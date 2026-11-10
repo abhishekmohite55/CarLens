@@ -254,3 +254,34 @@ def test_price_figures_are_kept_and_only_dated_again(db_engine):
     with db_engine.connect() as conn:
         assert conn.execute(select(func.count()).select_from(PriceFigure)
                             .where(PriceFigure.source_url.like("https://c.example/%"))).scalar() == 3
+
+
+PRICE = {"status": "ok", "new_price": {"value": 1334000, "type": "on_road", "variant_match": "exact"},
+         "repairs": {"items": [], "total": 19087.5}, "listings_used": [{"source": "S1"}, {"source": "S2"}],
+         "car_age_years": 3, "fair_value": {"median": 1074000, "max": 1086000},
+         "after_repairs": {"median": 1060000, "max": 1071000}}
+
+
+def test_price_row():
+    assert node_tables.price_row(PRICE) == {
+        "status": "ok", "low_inr": 1060000, "high_inr": 1071000, "new_price_inr": 1334000, "variant_match": "exact",
+        "car_age_years": 3, "listings_used": 2, "repairs_total_inr": 19088, "reason": None}
+    row = node_tables.price_row({"status": "unavailable", "reason": "no new-car price found", "repairs": {"total": 0}})
+    assert (row["low_inr"], row["new_price_inr"], row["listings_used"]) == (None, None, 0)
+
+
+def test_price_json_fills_prices_and_rerun_clears_it(db_engine):
+    from sqlalchemy import select
+
+    from app.models import Price
+
+    run_id = run_index.create_run_row(sha256="ae" * 32, original_filename="x.mp4", size_bytes=1, duration_sec=1.0)
+    results.save_result(run_id, "09_report/price.json", PRICE)
+    results.save_result(run_id, "09_report/price.json", PRICE)  # saved again: still one row
+    with db_engine.connect() as conn:
+        rows = conn.execute(select(Price.low_inr, Price.high_inr).where(Price.run_id == run_id)).all()
+    assert rows == [(1060000, 1071000)]
+    results.delete_results(run_id, "pricing")
+    with db_engine.connect() as conn:
+        assert conn.execute(select(Price).where(Price.run_id == run_id)).first() is None
+    assert results.load_result(run_id, "09_report/price.json") is None

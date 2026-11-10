@@ -459,7 +459,7 @@ def api_run_extract(run_id: str):
 
 @app.post("/api/runs/{run_id}/pricing", status_code=202)
 def api_run_pricing(run_id: str):
-    """Dev (used by /inspector): re-run only the pricing node on a run with extract figures; deletes old 09_report/."""
+    """Dev (used by /inspector): re-run only the pricing node on a run with extract figures; deletes its old price."""
     rd = run_dir(run_id)
     if not rd.exists():
         raise HTTPException(404, detail=f"Run '{run_id}' not found.")
@@ -471,14 +471,14 @@ def api_run_pricing(run_id: str):
         return JSONResponse(status_code=409, content={
             "error": {"code": "already_running", "message": "Pricing is already running for this run."}
         })
-    (rd / "09_report" / "price.json").unlink(missing_ok=True)  # report.json stays until the report is re-run
+    _clear_node(rd, "pricing")  # price.json row + prices row; report.json stays until the report is re-run
     threading.Thread(target=run_pricing, args=(run_id,), kwargs={"claimed": True}, daemon=True).start()
     return {"started": True}
 
 
 @app.post("/api/runs/{run_id}/report", status_code=202)
 def api_run_report(run_id: str):
-    """Dev (used by /inspector): rebuild only the report from the files already in the run folder (no AI call)."""
+    """Dev (used by /inspector): rebuild only the report from the saved node results (no AI call)."""
     rd = run_dir(run_id)
     if not rd.exists():
         raise HTTPException(404, detail=f"Run '{run_id}' not found.")

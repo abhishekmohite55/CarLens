@@ -38,6 +38,8 @@ FILES: dict[str, tuple[str, str]] = {
     "08_extract/request.json": ("extract", "request.json"),
     "08_extract/response.json": ("extract", "response.json"),
     "08_extract/figures.json": ("extract", "figures.json"),
+    "09_report/price.json": ("pricing", "price.json"),
+    "09_report/report.json": ("report", "report.json"),
 }
 
 
@@ -73,5 +75,6 @@ def load_result(run_id: str, path: str) -> Any | None:
     # shortcut: runs from before step 2 only have the file; remove after they are imported (D4)
     old = run_dir(run_id) / path
     if old.exists():
-        return json.loads(old.read_text(encoding="utf-8"))
+        text = old.read_text(encoding="utf-8")
+        return text if path.endswith(".txt") else json.loads(text)
     return None
