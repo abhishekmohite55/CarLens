@@ -116,3 +116,30 @@ def test_rto_rows_come_from_the_database(db_engine):
         conn.execute(insert(RtoCode), [{"state_code": "MH", "number": "14", "city": "Pimpri-Chinchwad", "statewide": False},
                                        {"state_code": "MH", "number": "08AA", "city": "Letter code", "statewide": False}])
     assert rto_rows() == [{"state_code": "MH", "number": 14, "state": "Maharashtra", "city": "Pimpri-Chinchwad"}]
+
+
+PHOTOS_RESPONSE = {"answered_by": {"model": "gemini"}, "parsed": {"photos": [
+    {"slot": "front_left", "description": "worn", "tyre": {"tyre_score": 3, "tread": "worn"}},
+    {"slot": "odometer", "description": "cluster", "odometer_km": 45200, "confidence": 0.6}]}}
+APPLIED = {"tyres_replaced": [{"slot": "front_left", "replaced": ["L4"]}], "tyres_added": [],
+           "km": {"photo_km": 45200, "confidence": 0.6, "used": False, "confirm_km": 52054}}
+
+
+def test_photo_rows_mark_what_was_used():
+    rows = {r["slot"]: r for r in node_tables.photo_rows(PHOTOS_RESPONSE, APPLIED)}
+    assert rows["front_left"]["used"] is True and rows["front_left"]["tyre_score"] == 3
+    assert rows["odometer"]["used"] is False and rows["odometer"]["odometer_km"] == 45200  # confidence below 0.8
+
+
+def test_saving_applied_fills_photo_results(db_engine):
+    from sqlalchemy import select
+
+    from app.models import PhotoResult
+
+    run_id = run_index.create_run_row(sha256="ff" * 32, original_filename="x.mp4", size_bytes=1, duration_sec=1.0)
+    results.save_result(run_id, "05_photos/response.json", PHOTOS_RESPONSE)
+    results.save_result(run_id, "05_photos/applied.json", APPLIED)
+    with db_engine.connect() as conn:
+        slots = conn.execute(select(PhotoResult.slot).where(PhotoResult.run_id == run_id)
+                             .order_by(PhotoResult.slot)).scalars().all()
+    assert slots == ["front_left", "odometer"]

@@ -323,7 +323,8 @@ def api_confirm_start(run_id: str):
             "error": {"code": "already_waiting", "message": "This run is already waiting for confirm."}
         })
     _clear_node(rd, "confirm")  # payload + record rows (and pre-step-2 files)
-    if (rd / "05_photos").exists():  # a fresh confirm starts without old photos
+    _clear_node(rd, "photos")  # a fresh confirm starts without old photo answers and photos
+    if (rd / "05_photos").exists():
         shutil.rmtree(rd / "05_photos")
     start_confirm(run_id)
     return {"started": True}

@@ -113,7 +113,7 @@ def _run_plan_inner(run_id: str) -> None:
         categories = {i["item_id"]: i.get("category") for i in manifest["items"]}
         findings = [{**f, "category": categories.get(f.get("item_id"))} for f in findings]
     # extra photos (Stage 6): tyre photos replace video tyres, a confident odometer photo sets km; no photos = unchanged
-    confirm, findings, _ = apply_photos(confirm, findings, load_photos_answer(rd), get_config().photos.km_min_confidence)
+    confirm, findings, _ = apply_photos(confirm, findings, load_photos_answer(run_id), get_config().photos.km_min_confidence)
 
     out = rd / "06_plan"
     out.mkdir(exist_ok=True)

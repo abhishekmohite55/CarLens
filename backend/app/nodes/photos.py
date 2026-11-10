@@ -1,9 +1,8 @@
 """Photos node (Stage 6): reads the extra tyre/odometer photos added at confirm with the photos model chain.
-Writes 05_photos/request.json, response.json, applied.json (what plan and extract will use). Skipped without photos."""
+Saves request.json, response.json, applied.json (what plan and extract use) in the database; JPEGs stay in 05_photos/. Skipped without photos."""
 from __future__ import annotations
 
 import io
-import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
@@ -17,7 +16,8 @@ from ..frames import save_jpeg
 from ..llm.chat import ask_chain, image_blocks
 from ..llm.tracing import langchain_callbacks
 from ..photos import apply_photos, list_photos, validate_answer
-from ..runs import append_event, run_dir, write_json_atomic
+from ..results import load_result, save_result
+from ..runs import append_event, run_dir
 from .confirm import load_record, load_verify_answer
 
 log = logging.getLogger(__name__)
@@ -56,12 +56,11 @@ def _decode_heic(data: bytes):
         return None
 
 
-def load_photos_answer(rd: Path) -> dict | None:
+def load_photos_answer(run_id: str) -> dict | None:
     """The photos model answer, or None (no photos, or every model failed)."""
-    path = rd / "05_photos" / "response.json"
-    if not path.exists():
+    data = load_result(run_id, "05_photos/response.json")
+    if data is None:
         return None
-    data = json.loads(path.read_text(encoding="utf-8"))
     return data.get("parsed") if data.get("answered_by") else None
 
 
@@ -89,7 +88,7 @@ def _run_photos_inner(run_id: str) -> None:
     frames = [{"file": f"{p['slot']}.jpg", "item_id": p["slot"],
                "category": "odometer" if p["slot"] == "odometer" else "tyre",
                "label": "odometer" if p["slot"] == "odometer" else p["slot"].replace("_", " ") + " tyre"} for p in photos]
-    write_json_atomic(out / "request.json", {
+    save_result(run_id, "05_photos/request.json", {
         "node": "photos", "chain": [{"provider": e.provider, "model": e.model} for e in chain],
         "timeout_per_model_sec": cfg.models.photos_timeout_per_model_sec,
         "system_prompt": system_prompt, "user_prompt": user_prompt,
@@ -108,7 +107,7 @@ def _run_photos_inner(run_id: str) -> None:
                        emit=lambda msg: append_event(run_id, "photos", "node_progress", {"message": msg}),
                        callbacks=langchain_callbacks(run_id, "photos"),
                        metadata={"langfuse_session_id": run_id, "langfuse_trace_name": "photos"})
-    write_json_atomic(out / "response.json", {"received_at": _now(), **answer})
+    save_result(run_id, "05_photos/response.json", {"received_at": _now(), **answer})
     files.append("05_photos/response.json")
     if answer["parsed"] is None:  # plan and extract then use verify + confirm as they are
         append_event(run_id, "photos", "node_failed",
@@ -118,7 +117,7 @@ def _run_photos_inner(run_id: str) -> None:
     confirm = load_record(run_id)
     findings = (load_verify_answer(run_id) or {}).get("findings") or []
     _, _, applied = apply_photos(confirm, findings, answer["parsed"], cfg.photos.km_min_confidence)
-    write_json_atomic(out / "applied.json", applied)
+    save_result(run_id, "05_photos/applied.json", applied)  # also fills photo_results (JPEGs stay in 05_photos/)
     files.append("05_photos/applied.json")
     km = applied["km"]
     parts = ([f"{len(applied['tyres_replaced'])} tyre(s) replaced", f"{len(applied['tyres_added'])} added"]
