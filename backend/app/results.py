@@ -33,6 +33,11 @@ FILES: dict[str, tuple[str, str]] = {
     "06_plan/response.json": ("plan", "response.json"),
     "06_plan/queries.json": ("plan", "queries.json"),
     "07_search/results.json": ("search", "results.json"),
+    "08_extract/trimmed.txt": ("extract", "trimmed.txt"),  # the exact text the extract model receives (owner, 10 Nov)
+    "08_extract/trimmed.json": ("extract", "trimmed.json"),
+    "08_extract/request.json": ("extract", "request.json"),
+    "08_extract/response.json": ("extract", "response.json"),
+    "08_extract/figures.json": ("extract", "figures.json"),
 }
 
 

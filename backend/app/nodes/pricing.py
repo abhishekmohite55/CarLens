@@ -1,7 +1,6 @@
-"""Pricing node: Python-only price from 08_extract/figures.json (app/pricing.py rules) into 09_report/price.json."""
+"""Pricing node: Python-only price from the extract figures (database) (app/pricing.py rules) into 09_report/price.json."""
 from __future__ import annotations
 
-import json
 import logging
 import threading
 from datetime import datetime
@@ -48,12 +47,11 @@ def run_pricing(run_id: str, claimed: bool = False) -> None:
 
 def _run_pricing_inner(run_id: str) -> None:
     rd = run_dir(run_id)
-    figures_path = rd / "08_extract" / "figures.json"
-    if not figures_path.exists():
+    figs = load_result(run_id, "08_extract/figures.json")
+    if figs is None:
         append_event(run_id, "pricing", "node_skipped", {"reason": "Extract has no figures"})
         return
     append_event(run_id, "pricing", "node_started", {"label": "Pricing the car"})
-    figs = json.loads(figures_path.read_text(encoding="utf-8"))
     queries = load_result(run_id, "06_plan/queries.json") or {}
     out = price_report(figs["kept"], queries.get("tyres") or [], figs["car"], datetime.now().year, pricing_settings())
     (rd / "09_report").mkdir(exist_ok=True)

@@ -204,3 +204,53 @@ def test_search_results_are_kept_and_only_dated_again(db_engine):
                          .where(SearchResult.url.like("https://%.example/%"))).scalar()
         last = conn.execute(select(func.max(SearchResult.last_seen_at))).scalar()
     assert n == 2 and last >= first
+
+
+TRIMMED = {"groups": [{"key": "listing", "label": "listing", "items": []},
+                      {"key": "front_bumper", "label": "part front_bumper — dent", "items": []},
+                      {"key": "L7", "label": "tyre L7 front left — mid", "items": []}],
+           "sources": {"S1": {"url": "https://c.example/1", "title": "Used Ertiga", "group": "listing"},
+                       "S2": {"url": "https://c.example/2", "title": "Bumper", "group": "front_bumper"},
+                       "S3": {"url": "https://c.example/3", "title": "Tyre", "group": "L7"}},
+           "stats": {}}
+FIGURES = {"kept": [
+    {"source": "S1", "type": "single_listing", "price_text": ["₹ 9,95,000"], "about": "this_car", "year": 2022,
+     "km": 30000, "variant": "ZXi", "group": "listing", "url": "https://c.example/1", "inr": [995000]},
+    {"source": "S1", "type": "single_listing", "price_text": ["₹ 9,95,000"], "about": "this_car", "year": 2022,
+     "group": "listing", "url": "https://c.example/1", "inr": [995000]},  # same listing twice in one answer
+    {"source": "S2", "type": "part_price", "price_text": ["Rs 3,500", "Rs 4,000"], "group": "front_bumper",
+     "url": "https://c.example/2", "inr": [3500, 4000]},
+    {"source": "S3", "type": "tyre_price", "price_text": ["₹5,200"], "tyre_size": "185/65 R15", "group": "L7",
+     "url": "https://c.example/3", "inr": [5200]}], "rejected": [], "outliers": []}
+
+
+def test_figure_rows():
+    rows = node_tables.figure_rows(FIGURES, TRIMMED, RECORD)
+    assert [(r["figure_group"], r["part"]) for r in rows] == [("listing", None), ("part", "front_bumper"), ("tyre", "L7")]
+    listing, part, tyre = rows
+    assert (listing["year"], listing["km"], listing["variant_key"], listing["model_key"]) == (2022, 30000, "zxi", "ertiga")
+    assert (listing["price_low_inr"], listing["price_high_inr"], listing["source_title"]) == (995000, 995000, "Used Ertiga")
+    assert (part["price_low_inr"], part["price_high_inr"], part["year"]) == (3500, 4000, None)
+    assert tyre["tyre_size"] == "185/65 R15" and tyre["city"] == "Pimpri-Chinchwad"
+
+
+def test_price_figures_are_kept_and_only_dated_again(db_engine):
+    from sqlalchemy import delete, func, select
+
+    from app.models import PriceFigure
+
+    with db_engine.begin() as conn:
+        conn.execute(delete(PriceFigure).where(PriceFigure.source_url.like("https://c.example/%")))
+    run_id = run_index.create_run_row(sha256="ad" * 32, original_filename="x.mp4", size_bytes=1, duration_sec=1.0)
+    results.save_result(run_id, "04_confirm.json", RECORD)
+    results.save_result(run_id, "08_extract/trimmed.json", TRIMMED)
+    results.save_result(run_id, "08_extract/figures.json", FIGURES)
+    results.save_result(run_id, "08_extract/figures.json", FIGURES)  # same figures again (re-run)
+    with db_engine.connect() as conn:
+        n = conn.execute(select(func.count()).select_from(PriceFigure)
+                         .where(PriceFigure.source_url.like("https://c.example/%"))).scalar()
+    assert n == 3
+    results.delete_results(run_id, "extract")  # clearing the node keeps the cross-run figures
+    with db_engine.connect() as conn:
+        assert conn.execute(select(func.count()).select_from(PriceFigure)
+                            .where(PriceFigure.source_url.like("https://c.example/%"))).scalar() == 3

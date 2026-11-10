@@ -54,7 +54,7 @@ def _run_report_inner(run_id: str) -> None:
         append_event(run_id, "report", "node_skipped", {"reason": "Confirm not done"})
         return
     append_event(run_id, "report", "node_started", {"label": "Building the report"})
-    trimmed = _load(rd / "08_extract" / "trimmed.json") or {}
+    trimmed = load_result(run_id, "08_extract/trimmed.json") or {}
     report = build_report({
         "confirm": confirm,
         "verify": load_verify_answer(run_id),

@@ -12,8 +12,8 @@ from sqlalchemy import delete, func, insert, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import Connection
 
-from .models import (ConfirmedCar, Frame, LocateItem, NodeResult, PhotoResult, PlanQuery, SearchResult, VerifyFinding,
-                     VerifyVehicle)
+from .models import (ConfirmedCar, Frame, LocateItem, NodeResult, PhotoResult, PlanQuery, PriceFigure, SearchResult,
+                     VerifyFinding, VerifyVehicle)
 from .search import flatten_queries
 
 
@@ -156,6 +156,53 @@ def _write_search(conn: Connection, run_id: str, results: Any) -> None:
                                             set_={"last_seen_at": func.now()}))
 
 
+def figure_rows(figures: dict, trimmed: dict, record: dict) -> list[dict]:
+    """One row per kept figure (passed the Python checks); car keys and place from the run's confirmed car.
+    Part/tyre groups are keyed by part name / tyre id; the trimmed group label says which one it is."""
+    car = (record or {}).get("car") or {}
+    make = car.get("make")
+    labels = {g.get("key"): g.get("label") or "" for g in (trimmed or {}).get("groups") or []}
+    sources = (trimmed or {}).get("sources") or {}
+    seen: set[tuple] = set()
+    rows = []
+    for f in (figures or {}).get("kept") or []:
+        inr, group = f.get("inr") or [], f.get("group")
+        if not inr or not f.get("url"):
+            continue
+        kind = group if group in ("listing", "new_price") else (
+            "tyre" if str(labels.get(group, "")).startswith("tyre") else "part")
+        texts = f.get("price_text") or []
+        row = {"figure_group": kind, "type": f.get("type"), "price_low_inr": int(inr[0]), "price_high_inr": int(inr[-1]),
+               "price_text": " – ".join([texts] if isinstance(texts, str) else texts),
+               "make_key": name_key(make), "model_key": name_key(car.get("model"), make),
+               "variant_key": name_key(f.get("variant")), "make": make,
+               "model_as_written": f.get("model_as_written"), "variant_as_written": f.get("variant"),
+               "year": _int(f.get("year")) if kind == "listing" else None,
+               "km": _int(f.get("km")) if kind == "listing" else None, "fuel": f.get("fuel"),
+               "state": (record or {}).get("state"), "city": (record or {}).get("city"),
+               "part": group if kind in ("part", "tyre") else None, "tyre_size": f.get("tyre_size"),
+               "source_url": f["url"], "source_title": (sources.get(f.get("source")) or {}).get("title")}
+        key = (row["source_url"], kind, row["price_low_inr"], row["price_high_inr"], row["model_key"], row["year"])
+        if key in seen:  # one INSERT .. ON CONFLICT cannot touch the same row twice
+            continue
+        seen.add(key)
+        rows.append(row)
+    return rows
+
+
+def _write_figures(conn: Connection, run_id: str, figures: Any) -> None:
+    """Upsert into price_figures: kept across runs; the same listing again only gets a new last_seen_at (§4.6)."""
+    def saved(node: str, name: str) -> Any:
+        return conn.execute(select(NodeResult.data).where(
+            NodeResult.run_id == run_id, NodeResult.node == node, NodeResult.name == name)).scalar()
+    rows = [{**r, "first_run_id": run_id}
+            for r in figure_rows(figures, saved("extract", "trimmed.json"), saved("confirm", "04_confirm.json"))]
+    if not rows:
+        return
+    stmt = pg_insert(PriceFigure).values(rows)
+    conn.execute(stmt.on_conflict_do_update(constraint="uq_price_figures_listing", set_={"last_seen_at": func.now()}))
+
+
 def _write_verify(conn: Connection, run_id: str, response: Any) -> None:
     conn.execute(delete(VerifyFinding).where(VerifyFinding.run_id == run_id))
     conn.execute(delete(VerifyVehicle).where(VerifyVehicle.run_id == run_id))
@@ -192,6 +239,7 @@ WRITERS: dict[str, Callable[[Connection, str, Any], None]] = {
     "05_photos/applied.json": _write_photos,
     "06_plan/queries.json": _replace(PlanQuery, plan_rows),
     "07_search/results.json": _write_search,
+    "08_extract/figures.json": _write_figures,
 }
 NODE_TABLES = {"locate": [LocateItem], "frames": [Frame], "verify": [VerifyFinding, VerifyVehicle],
                "confirm": [ConfirmedCar], "photos": [PhotoResult],

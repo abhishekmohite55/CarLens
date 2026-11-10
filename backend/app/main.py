@@ -8,7 +8,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
 from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
@@ -440,7 +440,7 @@ def api_run_search(run_id: str):
 
 @app.post("/api/runs/{run_id}/extract", status_code=202)
 def api_run_extract(run_id: str):
-    """Dev (used by /inspector): re-run only the extract node on a run with search results; deletes old 08_extract/."""
+    """Dev (used by /inspector): re-run only the extract node on a run with search results; deletes its old results."""
     rd = run_dir(run_id)
     if not rd.exists():
         raise HTTPException(404, detail=f"Run '{run_id}' not found.")
@@ -452,8 +452,7 @@ def api_run_extract(run_id: str):
         return JSONResponse(status_code=409, content={
             "error": {"code": "already_running", "message": "Extract is already running for this run."}
         })
-    if (rd / "08_extract").exists():
-        shutil.rmtree(rd / "08_extract")
+    _clear_node(rd, "extract")  # this run's extract rows (price_figures keeps every figure, by date)
     threading.Thread(target=run_extract, args=(run_id,), kwargs={"claimed": True}, daemon=True).start()
     return {"started": True}
 
@@ -464,7 +463,7 @@ def api_run_pricing(run_id: str):
     rd = run_dir(run_id)
     if not rd.exists():
         raise HTTPException(404, detail=f"Run '{run_id}' not found.")
-    if not (rd / "08_extract" / "figures.json").exists():
+    if load_result(run_id, "08_extract/figures.json") is None:
         return JSONResponse(status_code=409, content={
             "error": {"code": "no_figures", "message": "Extract has no figures for this run."}
         })
@@ -531,7 +530,7 @@ def api_run_file(run_id: str, path: str):
         data = load_result(run_id, path)
         if data is None:
             raise HTTPException(404, detail=f"File not found: {path}")
-        return JSONResponse(data)
+        return PlainTextResponse(data) if path.endswith(".txt") else JSONResponse(data)
 
     if not target.exists():
         raise HTTPException(404, detail=f"File not found: {path}")
