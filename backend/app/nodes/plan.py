@@ -1,4 +1,4 @@
-"""Plan node: listing queries from templates (Python) + part/tyre queries from the plan LLM chain, into 06_plan/."""
+"""Plan node: listing queries from templates (Python) + part/tyre queries from the plan LLM chain, saved in the database."""
 from __future__ import annotations
 
 import json
@@ -15,7 +15,7 @@ from ..llm.tracing import langchain_callbacks
 from ..plan import (build_user_prompt, car_problem, check_plan, damage_findings, listing_queries,
                     tyres_not_seen, tyres_to_judge)
 from ..photos import apply_photos
-from ..results import load_result
+from ..results import load_result, save_result
 from ..runs import append_event, run_dir, write_json_atomic
 from .photos import load_photos_answer
 
@@ -115,8 +115,6 @@ def _run_plan_inner(run_id: str) -> None:
     # extra photos (Stage 6): tyre photos replace video tyres, a confident odometer photo sets km; no photos = unchanged
     confirm, findings, _ = apply_photos(confirm, findings, load_photos_answer(run_id), get_config().photos.km_min_confidence)
 
-    out = rd / "06_plan"
-    out.mkdir(exist_ok=True)
     result = make_plan(confirm, findings,
                        emit=lambda msg: append_event(run_id, "plan", "node_progress", {"message": msg}),
                        callbacks=langchain_callbacks(run_id, "plan"),
@@ -124,7 +122,7 @@ def _run_plan_inner(run_id: str) -> None:
     files = []
     for name in ("request", "response", "queries"):
         if result[name] is not None:
-            write_json_atomic(out / f"{name}.json", result[name])
+            save_result(run_id, f"06_plan/{name}.json", result[name])  # queries.json also fills plan_queries
             files.append(f"06_plan/{name}.json")
 
     q = result["queries"]

@@ -94,7 +94,7 @@ def _run_extract_inner(run_id: str) -> None:
     confirm = load_result(run_id, "04_confirm.json")
     confirm = apply_photos(confirm, [], load_photos_answer(run_id), get_config().photos.km_min_confidence)[0]  # photo km
     e = get_config().extract
-    trimmed = trim_results(load(results_path), load(rd / "06_plan" / "queries.json"),
+    trimmed = trim_results(load(results_path), load_result(run_id, "06_plan/queries.json"),
                            e.max_results_per_group, e.max_snippet_chars)
     text = render_trimmed(car_line(confirm), trimmed)
     trimmed["stats"]["chars_out"] = len(text)

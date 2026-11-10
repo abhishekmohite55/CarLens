@@ -1,4 +1,4 @@
-"""Search node: runs every query in 06_plan/queries.json on Tavily, saves everything to 07_search/results.json."""
+"""Search node: runs every plan query (06_plan/queries.json, in the database) on Tavily, saves everything to 07_search/results.json."""
 from __future__ import annotations
 
 import json
@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from tavily import TavilyClient
 
 from ..config import get_config
+from ..results import load_result
 from ..runs import append_event, run_dir, write_json_atomic
 from ..search import dedupe_urls, flatten_queries, search_totals
 
@@ -74,11 +75,11 @@ def run_search(run_id: str, claimed: bool = False) -> None:
 
 def _run_search_inner(run_id: str) -> None:
     rd = run_dir(run_id)
-    queries_path = rd / "06_plan" / "queries.json"
-    if not queries_path.exists():  # plan stopped before writing queries (e.g. make/model missing)
+    queries = load_result(run_id, "06_plan/queries.json")
+    if queries is None:  # plan stopped before writing queries (e.g. make/model missing)
         append_event(run_id, "search", "node_skipped", {"reason": "Plan has no queries"})
         return
-    items = flatten_queries(json.loads(queries_path.read_text(encoding="utf-8")))
+    items = flatten_queries(queries)
     if not items:
         append_event(run_id, "search", "node_skipped", {"reason": "No queries to search"})
         return

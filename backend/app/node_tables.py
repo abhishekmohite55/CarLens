@@ -11,7 +11,8 @@ from typing import Any, Callable
 from sqlalchemy import delete, insert, select
 from sqlalchemy.engine import Connection
 
-from .models import ConfirmedCar, Frame, LocateItem, NodeResult, PhotoResult, VerifyFinding, VerifyVehicle
+from .models import ConfirmedCar, Frame, LocateItem, NodeResult, PhotoResult, PlanQuery, VerifyFinding, VerifyVehicle
+from .search import flatten_queries
 
 
 def locate_rows(response: dict) -> list[dict]:
@@ -106,6 +107,13 @@ def _write_photos(conn: Connection, run_id: str, applied: Any) -> None:
         conn.execute(insert(PhotoResult), rows)
 
 
+def plan_rows(queries: dict) -> list[dict]:
+    """One row per query search will run; tyre rows carry the tier the plan LLM gave."""
+    tiers = {t.get("item_id"): t.get("tier") for t in (queries or {}).get("tyres") or []}
+    return [{"kind": q["kind"], "for_item": q["for"], "query": q["query"],
+             "tier": tiers.get(q["for"]) if q["kind"] == "tyre" else None} for q in flatten_queries(queries or {})]
+
+
 def _write_verify(conn: Connection, run_id: str, response: Any) -> None:
     conn.execute(delete(VerifyFinding).where(VerifyFinding.run_id == run_id))
     conn.execute(delete(VerifyVehicle).where(VerifyVehicle.run_id == run_id))
@@ -140,6 +148,8 @@ WRITERS: dict[str, Callable[[Connection, str, Any], None]] = {
     "03_verify/response.json": _write_verify,
     "04_confirm.json": _replace(ConfirmedCar, lambda record: [confirmed_row(record)]),
     "05_photos/applied.json": _write_photos,
+    "06_plan/queries.json": _replace(PlanQuery, plan_rows),
 }
 NODE_TABLES = {"locate": [LocateItem], "frames": [Frame], "verify": [VerifyFinding, VerifyVehicle],
-               "confirm": [ConfirmedCar], "photos": [PhotoResult]}
+               "confirm": [ConfirmedCar], "photos": [PhotoResult],
+               "plan": [PlanQuery]}

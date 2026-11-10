@@ -8,6 +8,7 @@ from datetime import datetime
 
 from ..config import get_config
 from ..pricing import price_report
+from ..results import load_result
 from ..runs import append_event, run_dir, write_json_atomic
 
 log = logging.getLogger(__name__)
@@ -53,7 +54,7 @@ def _run_pricing_inner(run_id: str) -> None:
         return
     append_event(run_id, "pricing", "node_started", {"label": "Pricing the car"})
     figs = json.loads(figures_path.read_text(encoding="utf-8"))
-    queries = json.loads((rd / "06_plan" / "queries.json").read_text(encoding="utf-8"))
+    queries = load_result(run_id, "06_plan/queries.json") or {}
     out = price_report(figs["kept"], queries.get("tyres") or [], figs["car"], datetime.now().year, pricing_settings())
     (rd / "09_report").mkdir(exist_ok=True)
     write_json_atomic(rd / "09_report" / "price.json", out)

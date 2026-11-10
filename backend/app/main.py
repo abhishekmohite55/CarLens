@@ -402,7 +402,7 @@ def api_delete_photo(run_id: str, slot: str):
 
 @app.post("/api/runs/{run_id}/plan", status_code=202)
 def api_run_plan(run_id: str):
-    """Dev (used by /inspector): re-run only the plan node on a confirmed run; deletes old 06_plan/."""
+    """Dev (used by /inspector): re-run only the plan node on a confirmed run; deletes its old results."""
     rd = run_dir(run_id)
     if not rd.exists():
         raise HTTPException(404, detail=f"Run '{run_id}' not found.")
@@ -414,8 +414,7 @@ def api_run_plan(run_id: str):
         return JSONResponse(status_code=409, content={
             "error": {"code": "already_running", "message": "Plan is already running for this run."}
         })
-    if (rd / "06_plan").exists():
-        shutil.rmtree(rd / "06_plan")
+    _clear_node(rd, "plan")  # old rows (and pre-step-2 06_plan/ folder)
     threading.Thread(target=run_plan, args=(run_id,), kwargs={"claimed": True}, daemon=True).start()
     return {"started": True}
 
@@ -426,7 +425,7 @@ def api_run_search(run_id: str):
     rd = run_dir(run_id)
     if not rd.exists():
         raise HTTPException(404, detail=f"Run '{run_id}' not found.")
-    if not (rd / "06_plan" / "queries.json").exists():
+    if load_result(run_id, "06_plan/queries.json") is None:
         return JSONResponse(status_code=409, content={
             "error": {"code": "no_queries", "message": "Plan has no queries for this run."}
         })

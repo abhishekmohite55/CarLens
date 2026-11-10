@@ -143,3 +143,28 @@ def test_saving_applied_fills_photo_results(db_engine):
         slots = conn.execute(select(PhotoResult.slot).where(PhotoResult.run_id == run_id)
                              .order_by(PhotoResult.slot)).scalars().all()
     assert slots == ["front_left", "odometer"]
+
+
+QUERIES = {"listing": ["used Maruti Suzuki Ertiga 2016 price in Thane"], "new_price": ["Ertiga VXi on road price"],
+           "parts": [{"part": "front_bumper", "queries": ["front bumper price Ertiga"]}],
+           "tyres": [{"item_id": "L4", "tier": "replace", "queries": ["Ertiga tyre price"]},
+                     {"item_id": "L5", "tier": "minor_wear", "queries": []}]}
+
+
+def test_plan_rows_one_per_query():
+    rows = node_tables.plan_rows(QUERIES)
+    assert [r["kind"] for r in rows] == ["listing", "new_price", "part", "tyre"]
+    assert rows[3] == {"kind": "tyre", "for_item": "L4", "query": "Ertiga tyre price", "tier": "replace"}
+
+
+def test_saving_queries_fills_plan_queries(db_engine):
+    from sqlalchemy import func, select
+
+    from app.models import PlanQuery
+
+    run_id = run_index.create_run_row(sha256="ab" * 32, original_filename="x.mp4", size_bytes=1, duration_sec=1.0)
+    results.save_result(run_id, "06_plan/queries.json", QUERIES)
+    results.save_result(run_id, "06_plan/queries.json", QUERIES)  # re-run: replaced, not doubled
+    with db_engine.connect() as conn:
+        n = conn.execute(select(func.count()).select_from(PlanQuery).where(PlanQuery.run_id == run_id)).scalar()
+    assert n == 4
