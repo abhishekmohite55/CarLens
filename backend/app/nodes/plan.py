@@ -108,7 +108,7 @@ def _run_plan_inner(run_id: str) -> None:
         append_event(run_id, "plan", "node_failed", {"error": problem})
         return
 
-    findings = (json.loads((rd / "03_verify" / "response.json").read_text(encoding="utf-8")).get("parsed") or {}).get("findings") or []
+    findings = ((load_result(run_id, "03_verify/response.json") or {}).get("parsed") or {}).get("findings") or []
     manifest = load_result(run_id, "02_frames/manifest.json")
     if manifest is not None:  # locate category lets damage_findings tell a scratch from a badge
         categories = {i["item_id"]: i.get("category") for i in manifest["items"]}

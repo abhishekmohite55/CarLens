@@ -21,6 +21,9 @@ FILES: dict[str, tuple[str, str]] = {
     "01_locate/request.json": ("locate", "request.json"),
     "01_locate/response.json": ("locate", "response.json"),
     "02_frames/manifest.json": ("frames", "manifest.json"),
+    "03_verify/ocr.json": ("verify", "ocr.json"),
+    "03_verify/request.json": ("verify", "request.json"),
+    "03_verify/response.json": ("verify", "response.json"),
 }
 
 

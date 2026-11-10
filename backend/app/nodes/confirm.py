@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from ..config import PROJECT_ROOT, get_config
 from ..confirm import build_payload, build_record, load_rto
 from ..photos import list_photos
+from ..results import load_result
 from ..runs import append_event, run_dir, write_json_atomic
 
 PAYLOAD_FILE = "04_confirm_payload.json"
@@ -14,10 +15,9 @@ RECORD_FILE = "04_confirm.json"
 
 
 def load_verify_answer(run_id: str) -> dict | None:
-    path = run_dir(run_id) / "03_verify" / "response.json"
-    if not path.exists():
+    data = load_result(run_id, "03_verify/response.json")
+    if data is None:
         return None
-    data = json.loads(path.read_text(encoding="utf-8"))
     return data.get("parsed") if data.get("answered_by") else None
 
 

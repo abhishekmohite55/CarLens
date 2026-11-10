@@ -264,9 +264,7 @@ def api_run_verify(run_id: str):
             "error": {"code": "already_running", "message": "Verify is already running for this run."}
         })
 
-    verify_dir = rd / "03_verify"
-    if verify_dir.exists():
-        shutil.rmtree(verify_dir)
+    _clear_node(rd, "verify")  # old 03_verify folder (pre-step-2 runs) and its database rows
 
     threading.Thread(target=run_verify, args=(run_id,), kwargs={"claimed": True}, daemon=True).start()
     return {"started": True}
