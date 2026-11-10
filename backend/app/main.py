@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import shutil
 import threading
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -37,7 +38,9 @@ from .nodes.report import try_claim as report_try_claim
 from .nodes.verify import try_claim as verify_try_claim
 from .llm.tracing import _get_client as _warmup_tracing
 from .nodes.upload import process_upload
+from .db import get_engine
 from .results import FILES as RESULT_FILES, delete_results, load_result
+from .run_index import close_open_rows, interrupted_nodes
 from .runs import append_event, events_path, failed_at, run_dir
 
 # run_ids that have started or are starting the graph
@@ -50,6 +53,19 @@ app = FastAPI(title="CarLens backend")
 @app.on_event("startup")
 def _startup():
     _warmup_tracing()
+    _mark_interrupted()
+
+
+def _mark_interrupted() -> None:
+    """H1 (stage 2.5b): a node cut off by a server stop never sent done/failed; mark it failed so Resume is offered."""
+    if get_engine() is None:
+        return
+    error = "Server stopped while this node was running"
+    for run_id, node in interrupted_nodes():
+        if run_dir(run_id).exists():
+            append_event(run_id, node, "node_failed", {"error": error})
+            append_event(run_id, "pipeline", "run_done", {"status": "failed", "failed_at": node, "error": error})
+        close_open_rows(run_id, node, error, datetime.now(timezone.utc))
 
 
 app.add_middleware(

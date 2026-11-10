@@ -1,13 +1,18 @@
 from __future__ import annotations
 
-import sqlite3
 from typing import TypedDict
 
 from langgraph.graph import END, StateGraph
-from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.types import Command, interrupt
 
-from .config import PROJECT_ROOT, get_config
+import psycopg
+from psycopg.conninfo import make_conninfo
+from psycopg.rows import dict_row
+from sqlalchemy.engine import make_url
+
+from .config import get_config
+from .db import database_url
 from .nodes.locate import run_locate
 from .nodes.frames import run_frames
 from .nodes.verify import run_verify
@@ -20,18 +25,27 @@ from .nodes.pricing import run_pricing
 from .nodes.report import run_report
 from .runs import TERMINAL, append_event, node_result, read_events
 
-_conn: sqlite3.Connection | None = None
-_checkpointer: SqliteSaver | None = None
+_checkpointer: PostgresSaver | None = None
 
 
-def _get_checkpointer() -> SqliteSaver:
-    global _conn, _checkpointer
+def _get_checkpointer() -> PostgresSaver:
+    """Confirm pause in Postgres (stage 2.5b; was runs/checkpoints.sqlite). setup() creates LangGraph's own tables once."""
+    global _checkpointer
     if _checkpointer is None:
-        cfg = get_config()
-        db_path = PROJECT_ROOT / cfg.paths.runs_dir / "checkpoints.sqlite"
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-        _conn = sqlite3.connect(str(db_path), check_same_thread=False)
-        _checkpointer = SqliteSaver(_conn)
+        url = database_url()
+        if not url:
+            raise RuntimeError("DATABASE_URL is not set in .env")
+        u = make_url(url)  # parsed like the rest of the backend (SQLAlchemy), so the password is read the same way
+        conninfo = make_conninfo(host=u.host, port=u.port, dbname=u.database, user=u.username, password=u.password)
+        # shortcut: one shared connection (the saver locks around it); the psycopg pool timed out on the owner's laptop
+        # while a direct connection worked. A Postgres restart needs a backend restart; revisit in the worker step.
+        conn = psycopg.connect(conninfo, autocommit=True, prepare_threshold=0, row_factory=dict_row)
+        saver = PostgresSaver(conn)
+        # shortcut: no psycopg pipeline mode; the first checkpoint write hung on the owner's laptop (Windows). Plain
+        # transactions instead (slightly slower writes). Revisit if writes are slow or on Linux in step 3.
+        saver.supports_pipeline = False
+        saver.setup()  # kept only after setup worked, so a failed setup is retried (and its error shown) next time
+        _checkpointer = saver
     return _checkpointer
 
 

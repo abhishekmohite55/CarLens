@@ -79,3 +79,20 @@ def record_node_event(event: dict, ts: datetime) -> None:
         elif type_ == "run_done":
             conn.execute(update(Run).where(Run.id == run_id).values(
                 status=data.get("status"), failed_at=data.get("failed_at"), error=data.get("error"), updated_at=ts))
+
+def interrupted_nodes() -> list[tuple[str, str]]:
+    """(run_id, node) still marked running: the server stopped in the middle of them (H1).
+    Confirm is left out: it waits for the user on purpose and survives a restart."""
+    with require_engine().connect() as conn:
+        return [tuple(r) for r in conn.execute(
+            select(NodeRun.run_id, NodeRun.node)
+            .where(NodeRun.finished_at.is_(None), NodeRun.status == "running", NodeRun.node != "confirm")
+            .distinct())]
+
+
+def close_open_rows(run_id: str, node: str, error: str, ts: datetime) -> None:
+    """Mark every still-open row of this node failed (older leftovers too), so it is not reported again."""
+    with require_engine().begin() as conn:
+        conn.execute(update(NodeRun).where(NodeRun.run_id == run_id, NodeRun.node == node,
+                                           NodeRun.finished_at.is_(None))
+                     .values(status="failed", finished_at=ts, error=error))
