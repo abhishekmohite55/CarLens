@@ -28,10 +28,10 @@ models: # fill model names before each stage
     - { provider: openrouter, model: google/gemma-4-26b-a4b-it:free }
   plan_timeout_per_model_sec: 120
   extract_chain: # copies prices out of trimmed search snippets; tried top to bottom. crouton-alpha: 54 s vs Nemotron 187 s on bumper_tyre (4 Nov); stealth model, may disappear
-    - { provider: openrouter, model: stealth/crouton-alpha }
-    - { provider: openrouter, model: nvidia/nemotron-3.5-super-vl:free }
-    - { provider: google_genai, model: gemini-3.8-flash }
     - { provider: google_genai, model: gemini-3.5-flash }
+    - { provider: google_genai, model: gemini-3.8-flash }
+    - { provider: openrouter, model: liquid/lfm-3-1.7b:free } # owner 10 Nov: replaces inkling-2-small (gone from OpenRouter)
+    - { provider: openrouter, model: nvidia/nemotron-3.5-super-vl:free }
     - { provider: openrouter, model: google/gemma-4-26b-a4b-it:free }
   extract_timeout_per_model_sec: 300
   extract_reasoning_effort: low # OpenRouter entries only: none | minimal | low | medium | high; empty = model default
@@ -113,7 +113,7 @@ pricing:
   min_comparables: 3
 
 dev: # platform step 2 testing: the pipeline ends after this node; re-run buttons start the next ones
-  stop_after: search # node name, or empty for the full pipeline
+  stop_after: # node name, or empty for the full pipeline
 
 paths:
   runs_dir: runs
