@@ -1,4 +1,6 @@
-# Dev database for the laptop (platform step 1). The backend still runs from its venv.
+# Dev database for the laptop (platform step 1) and the backend image (step 3).
+# Daily work: docker compose up -d postgres pgadmin (backend from its venv).
+# Prove the image: docker compose up -d (stop the venv server first: both use port 8000).
 # Values in ${...} come from .env next to this file (see .env.example).
 services:
   postgres:
@@ -12,6 +14,11 @@ services:
       - "127.0.0.1:5432:5432" # this laptop only, not the Wi-Fi network
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck: # "healthy" once the database accepts connections; the backend waits for it
+      test: ["CMD-SHELL", "pg_isready -U carlens -d carlens"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
 
   pgadmin:
     image: dpage/pgadmin4:9.18
@@ -24,6 +31,27 @@ services:
       - pgadmin_data:/var/lib/pgadmin
     depends_on:
       - postgres
+
+  backend:
+    build:
+      context: . # repo root; .dockerignore keeps .env, runs/ and videos out
+      dockerfile: backend/Dockerfile
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
+    env_file: .env # secrets as environment variables, never in the image
+    environment:
+      # Inside Docker the database host is the service name, not 127.0.0.1.
+      # Written whole in .env: a password with @ or other special characters must be URL-encoded (@ = %40).
+      DATABASE_URL: ${DOCKER_DATABASE_URL:?set DOCKER_DATABASE_URL in .env}
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes: # laptop files shown inside the container; edits apply live
+      - ./config.yaml:/carlens/config.yaml
+      - ./prompts:/carlens/prompts
+      - ./runs:/carlens/runs
+    depends_on:
+      postgres:
+        condition: service_healthy
 
 volumes:
   pgdata:

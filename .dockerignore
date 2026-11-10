@@ -1,0 +1,12 @@
+# Build context for backend/Dockerfile is the repo root.
+# Everything is left out except what the image needs; secrets, videos and runs never enter it.
+**
+!backend
+!config.yaml
+!prompts
+backend/.venv
+backend/tests
+backend/scripts
+backend/.pytest_cache
+**/__pycache__
+**/*.pyc

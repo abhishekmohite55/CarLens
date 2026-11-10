@@ -4,6 +4,7 @@ Only this module writes `runs` and `node_runs`.
 """
 from __future__ import annotations
 
+import os
 import secrets
 import string
 import subprocess
@@ -27,14 +28,15 @@ def new_run_id() -> str:
 
 
 def git_commit() -> str | None:
-    """Short commit of the code that runs, + '-dirty' when files differ from it. None without git (container: step 3)."""
+    """Short commit of the code that runs, + '-dirty' when files differ from it.
+    Without git (the container) the commit baked in at build time (CARLENS_GIT_COMMIT), else None."""
     def git(*args: str) -> str:
         return subprocess.run(["git", *args], cwd=PROJECT_ROOT, capture_output=True, text=True,
                                timeout=5, check=True).stdout.strip()
     try:
         return git("rev-parse", "--short", "HEAD") + ("-dirty" if git("status", "--porcelain") else "")
     except Exception:
-        return None
+        return os.environ.get("CARLENS_GIT_COMMIT") or None
 
 
 def create_run_row(*, sha256: str, original_filename: str, size_bytes: int, duration_sec: float) -> str:

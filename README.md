@@ -46,10 +46,10 @@ Open **http://localhost:8000/inspector**, upload a video and follow the steps.
 
 ## Dev database
 
-Needs Docker Desktop. Postgres and pgAdmin run in containers; the backend does not use them yet.
+Needs Docker Desktop. Postgres and pgAdmin run in containers; the backend in its venv connects to Postgres.
 
 ```
-docker compose up -d      # start
+docker compose up -d postgres pgadmin   # start (daily work)
 docker compose stop       # stop, keep data
 ```
 
@@ -64,6 +64,19 @@ alembic upgrade head
 
 Tests use a separate database `carlens_test` (`TEST_DATABASE_URL` in `.env`), created once with
 `docker compose exec postgres createdb -U carlens carlens_test`.
+
+## Backend in Docker
+
+The same image AWS will run. `config.yaml`, `prompts/` and `runs/` are mounted from this folder; `.env` is passed as environment variables. On start the container runs `alembic upgrade head`, then the server. Stop the venv server first: both use port 8000.
+
+```
+docker compose build --build-arg GIT_COMMIT=$(git rev-parse --short HEAD) backend
+docker compose up -d
+docker compose logs -f backend
+docker compose down
+```
+
+Open **http://127.0.0.1:8000/inspector**. Rebuild after a code or `requirements.txt` change.
 
 ## Tests
 

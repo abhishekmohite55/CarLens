@@ -113,7 +113,7 @@ pricing:
   min_comparables: 3
 
 dev: # platform step 2 testing: the pipeline ends after this node; re-run buttons start the next ones
-  stop_after: # node name, or empty for the full pipeline
+  stop_after: locate # node name, or empty for the full pipeline
 
 paths:
   runs_dir: runs

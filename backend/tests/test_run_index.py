@@ -15,6 +15,16 @@ def test_run_id_is_random_without_date():
     assert all(re.fullmatch(r"r_[a-z0-9]{12}", i) for i in ids)
 
 
+def test_git_commit_without_git_uses_build_value(monkeypatch):
+    def no_git(*args, **kwargs):
+        raise FileNotFoundError("git")
+    monkeypatch.setattr(run_index.subprocess, "run", no_git)
+    monkeypatch.setenv("CARLENS_GIT_COMMIT", "abc1234")
+    assert run_index.git_commit() == "abc1234"
+    monkeypatch.delenv("CARLENS_GIT_COMMIT")
+    assert run_index.git_commit() is None
+
+
 def _event(run_id, node, type_, data=None, seq=1):
     return {"run_id": run_id, "node": node, "type": type_, "data": data or {}, "seq": seq}
 
