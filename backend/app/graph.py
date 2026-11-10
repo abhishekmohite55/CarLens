@@ -6,9 +6,9 @@ from langgraph.graph import END, StateGraph
 from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.types import Command, interrupt
 
-import psycopg
 from psycopg.conninfo import make_conninfo
 from psycopg.rows import dict_row
+from psycopg_pool import ConnectionPool
 from sqlalchemy.engine import make_url
 
 from .config import get_config
@@ -36,14 +36,12 @@ def _get_checkpointer() -> PostgresSaver:
         if not url:
             raise RuntimeError("DATABASE_URL is not set in .env")
         u = make_url(url)  # parsed like the rest of the backend (SQLAlchemy), so the password is read the same way
-        conninfo = make_conninfo(host=u.host, port=u.port, dbname=u.database, user=u.username, password=u.password)
-        # shortcut: one shared connection (the saver locks around it); the psycopg pool timed out on the owner's laptop
-        # while a direct connection worked. A Postgres restart needs a backend restart; revisit in the worker step.
-        conn = psycopg.connect(conninfo, autocommit=True, prepare_threshold=0, row_factory=dict_row)
-        saver = PostgresSaver(conn)
-        # shortcut: no psycopg pipeline mode; the first checkpoint write hung on the owner's laptop (Windows). Plain
-        # transactions instead (slightly slower writes). Revisit if writes are slow or on Linux in step 3.
-        saver.supports_pipeline = False
+        # connect_timeout: a host that does not answer (e.g. "localhost" → IPv6 ::1 on Windows) fails in 10 s, not minutes
+        conninfo = make_conninfo(host=u.host, port=u.port, dbname=u.database, user=u.username, password=u.password,
+                                 connect_timeout=10)
+        pool = ConnectionPool(conninfo=conninfo, max_size=10, open=True,
+                              kwargs={"autocommit": True, "prepare_threshold": 0, "row_factory": dict_row})
+        saver = PostgresSaver(pool)
         saver.setup()  # kept only after setup worked, so a failed setup is retried (and its error shown) next time
         _checkpointer = saver
     return _checkpointer
