@@ -14,6 +14,7 @@ from ..extract import car_line, check_figures, drop_outliers, group_summary, ren
 from ..llm.chat import ask_chain
 from ..llm.tracing import langchain_callbacks
 from ..photos import apply_photos
+from ..results import load_result
 from ..runs import append_event, run_dir, write_json_atomic
 from .photos import load_photos_answer
 
@@ -90,7 +91,7 @@ def _run_extract_inner(run_id: str) -> None:
         return
     append_event(run_id, "extract", "node_started", {"label": "Reading prices from search results"})
     load = lambda p: json.loads(p.read_text(encoding="utf-8"))
-    confirm = load(rd / "04_confirm.json")
+    confirm = load_result(run_id, "04_confirm.json")
     confirm = apply_photos(confirm, [], load_photos_answer(rd), get_config().photos.km_min_confidence)[0]  # photo km
     e = get_config().extract
     trimmed = trim_results(load(results_path), load(rd / "06_plan" / "queries.json"),

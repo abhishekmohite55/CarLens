@@ -18,7 +18,7 @@ from ..llm.chat import ask_chain, image_blocks
 from ..llm.tracing import langchain_callbacks
 from ..photos import apply_photos, list_photos, validate_answer
 from ..runs import append_event, run_dir, write_json_atomic
-from .confirm import RECORD_FILE, load_verify_answer
+from .confirm import load_record, load_verify_answer
 
 log = logging.getLogger(__name__)
 
@@ -115,7 +115,7 @@ def _run_photos_inner(run_id: str) -> None:
                      {"error": "Every photos model failed; the video results are used", "files": files})
         return
 
-    confirm = json.loads((rd / RECORD_FILE).read_text(encoding="utf-8"))
+    confirm = load_record(run_id)
     findings = (load_verify_answer(run_id) or {}).get("findings") or []
     _, _, applied = apply_photos(confirm, findings, answer["parsed"], cfg.photos.km_min_confidence)
     write_json_atomic(out / "applied.json", applied)

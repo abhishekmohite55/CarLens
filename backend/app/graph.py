@@ -79,18 +79,30 @@ _RUNNERS = {"locate": run_locate, "frames": run_frames, "verify": run_verify,
             "report": run_report}
 
 
+def _past_stop(node: str) -> bool:
+    """True when config.yaml dev.stop_after names a node at or before this one (read on every run)."""
+    stop = get_config().dev.stop_after
+    return stop in ORDER and ORDER.index(node) > ORDER.index(stop)
+
+
 def _after(state: GraphState, node: str, nxt: str) -> str:
-    """Next node, or END when this node failed or config.yaml dev.stop_after names it (read on every run)."""
-    if state.get(f"{node}_status") == "failed" or get_config().dev.stop_after == node:
+    """Next node, or END when this node failed or the next one is past dev.stop_after."""
+    if state.get(f"{node}_status") == "failed" or nxt == END or _past_stop(nxt):
         return END
     return nxt
+
+
+def _entry(state: GraphState) -> str:
+    """Start node; END when it is past dev.stop_after (e.g. confirm by hand must not start photos … report)."""
+    start = state.get("start_at") or "locate"
+    return END if _past_stop(start) else start
 
 
 def _build_graph() -> object:
     g = StateGraph(GraphState)
     for node in ORDER:
         g.add_node(node, _confirm_node if node == "confirm" else _step(node, _RUNNERS[node]))
-    g.set_conditional_entry_point(lambda s: s.get("start_at") or "locate", list(ORDER))
+    g.set_conditional_entry_point(_entry, list(ORDER) + [END])
     for node, nxt in zip(ORDER, ORDER[1:] + (END,)):
         g.add_conditional_edges(node, lambda s, node=node, nxt=nxt: _after(s, node, nxt), list({nxt, END}))
     return g.compile(checkpointer=_get_checkpointer())

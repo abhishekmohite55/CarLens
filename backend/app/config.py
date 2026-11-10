@@ -117,7 +117,6 @@ class PricingConfig(BaseModel):
 class PathsConfig(BaseModel):
     runs_dir: str
     prompts_dir: str
-    rto_csv: str = "rto_codes.csv"
 
 
 class DevConfig(BaseModel):

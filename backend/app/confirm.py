@@ -1,24 +1,11 @@
 """Confirm step helpers: RTO city lookup, year options, expand rule, payload and record. Pure: no config, events or run folders."""
 from __future__ import annotations
 
-import csv
 import re
-from pathlib import Path
 
 _RTO_PREFIX = re.compile(r"^([A-Z]{2})(\d{1,2})")
 CAR_FIELDS = ("make", "model", "variant", "year", "fuel")
 EXPAND_FIELDS = ("make", "model", "year")  # variant is optional (owner, 4 Nov 2026)
-
-
-def load_rto(path: Path) -> list[dict]:
-    """Rows of the RTO csv as {state_code, number, state, city}."""
-    with open(path, encoding="utf-8", newline="") as f:
-        return [
-            {"state_code": r["State-code"].strip().upper(), "number": int(r["City-code"]),
-             "state": r["state"].strip(), "city": r["city"].strip()}
-            for r in csv.DictReader(f)
-            if r.get("City-code", "").strip().isdigit()
-        ]
 
 
 def _is_statewide(row: dict) -> bool:

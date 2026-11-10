@@ -97,12 +97,11 @@ def run_plan(run_id: str, claimed: bool = False) -> None:
 
 def _run_plan_inner(run_id: str) -> None:
     rd = run_dir(run_id)
-    confirm_path = rd / "04_confirm.json"
-    if not confirm_path.exists():
+    confirm = load_result(run_id, "04_confirm.json")
+    if confirm is None:
         append_event(run_id, "plan", "node_skipped", {"reason": "Confirm not done"})
         return
     append_event(run_id, "plan", "node_started", {"label": "Planning web searches"})
-    confirm = json.loads(confirm_path.read_text(encoding="utf-8"))
     problem = car_problem(confirm.get("car") or {})
     if problem:
         append_event(run_id, "plan", "node_failed", {"error": problem})

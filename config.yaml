@@ -118,4 +118,3 @@ dev:                     # platform step 2 testing: the pipeline ends after this
 paths:
   runs_dir: runs
   prompts_dir: prompts
-  rto_csv: rto_codes.csv # RTO code -> city table (not in git)

@@ -83,3 +83,36 @@ def test_saving_verify_fills_findings_and_vehicle(db_engine):
     results.delete_results(run_id, "verify")
     with db_engine.connect() as conn:
         assert conn.execute(select(VerifyVehicle).where(VerifyVehicle.run_id == run_id)).first() is None
+
+
+RECORD = {"car": {"make": "Maruti Suzuki", "model": "Ertiga", "variant": "ZXi", "year": 2023, "fuel": "Petrol"},
+          "plate": "MH14LA9829", "city": "Pimpri-Chinchwad", "state": "Maharashtra", "odometer_km": 110422,
+          "changed": ["variant", "year"], "skipped": [], "photos": [], "confirmed_at": "2026-11-10T08:00:00Z"}
+
+
+def test_confirm_record_fills_confirmed_cars(db_engine):
+    from sqlalchemy import select
+
+    from app.models import ConfirmedCar
+
+    row = node_tables.confirmed_row(RECORD)
+    assert row["changed"] == ["variant", "year"] and row["confirmed_at"].year == 2026
+    run_id = run_index.create_run_row(sha256="dd" * 32, original_filename="x.mp4", size_bytes=1, duration_sec=1.0)
+    results.save_result(run_id, "04_confirm.json", RECORD)
+    with db_engine.connect() as conn:
+        car = conn.execute(select(ConfirmedCar).where(ConfirmedCar.run_id == run_id)).one()
+    assert (car.model, car.city, car.changed) == ("Ertiga", "Pimpri-Chinchwad", ["variant", "year"])
+
+
+def test_rto_rows_come_from_the_database(db_engine):
+    from sqlalchemy import delete, insert
+
+    from app.models import RtoCode, State
+    from app.nodes.confirm import rto_rows
+
+    with db_engine.begin() as conn:  # carlens_test has no seed: two rows of our own
+        conn.execute(delete(RtoCode)), conn.execute(delete(State))
+        conn.execute(insert(State).values(code="MH", name="Maharashtra"))
+        conn.execute(insert(RtoCode), [{"state_code": "MH", "number": "14", "city": "Pimpri-Chinchwad", "statewide": False},
+                                       {"state_code": "MH", "number": "08AA", "city": "Letter code", "statewide": False}])
+    assert rto_rows() == [{"state_code": "MH", "number": 14, "state": "Maharashtra", "city": "Pimpri-Chinchwad"}]

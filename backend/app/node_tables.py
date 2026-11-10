@@ -5,12 +5,13 @@ so the clean table and the exact JSON never disagree. One writer more per stage 
 """
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Callable
 
 from sqlalchemy import delete, insert, select
 from sqlalchemy.engine import Connection
 
-from .models import Frame, LocateItem, VerifyFinding, VerifyVehicle
+from .models import ConfirmedCar, Frame, LocateItem, VerifyFinding, VerifyVehicle
 
 
 def locate_rows(response: dict) -> list[dict]:
@@ -69,6 +70,16 @@ def vehicle_row(response: dict) -> dict | None:
             "answered_by": answered.get("model")}
 
 
+def confirmed_row(record: dict) -> dict:
+    car = (record or {}).get("car") or {}
+    at = (record or {}).get("confirmed_at")
+    return {"make": car.get("make"), "model": car.get("model"), "variant": car.get("variant"),
+            "year": _int(car.get("year")), "fuel": car.get("fuel"), "plate": record.get("plate"),
+            "city": record.get("city"), "state": record.get("state"), "odometer_km": _int(record.get("odometer_km")),
+            "changed": record.get("changed") or [], "skipped": record.get("skipped") or [],
+            "confirmed_at": datetime.fromisoformat(at.replace("Z", "+00:00")) if at else None}
+
+
 def _write_verify(conn: Connection, run_id: str, response: Any) -> None:
     conn.execute(delete(VerifyFinding).where(VerifyFinding.run_id == run_id))
     conn.execute(delete(VerifyVehicle).where(VerifyVehicle.run_id == run_id))
@@ -101,5 +112,7 @@ WRITERS: dict[str, Callable[[Connection, str, Any], None]] = {
     "01_locate/response.json": _replace(LocateItem, locate_rows),
     "02_frames/manifest.json": _replace(Frame, frame_rows),
     "03_verify/response.json": _write_verify,
+    "04_confirm.json": _replace(ConfirmedCar, lambda record: [confirmed_row(record)]),
 }
-NODE_TABLES = {"locate": [LocateItem], "frames": [Frame], "verify": [VerifyFinding, VerifyVehicle]}
+NODE_TABLES = {"locate": [LocateItem], "frames": [Frame], "verify": [VerifyFinding, VerifyVehicle],
+               "confirm": [ConfirmedCar]}

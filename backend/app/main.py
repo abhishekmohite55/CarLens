@@ -12,13 +12,13 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
-from .config import PROJECT_ROOT, get_config
-from .confirm import load_rto
+from .config import get_config
 from .events import sse_stream
 from .graph import is_paused, resume_from, resume_graph, run_graph
 from .nodes.locate import run_locate
 from .nodes.locate import try_claim as locate_try_claim
-from .nodes.confirm import PAYLOAD_FILE, RECORD_FILE, finish_confirm, load_verify_answer, start_confirm
+from .nodes.confirm import (PAYLOAD_FILE, RECORD_FILE, finish_confirm, load_payload, load_record, load_verify_answer,
+                            rto_rows, start_confirm)
 from .nodes.photos import save_photo
 from .photos import SLOTS
 from .nodes.frames import load_locate_items, run_frames
@@ -167,6 +167,7 @@ async def api_run_events(run_id: str):
 
 # What a node clears before it runs again (resume). Locate keeps video_small.mp4, photos keep the uploaded jpgs.
 _NODE_FILES = {"locate": ["01_locate/request.json", "01_locate/response.json"],
+               "confirm": [PAYLOAD_FILE, RECORD_FILE],
                "verify": ["03_verify"],
                "photos": ["05_photos/request.json", "05_photos/response.json", "05_photos/applied.json"],
                "plan": ["06_plan"], "search": ["07_search"], "extract": ["08_extract"],
@@ -305,8 +306,7 @@ def api_confirm_start(run_id: str):
         return JSONResponse(status_code=409, content={
             "error": {"code": "already_waiting", "message": "This run is already waiting for confirm."}
         })
-    (rd / PAYLOAD_FILE).unlink(missing_ok=True)
-    (rd / RECORD_FILE).unlink(missing_ok=True)
+    _clear_node(rd, "confirm")  # payload + record rows (and pre-step-2 files)
     if (rd / "05_photos").exists():  # a fresh confirm starts without old photos
         shutil.rmtree(rd / "05_photos")
     start_confirm(run_id)
@@ -318,13 +318,13 @@ def api_confirm(run_id: str, answer: ConfirmAnswer):
     rd = run_dir(run_id)
     if not rd.exists():
         raise HTTPException(404, detail=f"Run '{run_id}' not found.")
-    payload_path = rd / PAYLOAD_FILE
     with _confirm_lock:
-        if not payload_path.exists():
+        payload = load_payload(run_id)
+        if payload is None:
             return JSONResponse(status_code=409, content={
                 "error": {"code": "not_waiting", "message": "This run is not waiting for confirm."}
             })
-        if (rd / RECORD_FILE).exists() or run_id in _confirming:
+        if load_record(run_id) is not None or run_id in _confirming:
             return JSONResponse(status_code=409, content={
                 "error": {"code": "already_confirmed", "message": "This run is already confirmed."}
             })
@@ -334,7 +334,7 @@ def api_confirm(run_id: str, answer: ConfirmAnswer):
         if is_paused(run_id):
             threading.Thread(target=resume_graph, args=(run_id, data), daemon=True).start()
         else:  # dev path: run started with "Start confirm", no graph waiting
-            finish_confirm(run_id, json.loads(payload_path.read_text(encoding="utf-8")), data)
+            finish_confirm(run_id, payload, data)
             # rest of the pipeline through the graph, so it stops at the first failed node like a normal run
             threading.Thread(target=resume_from, args=(run_id, "photos"), daemon=True).start()
     finally:
@@ -349,11 +349,12 @@ def _photo_guard(run_id: str, slot: str):
         raise HTTPException(404, detail=f"Run '{run_id}' not found.")
     if slot not in SLOTS:
         raise HTTPException(404, detail=f"Unknown photo slot '{slot}'.")
-    if not (rd / PAYLOAD_FILE).exists() or (rd / RECORD_FILE).exists():
+    payload = load_payload(run_id)
+    if payload is None or load_record(run_id) is not None:
         return rd, JSONResponse(status_code=409, content={
             "error": {"code": "not_waiting", "message": "Photos can only be changed while confirm is waiting."}
         })
-    if slot == "odometer" and json.loads((rd / PAYLOAD_FILE).read_text(encoding="utf-8")).get("odometer_found"):
+    if slot == "odometer" and payload.get("odometer_found"):
         return rd, JSONResponse(status_code=409, content={
             "error": {"code": "odometer_read", "message": "The video already read the odometer."}
         })
@@ -388,7 +389,7 @@ def api_run_plan(run_id: str):
     rd = run_dir(run_id)
     if not rd.exists():
         raise HTTPException(404, detail=f"Run '{run_id}' not found.")
-    if not (rd / RECORD_FILE).exists():
+    if load_record(run_id) is None:
         return JSONResponse(status_code=409, content={
             "error": {"code": "not_confirmed", "message": "Confirm is not done for this run."}
         })
@@ -467,7 +468,7 @@ def api_run_report(run_id: str):
     rd = run_dir(run_id)
     if not rd.exists():
         raise HTTPException(404, detail=f"Run '{run_id}' not found.")
-    if not (rd / RECORD_FILE).exists():
+    if load_record(run_id) is None:
         return JSONResponse(status_code=409, content={
             "error": {"code": "not_confirmed", "message": "Confirm is not done for this run."}
         })
@@ -482,7 +483,7 @@ def api_run_report(run_id: str):
 @app.get("/api/cities")
 def api_cities(state: str = ""):
     """City type-ahead list from the RTO table, optionally one state. The browser filters as you type."""
-    rows = load_rto(PROJECT_ROOT / get_config().paths.rto_csv)
+    rows = rto_rows()
     seen, out = set(), []
     for r in rows:
         if r["city"].lower().startswith("statewide") or (state and r["state"] != state):

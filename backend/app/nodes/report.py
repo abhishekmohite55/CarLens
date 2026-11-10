@@ -12,7 +12,7 @@ from ..config import get_config
 from ..report import build_report, inr
 from ..results import load_result
 from ..runs import append_event, run_dir, write_json_atomic
-from .confirm import RECORD_FILE, load_verify_answer
+from .confirm import load_record, load_verify_answer
 from .photos import load_photos_answer
 
 log = logging.getLogger(__name__)
@@ -49,7 +49,7 @@ def run_report(run_id: str, claimed: bool = False) -> None:
 
 def _run_report_inner(run_id: str) -> None:
     rd = run_dir(run_id)
-    confirm = _load(rd / RECORD_FILE)
+    confirm = load_record(run_id)
     if confirm is None:
         append_event(run_id, "report", "node_skipped", {"reason": "Confirm not done"})
         return

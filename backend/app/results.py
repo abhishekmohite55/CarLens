@@ -24,6 +24,8 @@ FILES: dict[str, tuple[str, str]] = {
     "03_verify/ocr.json": ("verify", "ocr.json"),
     "03_verify/request.json": ("verify", "request.json"),
     "03_verify/response.json": ("verify", "response.json"),
+    "04_confirm_payload.json": ("confirm", "04_confirm_payload.json"),
+    "04_confirm.json": ("confirm", "04_confirm.json"),
 }
 
 
