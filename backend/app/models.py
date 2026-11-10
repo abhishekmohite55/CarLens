@@ -8,8 +8,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Float, ForeignKey, Index, Integer, Text, UniqueConstraint, func
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import (BigInteger, Boolean, DateTime, Float, ForeignKey, ForeignKeyConstraint, Index, Integer, Text,
+                        UniqueConstraint, func)
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -144,3 +145,124 @@ class PriceFigure(Base):
                          name="uq_price_figures_listing", postgresql_nulls_not_distinct=True),
         Index("ix_price_figures_car", "model_key", "year"),
     )
+
+# --- A table per node (option C, owner 10 Nov 2026): key values as rows; node_results keeps the exact JSON ---
+
+def _run_fk(primary: bool = True) -> Mapped[str]:
+    return mapped_column(Text, ForeignKey("runs.id", ondelete="CASCADE"), primary_key=primary)
+
+
+class LocateItem(Base):
+    __tablename__ = "locate_items"
+    run_id: Mapped[str] = _run_fk()
+    item_id: Mapped[str] = mapped_column(Text, primary_key=True)  # L1, L2, ...
+    category: Mapped[str | None] = mapped_column(Text)
+    label: Mapped[str | None] = mapped_column(Text)
+    side: Mapped[str | None] = mapped_column(Text)
+    t: Mapped[float | None] = mapped_column(Float)
+    t_text: Mapped[str | None] = mapped_column(Text)
+
+
+def _item_fk() -> ForeignKeyConstraint:
+    # Re-running locate replaces its items, so the rows that hang off them go too.
+    return ForeignKeyConstraint(["run_id", "item_id"], ["locate_items.run_id", "locate_items.item_id"], ondelete="CASCADE")
+
+
+class Frame(Base):
+    __tablename__ = "frames"
+    run_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    item_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    file: Mapped[str | None] = mapped_column(Text)  # sharpest JPEG in 02_frames/
+    t: Mapped[float | None] = mapped_column(Float)
+    sharpness: Mapped[float | None] = mapped_column(Float)
+    frames_scored: Mapped[int | None] = mapped_column(Integer)
+    skipped: Mapped[str | None] = mapped_column(Text)
+    __table_args__ = (_item_fk(),)
+
+
+class VerifyFinding(Base):
+    __tablename__ = "verify_findings"
+    run_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    item_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    confirmed: Mapped[bool | None] = mapped_column(Boolean)
+    part: Mapped[str | None] = mapped_column(Text)
+    issue: Mapped[str | None] = mapped_column(Text)
+    severity: Mapped[str | None] = mapped_column(Text)
+    action: Mapped[str | None] = mapped_column(Text)
+    description: Mapped[str | None] = mapped_column(Text)
+    reason: Mapped[str | None] = mapped_column(Text)
+    tyre_position: Mapped[str | None] = mapped_column(Text)
+    tyre_score: Mapped[int | None] = mapped_column(Integer)
+    tread: Mapped[str | None] = mapped_column(Text)
+    best_frame: Mapped[str | None] = mapped_column(Text)
+    __table_args__ = (_item_fk(),)
+
+
+class VerifyVehicle(Base):
+    __tablename__ = "verify_vehicle"
+    run_id: Mapped[str] = _run_fk()
+    make: Mapped[str | None] = mapped_column(Text)
+    model: Mapped[str | None] = mapped_column(Text)
+    variant: Mapped[str | None] = mapped_column(Text)
+    year: Mapped[int | None] = mapped_column(Integer)
+    fuel: Mapped[str | None] = mapped_column(Text)
+    plate: Mapped[str | None] = mapped_column(Text)
+    plate_source: Mapped[str | None] = mapped_column(Text)  # ocr / model
+    plate_confidence: Mapped[float | None] = mapped_column(Float)
+    badge: Mapped[str | None] = mapped_column(Text)
+    odometer_km: Mapped[int | None] = mapped_column(Integer)
+    answered_by: Mapped[str | None] = mapped_column(Text)  # model that answered
+
+
+class ConfirmedCar(Base):
+    __tablename__ = "confirmed_cars"
+    run_id: Mapped[str] = _run_fk()
+    make: Mapped[str | None] = mapped_column(Text)
+    model: Mapped[str | None] = mapped_column(Text)
+    variant: Mapped[str | None] = mapped_column(Text)
+    year: Mapped[int | None] = mapped_column(Integer)
+    fuel: Mapped[str | None] = mapped_column(Text)
+    plate: Mapped[str | None] = mapped_column(Text)
+    city: Mapped[str | None] = mapped_column(Text)
+    state: Mapped[str | None] = mapped_column(Text)
+    odometer_km: Mapped[int | None] = mapped_column(Integer)
+    changed: Mapped[list[str] | None] = mapped_column(ARRAY(Text))
+    skipped: Mapped[list[str] | None] = mapped_column(ARRAY(Text))
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class PhotoResult(Base):
+    __tablename__ = "photo_results"
+    run_id: Mapped[str] = _run_fk()
+    slot: Mapped[str] = mapped_column(Text, primary_key=True)  # front_left ... odometer
+    file: Mapped[str | None] = mapped_column(Text)
+    tyre_score: Mapped[int | None] = mapped_column(Integer)
+    tread: Mapped[str | None] = mapped_column(Text)
+    odometer_km: Mapped[int | None] = mapped_column(Integer)
+    confidence: Mapped[float | None] = mapped_column(Float)
+    used: Mapped[bool | None] = mapped_column(Boolean)
+
+
+class PlanQuery(Base):
+    __tablename__ = "plan_queries"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    run_id: Mapped[str] = _run_fk(primary=False)
+    kind: Mapped[str] = mapped_column(Text)  # listing / new_price / part / tyre
+    for_item: Mapped[str | None] = mapped_column(Text)
+    tier: Mapped[str | None] = mapped_column(Text)
+    query: Mapped[str] = mapped_column(Text)
+    __table_args__ = (Index("ix_plan_queries_run", "run_id"),)
+
+
+class Price(Base):
+    __tablename__ = "prices"
+    run_id: Mapped[str] = _run_fk()
+    status: Mapped[str | None] = mapped_column(Text)
+    low_inr: Mapped[int | None] = mapped_column(Integer)
+    high_inr: Mapped[int | None] = mapped_column(Integer)
+    new_price_inr: Mapped[int | None] = mapped_column(Integer)
+    variant_match: Mapped[str | None] = mapped_column(Text)
+    car_age_years: Mapped[int | None] = mapped_column(Integer)
+    listings_used: Mapped[int | None] = mapped_column(Integer)
+    repairs_total_inr: Mapped[int | None] = mapped_column(Integer)
+    reason: Mapped[str | None] = mapped_column(Text)
