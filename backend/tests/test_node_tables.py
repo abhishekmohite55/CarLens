@@ -168,3 +168,39 @@ def test_saving_queries_fills_plan_queries(db_engine):
     with db_engine.connect() as conn:
         n = conn.execute(select(func.count()).select_from(PlanQuery).where(PlanQuery.run_id == run_id)).scalar()
     assert n == 4
+
+
+SEARCH = {"queries": [
+    {"kind": "listing", "for": None, "query": "used Ertiga Thane", "results": [
+        {"title": "Ertiga 2016", "url": "https://a.example/1", "content": "Ertiga VXi 2016 Rs 6.2 Lakh", "score": 0.9},
+        {"title": "dup", "url": "https://a.example/1", "content": "Ertiga VXi 2016 Rs 6.2 Lakh", "score": 0.8}]},
+    {"kind": "part", "for": "front_bumper", "query": "bumper price", "results": [
+        {"title": "Bumper", "url": "https://b.example/2", "content": "Front bumper Rs 3,500", "score": 0.7}]}]}
+
+
+def test_name_key_and_search_rows():
+    assert node_tables.name_key("Maruti Suzuki  Ertiga", "Maruti Suzuki") == "ertiga"
+    assert node_tables.name_key("VXi") == "vxi" and node_tables.name_key(None) is None
+    rows = node_tables.search_rows(SEARCH, {"make": "Maruti Suzuki", "model": "Ertiga", "year": 2016})
+    assert len(rows) == 2  # same url + snippet twice in one run: once
+    assert (rows[0]["make_key"], rows[0]["model_key"], rows[0]["year"]) == ("maruti suzuki", "ertiga", 2016)
+
+
+def test_search_results_are_kept_and_only_dated_again(db_engine):
+    from sqlalchemy import delete, func, select
+
+    from app.models import SearchResult
+
+    with db_engine.begin() as conn:
+        conn.execute(delete(SearchResult).where(SearchResult.url.like("https://%.example/%")))
+    run_id = run_index.create_run_row(sha256="ac" * 32, original_filename="x.mp4", size_bytes=1, duration_sec=1.0)
+    results.save_result(run_id, "04_confirm.json", RECORD)
+    results.save_result(run_id, "07_search/results.json", SEARCH)
+    with db_engine.connect() as conn:
+        first = conn.execute(select(func.max(SearchResult.last_seen_at))).scalar()
+    results.save_result(run_id, "07_search/results.json", SEARCH)  # same results again
+    with db_engine.connect() as conn:
+        n = conn.execute(select(func.count()).select_from(SearchResult)
+                         .where(SearchResult.url.like("https://%.example/%"))).scalar()
+        last = conn.execute(select(func.max(SearchResult.last_seen_at))).scalar()
+    assert n == 2 and last >= first

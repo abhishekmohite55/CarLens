@@ -421,7 +421,7 @@ def api_run_plan(run_id: str):
 
 @app.post("/api/runs/{run_id}/search", status_code=202)
 def api_run_search(run_id: str):
-    """Dev (used by /inspector): re-run only the search node on a run with plan queries; deletes old 07_search/."""
+    """Dev (used by /inspector): re-run only the search node on a run with plan queries; deletes its old results."""
     rd = run_dir(run_id)
     if not rd.exists():
         raise HTTPException(404, detail=f"Run '{run_id}' not found.")
@@ -433,8 +433,7 @@ def api_run_search(run_id: str):
         return JSONResponse(status_code=409, content={
             "error": {"code": "already_running", "message": "Search is already running for this run."}
         })
-    if (rd / "07_search").exists():
-        shutil.rmtree(rd / "07_search")
+    _clear_node(rd, "search")  # this run's results.json (search_results keeps every result, by date)
     threading.Thread(target=run_search, args=(run_id,), kwargs={"claimed": True}, daemon=True).start()
     return {"started": True}
 
@@ -445,7 +444,7 @@ def api_run_extract(run_id: str):
     rd = run_dir(run_id)
     if not rd.exists():
         raise HTTPException(404, detail=f"Run '{run_id}' not found.")
-    if not (rd / "07_search" / "results.json").exists():
+    if load_result(run_id, "07_search/results.json") is None:
         return JSONResponse(status_code=409, content={
             "error": {"code": "no_results", "message": "Search has no results for this run."}
         })

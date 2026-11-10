@@ -1,7 +1,6 @@
-"""Search node: runs every plan query (06_plan/queries.json, in the database) on Tavily, saves everything to 07_search/results.json."""
+"""Search node: runs every plan query (06_plan/queries.json, in the database) on Tavily, saves everything (07_search/results.json) in the database."""
 from __future__ import annotations
 
-import json
 import logging
 import os
 import threading
@@ -11,8 +10,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from tavily import TavilyClient
 
 from ..config import get_config
-from ..results import load_result
-from ..runs import append_event, run_dir, write_json_atomic
+from ..results import load_result, save_result
+from ..runs import append_event
 from ..search import dedupe_urls, flatten_queries, search_totals
 
 log = logging.getLogger(__name__)
@@ -74,7 +73,6 @@ def run_search(run_id: str, claimed: bool = False) -> None:
 
 
 def _run_search_inner(run_id: str) -> None:
-    rd = run_dir(run_id)
     queries = load_result(run_id, "06_plan/queries.json")
     if queries is None:  # plan stopped before writing queries (e.g. make/model missing)
         append_event(run_id, "search", "node_skipped", {"reason": "Plan has no queries"})
@@ -93,10 +91,9 @@ def _run_search_inner(run_id: str) -> None:
                                emit=lambda msg: append_event(run_id, "search", "node_progress", {"message": msg}))
     urls = dedupe_urls(done)
     totals = search_totals(done, urls, get_config().search.depth, elapsed)
-    out = rd / "07_search"
-    out.mkdir(exist_ok=True)
-    write_json_atomic(out / "results.json", {"settings": get_config().search.model_dump(), "queries": done,
-                                             "urls": urls, "totals": totals})
+    # also adds every result to search_results (by car, with dates) for reuse later
+    save_result(run_id, "07_search/results.json", {"settings": get_config().search.model_dump(), "queries": done,
+                                                   "urls": urls, "totals": totals})
     files = ["07_search/results.json"]
 
     if totals["failed"] == totals["queries"]:

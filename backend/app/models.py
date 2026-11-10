@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import (BigInteger, Boolean, DateTime, Float, ForeignKey, ForeignKeyConstraint, Index, Integer, Text,
-                        UniqueConstraint, func)
+                        UniqueConstraint, func, text)
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -111,7 +111,8 @@ class SearchResult(Base):
     first_seen_at: Mapped[datetime] = _now()
     last_seen_at: Mapped[datetime] = _now()
     first_run_id: Mapped[str | None] = mapped_column(Text, ForeignKey("runs.id", ondelete="SET NULL"))
-    # Unique (url, md5(snippet)) is an expression index, created in migration 0003.
+    # Same expression index as migration 0003, so pytest's create_all builds it too (upsert needs it).
+    __table_args__ = (Index("uq_search_results_url_snippet", "url", text("md5(snippet)"), unique=True),)
 
 
 class PriceFigure(Base):

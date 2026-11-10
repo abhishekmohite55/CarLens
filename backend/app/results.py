@@ -32,6 +32,7 @@ FILES: dict[str, tuple[str, str]] = {
     "06_plan/request.json": ("plan", "request.json"),
     "06_plan/response.json": ("plan", "response.json"),
     "06_plan/queries.json": ("plan", "queries.json"),
+    "07_search/results.json": ("search", "results.json"),
 }
 
 

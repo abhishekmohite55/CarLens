@@ -8,10 +8,12 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Callable
 
-from sqlalchemy import delete, insert, select
+from sqlalchemy import delete, func, insert, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import Connection
 
-from .models import ConfirmedCar, Frame, LocateItem, NodeResult, PhotoResult, PlanQuery, VerifyFinding, VerifyVehicle
+from .models import (ConfirmedCar, Frame, LocateItem, NodeResult, PhotoResult, PlanQuery, SearchResult, VerifyFinding,
+                     VerifyVehicle)
 from .search import flatten_queries
 
 
@@ -114,6 +116,46 @@ def plan_rows(queries: dict) -> list[dict]:
              "tier": tiers.get(q["for"]) if q["kind"] == "tyre" else None} for q in flatten_queries(queries or {})]
 
 
+def name_key(text: str | None, make: str | None = None) -> str | None:
+    """Lookup form of a car name: lowercase, single spaces, the make removed from the model ("Maruti Suzuki Ertiga" → "ertiga")."""
+    if not text:
+        return None
+    key = " ".join(str(text).lower().split())
+    m = " ".join(str(make).lower().split()) if make else ""
+    if m and key.startswith(m + " "):
+        key = key[len(m) + 1:]
+    return key or None
+
+
+def search_rows(results: dict, car: dict) -> list[dict]:
+    """Every Tavily result once per (url, snippet), with the query that found it first and the run's car."""
+    make = car.get("make")
+    base = {"make_key": name_key(make), "model_key": name_key(car.get("model"), make), "year": _int(car.get("year"))}
+    seen: set[tuple[str, str]] = set()
+    rows = []
+    for q in (results or {}).get("queries") or []:
+        for r in q.get("results") or []:
+            key = (r.get("url"), r.get("content") or "")
+            if not key[0] or key in seen:
+                continue
+            seen.add(key)
+            rows.append({"url": key[0], "snippet": key[1], "title": r.get("title"), "kind": q.get("kind"),
+                         "for_item": q.get("for"), "query": q.get("query"), **base})
+    return rows
+
+
+def _write_search(conn: Connection, run_id: str, results: Any) -> None:
+    """Upsert into search_results: kept across runs; a result seen again only gets a new last_seen_at (owner, 9 Nov)."""
+    record = conn.execute(select(NodeResult.data).where(
+        NodeResult.run_id == run_id, NodeResult.node == "confirm", NodeResult.name == "04_confirm.json")).scalar()
+    rows = [{**r, "first_run_id": run_id} for r in search_rows(results, (record or {}).get("car") or {})]
+    if not rows:
+        return
+    stmt = pg_insert(SearchResult).values(rows)
+    conn.execute(stmt.on_conflict_do_update(index_elements=[SearchResult.url, func.md5(SearchResult.snippet)],
+                                            set_={"last_seen_at": func.now()}))
+
+
 def _write_verify(conn: Connection, run_id: str, response: Any) -> None:
     conn.execute(delete(VerifyFinding).where(VerifyFinding.run_id == run_id))
     conn.execute(delete(VerifyVehicle).where(VerifyVehicle.run_id == run_id))
@@ -149,6 +191,7 @@ WRITERS: dict[str, Callable[[Connection, str, Any], None]] = {
     "04_confirm.json": _replace(ConfirmedCar, lambda record: [confirmed_row(record)]),
     "05_photos/applied.json": _write_photos,
     "06_plan/queries.json": _replace(PlanQuery, plan_rows),
+    "07_search/results.json": _write_search,
 }
 NODE_TABLES = {"locate": [LocateItem], "frames": [Frame], "verify": [VerifyFinding, VerifyVehicle],
                "confirm": [ConfirmedCar], "photos": [PhotoResult],
