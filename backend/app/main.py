@@ -3,22 +3,24 @@ from __future__ import annotations
 import json
 import shutil
 import threading
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
 from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
-from .config import PROJECT_ROOT, get_config
-from .confirm import load_rto
+from .config import get_config
 from .events import sse_stream
 from .graph import is_paused, resume_from, resume_graph, run_graph
 from .nodes.locate import run_locate
 from .nodes.locate import try_claim as locate_try_claim
-from .nodes.confirm import PAYLOAD_FILE, RECORD_FILE, finish_confirm, load_verify_answer, start_confirm
+from .nodes.confirm import (PAYLOAD_FILE, RECORD_FILE, finish_confirm, load_payload, load_record, load_verify_answer,
+                            rto_rows, start_confirm)
 from .nodes.photos import save_photo
 from .photos import SLOTS
 from .nodes.frames import load_locate_items, run_frames
@@ -37,18 +39,36 @@ from .nodes.report import try_claim as report_try_claim
 from .nodes.verify import try_claim as verify_try_claim
 from .llm.tracing import _get_client as _warmup_tracing
 from .nodes.upload import process_upload
+from .db import get_engine
+from .results import FILES as RESULT_FILES, delete_results, load_result
+from .run_index import close_open_rows, interrupted_nodes
 from .runs import append_event, events_path, failed_at, run_dir
 
 # run_ids that have started or are starting the graph
 _started: set[str] = set()
 _start_lock = threading.Lock()
 
-app = FastAPI(title="CarLens backend")
-
-
-@app.on_event("startup")
-def _startup():
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    """Runs once when the server starts (before the first request), then the server runs."""
     _warmup_tracing()
+    _mark_interrupted()
+    yield
+
+
+app = FastAPI(title="CarLens backend", lifespan=_lifespan)
+
+
+def _mark_interrupted() -> None:
+    """H1 (stage 2.5b): a node cut off by a server stop never sent done/failed; mark it failed so Resume is offered."""
+    if get_engine() is None:
+        return
+    error = "Server stopped while this node was running"
+    for run_id, node in interrupted_nodes():
+        if run_dir(run_id).exists():
+            append_event(run_id, node, "node_failed", {"error": error})
+            append_event(run_id, "pipeline", "run_done", {"status": "failed", "failed_at": node, "error": error})
+        close_open_rows(run_id, node, error, datetime.now(timezone.utc))
 
 
 app.add_middleware(
@@ -100,10 +120,7 @@ def api_get_run(run_id: str):
     if not rd.exists():
         raise HTTPException(404, detail=f"Run '{run_id}' not found.")
 
-    meta_path = rd / "meta.json"
-    meta: dict = {}
-    if meta_path.exists():
-        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    meta = load_result(run_id, "meta.json") or {}
 
     node_status: dict[str, str] = {n["id"]: "waiting" for n in _NODES}
     ev_path = rd / "events.jsonl"
@@ -169,6 +186,7 @@ async def api_run_events(run_id: str):
 
 # What a node clears before it runs again (resume). Locate keeps video_small.mp4, photos keep the uploaded jpgs.
 _NODE_FILES = {"locate": ["01_locate/request.json", "01_locate/response.json"],
+               "confirm": [PAYLOAD_FILE, RECORD_FILE],
                "verify": ["03_verify"],
                "photos": ["05_photos/request.json", "05_photos/response.json", "05_photos/applied.json"],
                "plan": ["06_plan"], "search": ["07_search"], "extract": ["08_extract"],
@@ -178,6 +196,7 @@ _resume_lock = threading.Lock()
 
 
 def _clear_node(rd: Path, node: str) -> None:
+    delete_results(rd.name, node)  # rows saved in the database (stage 2.x); folder = run id
     for rel in _NODE_FILES.get(node, []):
         p = rd / rel
         if p.is_dir():
@@ -235,7 +254,7 @@ def api_run_frames(run_id: str):
     if not rd.exists():
         raise HTTPException(404, detail=f"Run '{run_id}' not found.")
 
-    if load_locate_items(rd) is None:
+    if load_locate_items(run_id) is None:
         return JSONResponse(status_code=409, content={
             "error": {"code": "no_locate_result", "message": "Locate has no valid result for this run."}
         })
@@ -255,7 +274,7 @@ def api_run_verify(run_id: str):
     if not rd.exists():
         raise HTTPException(404, detail=f"Run '{run_id}' not found.")
 
-    if not (rd / "02_frames" / "manifest.json").exists():
+    if load_result(run_id, "02_frames/manifest.json") is None:
         return JSONResponse(status_code=409, content={
             "error": {"code": "no_frames_result", "message": "Frames have no manifest for this run."}
         })
@@ -265,9 +284,7 @@ def api_run_verify(run_id: str):
             "error": {"code": "already_running", "message": "Verify is already running for this run."}
         })
 
-    verify_dir = rd / "03_verify"
-    if verify_dir.exists():
-        shutil.rmtree(verify_dir)
+    _clear_node(rd, "verify")  # old 03_verify folder (pre-step-2 runs) and its database rows
 
     threading.Thread(target=run_verify, args=(run_id,), kwargs={"claimed": True}, daemon=True).start()
     return {"started": True}
@@ -308,9 +325,9 @@ def api_confirm_start(run_id: str):
         return JSONResponse(status_code=409, content={
             "error": {"code": "already_waiting", "message": "This run is already waiting for confirm."}
         })
-    (rd / PAYLOAD_FILE).unlink(missing_ok=True)
-    (rd / RECORD_FILE).unlink(missing_ok=True)
-    if (rd / "05_photos").exists():  # a fresh confirm starts without old photos
+    _clear_node(rd, "confirm")  # payload + record rows (and pre-step-2 files)
+    _clear_node(rd, "photos")  # a fresh confirm starts without old photo answers and photos
+    if (rd / "05_photos").exists():
         shutil.rmtree(rd / "05_photos")
     start_confirm(run_id)
     return {"started": True}
@@ -321,13 +338,13 @@ def api_confirm(run_id: str, answer: ConfirmAnswer):
     rd = run_dir(run_id)
     if not rd.exists():
         raise HTTPException(404, detail=f"Run '{run_id}' not found.")
-    payload_path = rd / PAYLOAD_FILE
     with _confirm_lock:
-        if not payload_path.exists():
+        payload = load_payload(run_id)
+        if payload is None:
             return JSONResponse(status_code=409, content={
                 "error": {"code": "not_waiting", "message": "This run is not waiting for confirm."}
             })
-        if (rd / RECORD_FILE).exists() or run_id in _confirming:
+        if load_record(run_id) is not None or run_id in _confirming:
             return JSONResponse(status_code=409, content={
                 "error": {"code": "already_confirmed", "message": "This run is already confirmed."}
             })
@@ -337,7 +354,7 @@ def api_confirm(run_id: str, answer: ConfirmAnswer):
         if is_paused(run_id):
             threading.Thread(target=resume_graph, args=(run_id, data), daemon=True).start()
         else:  # dev path: run started with "Start confirm", no graph waiting
-            finish_confirm(run_id, json.loads(payload_path.read_text(encoding="utf-8")), data)
+            finish_confirm(run_id, payload, data)
             # rest of the pipeline through the graph, so it stops at the first failed node like a normal run
             threading.Thread(target=resume_from, args=(run_id, "photos"), daemon=True).start()
     finally:
@@ -352,11 +369,12 @@ def _photo_guard(run_id: str, slot: str):
         raise HTTPException(404, detail=f"Run '{run_id}' not found.")
     if slot not in SLOTS:
         raise HTTPException(404, detail=f"Unknown photo slot '{slot}'.")
-    if not (rd / PAYLOAD_FILE).exists() or (rd / RECORD_FILE).exists():
+    payload = load_payload(run_id)
+    if payload is None or load_record(run_id) is not None:
         return rd, JSONResponse(status_code=409, content={
             "error": {"code": "not_waiting", "message": "Photos can only be changed while confirm is waiting."}
         })
-    if slot == "odometer" and json.loads((rd / PAYLOAD_FILE).read_text(encoding="utf-8")).get("odometer_found"):
+    if slot == "odometer" and payload.get("odometer_found"):
         return rd, JSONResponse(status_code=409, content={
             "error": {"code": "odometer_read", "message": "The video already read the odometer."}
         })
@@ -387,11 +405,11 @@ def api_delete_photo(run_id: str, slot: str):
 
 @app.post("/api/runs/{run_id}/plan", status_code=202)
 def api_run_plan(run_id: str):
-    """Dev (used by /inspector): re-run only the plan node on a confirmed run; deletes old 06_plan/."""
+    """Dev (used by /inspector): re-run only the plan node on a confirmed run; deletes its old results."""
     rd = run_dir(run_id)
     if not rd.exists():
         raise HTTPException(404, detail=f"Run '{run_id}' not found.")
-    if not (rd / RECORD_FILE).exists():
+    if load_record(run_id) is None:
         return JSONResponse(status_code=409, content={
             "error": {"code": "not_confirmed", "message": "Confirm is not done for this run."}
         })
@@ -399,19 +417,18 @@ def api_run_plan(run_id: str):
         return JSONResponse(status_code=409, content={
             "error": {"code": "already_running", "message": "Plan is already running for this run."}
         })
-    if (rd / "06_plan").exists():
-        shutil.rmtree(rd / "06_plan")
+    _clear_node(rd, "plan")  # old rows (and pre-step-2 06_plan/ folder)
     threading.Thread(target=run_plan, args=(run_id,), kwargs={"claimed": True}, daemon=True).start()
     return {"started": True}
 
 
 @app.post("/api/runs/{run_id}/search", status_code=202)
 def api_run_search(run_id: str):
-    """Dev (used by /inspector): re-run only the search node on a run with plan queries; deletes old 07_search/."""
+    """Dev (used by /inspector): re-run only the search node on a run with plan queries; deletes its old results."""
     rd = run_dir(run_id)
     if not rd.exists():
         raise HTTPException(404, detail=f"Run '{run_id}' not found.")
-    if not (rd / "06_plan" / "queries.json").exists():
+    if load_result(run_id, "06_plan/queries.json") is None:
         return JSONResponse(status_code=409, content={
             "error": {"code": "no_queries", "message": "Plan has no queries for this run."}
         })
@@ -419,19 +436,18 @@ def api_run_search(run_id: str):
         return JSONResponse(status_code=409, content={
             "error": {"code": "already_running", "message": "Search is already running for this run."}
         })
-    if (rd / "07_search").exists():
-        shutil.rmtree(rd / "07_search")
+    _clear_node(rd, "search")  # this run's results.json (search_results keeps every result, by date)
     threading.Thread(target=run_search, args=(run_id,), kwargs={"claimed": True}, daemon=True).start()
     return {"started": True}
 
 
 @app.post("/api/runs/{run_id}/extract", status_code=202)
 def api_run_extract(run_id: str):
-    """Dev (used by /inspector): re-run only the extract node on a run with search results; deletes old 08_extract/."""
+    """Dev (used by /inspector): re-run only the extract node on a run with search results; deletes its old results."""
     rd = run_dir(run_id)
     if not rd.exists():
         raise HTTPException(404, detail=f"Run '{run_id}' not found.")
-    if not (rd / "07_search" / "results.json").exists():
+    if load_result(run_id, "07_search/results.json") is None:
         return JSONResponse(status_code=409, content={
             "error": {"code": "no_results", "message": "Search has no results for this run."}
         })
@@ -439,19 +455,18 @@ def api_run_extract(run_id: str):
         return JSONResponse(status_code=409, content={
             "error": {"code": "already_running", "message": "Extract is already running for this run."}
         })
-    if (rd / "08_extract").exists():
-        shutil.rmtree(rd / "08_extract")
+    _clear_node(rd, "extract")  # this run's extract rows (price_figures keeps every figure, by date)
     threading.Thread(target=run_extract, args=(run_id,), kwargs={"claimed": True}, daemon=True).start()
     return {"started": True}
 
 
 @app.post("/api/runs/{run_id}/pricing", status_code=202)
 def api_run_pricing(run_id: str):
-    """Dev (used by /inspector): re-run only the pricing node on a run with extract figures; deletes old 09_report/."""
+    """Dev (used by /inspector): re-run only the pricing node on a run with extract figures; deletes its old price."""
     rd = run_dir(run_id)
     if not rd.exists():
         raise HTTPException(404, detail=f"Run '{run_id}' not found.")
-    if not (rd / "08_extract" / "figures.json").exists():
+    if load_result(run_id, "08_extract/figures.json") is None:
         return JSONResponse(status_code=409, content={
             "error": {"code": "no_figures", "message": "Extract has no figures for this run."}
         })
@@ -459,18 +474,18 @@ def api_run_pricing(run_id: str):
         return JSONResponse(status_code=409, content={
             "error": {"code": "already_running", "message": "Pricing is already running for this run."}
         })
-    (rd / "09_report" / "price.json").unlink(missing_ok=True)  # report.json stays until the report is re-run
+    _clear_node(rd, "pricing")  # price.json row + prices row; report.json stays until the report is re-run
     threading.Thread(target=run_pricing, args=(run_id,), kwargs={"claimed": True}, daemon=True).start()
     return {"started": True}
 
 
 @app.post("/api/runs/{run_id}/report", status_code=202)
 def api_run_report(run_id: str):
-    """Dev (used by /inspector): rebuild only the report from the files already in the run folder (no AI call)."""
+    """Dev (used by /inspector): rebuild only the report from the saved node results (no AI call)."""
     rd = run_dir(run_id)
     if not rd.exists():
         raise HTTPException(404, detail=f"Run '{run_id}' not found.")
-    if not (rd / RECORD_FILE).exists():
+    if load_record(run_id) is None:
         return JSONResponse(status_code=409, content={
             "error": {"code": "not_confirmed", "message": "Confirm is not done for this run."}
         })
@@ -485,7 +500,7 @@ def api_run_report(run_id: str):
 @app.get("/api/cities")
 def api_cities(state: str = ""):
     """City type-ahead list from the RTO table, optionally one state. The browser filters as you type."""
-    rows = load_rto(PROJECT_ROOT / get_config().paths.rto_csv)
+    rows = rto_rows()
     seen, out = set(), []
     for r in rows:
         if r["city"].lower().startswith("statewide") or (state and r["state"] != state):
@@ -513,6 +528,12 @@ def api_run_file(run_id: str, path: str):
 
     if target.is_symlink():
         raise HTTPException(400, detail="Symlinks are not served.")
+
+    if path in RESULT_FILES:  # saved in the database from stage 2.x, same JSON as the old file
+        data = load_result(run_id, path)
+        if data is None:
+            raise HTTPException(404, detail=f"File not found: {path}")
+        return PlainTextResponse(data) if path.endswith(".txt") else JSONResponse(data)
 
     if not target.exists():
         raise HTTPException(404, detail=f"File not found: {path}")

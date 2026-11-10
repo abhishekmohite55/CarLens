@@ -4,7 +4,7 @@ import asyncio
 import time
 from typing import AsyncGenerator
 
-from .runs import events_path, run_dir
+from .runs import events_path
 
 _POLL_INTERVAL = 0.5   # seconds between file checks
 _KEEPALIVE_SEC = 15    # SSE keep-alive comment interval

@@ -1,21 +1,22 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
-import secrets
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy import insert
+
 from .config import get_config, PROJECT_ROOT
+from .db import get_engine
+from .models import RunEvent
+from .run_index import TERMINAL, record_node_event  # noqa: F401  TERMINAL is imported from here by graph.py
+
+log = logging.getLogger(__name__)
 
 _seq: dict[str, int] = {}
-
-
-def new_run_id() -> str:
-    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    suffix = secrets.token_hex(2)  # 4 hex chars
-    return f"r_{ts}_{suffix}"
 
 
 def run_dir(run_id: str) -> Path:
@@ -57,9 +58,10 @@ def events_path(run_id: str) -> Path:
 
 
 def append_event(run_id: str, node: str, type_: str, data: dict) -> dict:
+    now = datetime.now(timezone.utc)
     event = {
         "seq": next_seq(run_id),
-        "ts": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "ts": now.isoformat().replace("+00:00", "Z"),
         "run_id": run_id,
         "node": node,
         "type": type_,
@@ -67,10 +69,27 @@ def append_event(run_id: str, node: str, type_: str, data: dict) -> dict:
     }
     with open(events_path(run_id), "a", encoding="utf-8") as f:
         f.write(json.dumps(event) + "\n")
+    _record_event(event, now)
     return event
 
 
-TERMINAL = {"node_done": "done", "node_failed": "failed", "node_skipped": "skipped"}
+def _record_event(event: dict, ts: datetime) -> None:
+    """Copy one event into run_events (platform stage 2.0). The file stays the source for the live page.
+    A database problem is logged and never stops a run."""
+    engine = get_engine()
+    if engine is None:
+        return
+    try:
+        with engine.begin() as conn:
+            conn.execute(insert(RunEvent).values(
+                run_id=event["run_id"], seq=event["seq"], ts=ts,
+                node=event["node"], type=event["type"], data=event["data"]))
+    except Exception as e:
+        log.warning("run_events write failed (run %s, seq %s): %s", event["run_id"], event["seq"], e)
+    try:
+        record_node_event(event, ts)
+    except Exception as e:  # runs from before stage 2.1 have no runs row: logged, the run goes on
+        log.warning("node_runs update failed (run %s, seq %s): %s", event["run_id"], event["seq"], e)
 
 
 def read_events(run_id: str) -> list[dict]:

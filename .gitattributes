@@ -1,0 +1,4 @@
+# Store text files with LF in git; on Windows, core.autocrlf still gives CRLF in the working folder.
+* text=auto
+# Shell scripts run inside Linux containers: always LF, even on Windows.
+*.sh text eol=lf

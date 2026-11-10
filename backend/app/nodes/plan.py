@@ -1,7 +1,6 @@
-"""Plan node: listing queries from templates (Python) + part/tyre queries from the plan LLM chain, into 06_plan/."""
+"""Plan node: listing queries from templates (Python) + part/tyre queries from the plan LLM chain, saved in the database."""
 from __future__ import annotations
 
-import json
 import logging
 import random
 import threading
@@ -15,7 +14,8 @@ from ..llm.tracing import langchain_callbacks
 from ..plan import (build_user_prompt, car_problem, check_plan, damage_findings, listing_queries,
                     tyres_not_seen, tyres_to_judge)
 from ..photos import apply_photos
-from ..runs import append_event, run_dir, write_json_atomic
+from ..results import load_result, save_result
+from ..runs import append_event
 from .photos import load_photos_answer
 
 log = logging.getLogger(__name__)
@@ -95,28 +95,24 @@ def run_plan(run_id: str, claimed: bool = False) -> None:
 
 
 def _run_plan_inner(run_id: str) -> None:
-    rd = run_dir(run_id)
-    confirm_path = rd / "04_confirm.json"
-    if not confirm_path.exists():
+    confirm = load_result(run_id, "04_confirm.json")
+    if confirm is None:
         append_event(run_id, "plan", "node_skipped", {"reason": "Confirm not done"})
         return
     append_event(run_id, "plan", "node_started", {"label": "Planning web searches"})
-    confirm = json.loads(confirm_path.read_text(encoding="utf-8"))
     problem = car_problem(confirm.get("car") or {})
     if problem:
         append_event(run_id, "plan", "node_failed", {"error": problem})
         return
 
-    findings = (json.loads((rd / "03_verify" / "response.json").read_text(encoding="utf-8")).get("parsed") or {}).get("findings") or []
-    manifest_path = rd / "02_frames" / "manifest.json"
-    if manifest_path.exists():  # locate category lets damage_findings tell a scratch from a badge
-        categories = {i["item_id"]: i.get("category") for i in json.loads(manifest_path.read_text(encoding="utf-8"))["items"]}
+    findings = ((load_result(run_id, "03_verify/response.json") or {}).get("parsed") or {}).get("findings") or []
+    manifest = load_result(run_id, "02_frames/manifest.json")
+    if manifest is not None:  # locate category lets damage_findings tell a scratch from a badge
+        categories = {i["item_id"]: i.get("category") for i in manifest["items"]}
         findings = [{**f, "category": categories.get(f.get("item_id"))} for f in findings]
     # extra photos (Stage 6): tyre photos replace video tyres, a confident odometer photo sets km; no photos = unchanged
-    confirm, findings, _ = apply_photos(confirm, findings, load_photos_answer(rd), get_config().photos.km_min_confidence)
+    confirm, findings, _ = apply_photos(confirm, findings, load_photos_answer(run_id), get_config().photos.km_min_confidence)
 
-    out = rd / "06_plan"
-    out.mkdir(exist_ok=True)
     result = make_plan(confirm, findings,
                        emit=lambda msg: append_event(run_id, "plan", "node_progress", {"message": msg}),
                        callbacks=langchain_callbacks(run_id, "plan"),
@@ -124,7 +120,7 @@ def _run_plan_inner(run_id: str) -> None:
     files = []
     for name in ("request", "response", "queries"):
         if result[name] is not None:
-            write_json_atomic(out / f"{name}.json", result[name])
+            save_result(run_id, f"06_plan/{name}.json", result[name])  # queries.json also fills plan_queries
             files.append(f"06_plan/{name}.json")
 
     q = result["queries"]

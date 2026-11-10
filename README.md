@@ -24,7 +24,7 @@ Each run is saved in `runs/<run_id>/`, one folder per step. If a step fails, the
 
 ## Setup (Windows, once)
 
-You need Python 3.12 and a `.env` file in the project root with `GEMINI_API_KEY`, `TAVILY_API_KEY`, `OPENROUTER_API_KEY`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` and `LANGFUSE_HOST`.
+You need Python 3.12 and a `.env` file in the project root: copy `.env.example` to `.env` and fill in every value.
 
 ```
 cd backend
@@ -44,6 +44,40 @@ uvicorn app.main:app --reload --port 8000 --timeout-graceful-shutdown 2
 Open **http://localhost:8000/inspector**, upload a video and follow the steps.
 `--timeout-graceful-shutdown 2` lets Ctrl+C stop the server while the inspector page is open.
 
+## Dev database
+
+Needs Docker Desktop. Postgres and pgAdmin run in containers; the backend in its venv connects to Postgres.
+
+```
+docker compose up -d postgres pgadmin   # start (daily work)
+docker compose stop       # stop, keep data
+```
+
+pgAdmin: **http://localhost:5050** (login `PGADMIN_EMAIL` / `PGADMIN_PASSWORD`). Add a server with host `postgres`, port `5432`, user `carlens`.
+`docker compose down -v` deletes all database data.
+
+Tables are created by Alembic migrations (`backend/alembic/versions/`). After `docker compose up -d`, from `backend` with the venv active:
+
+```
+alembic upgrade head
+```
+
+Tests use a separate database `carlens_test` (`TEST_DATABASE_URL` in `.env`), created once with
+`docker compose exec postgres createdb -U carlens carlens_test`.
+
+## Backend in Docker
+
+The same image AWS will run. `config.yaml`, `prompts/` and `runs/` are mounted from this folder; `.env` is passed as environment variables. On start the container runs `alembic upgrade head`, then the server. Stop the venv server first: both use port 8000.
+
+```
+docker compose build --build-arg GIT_COMMIT=$(git rev-parse --short HEAD) backend
+docker compose up -d
+docker compose logs -f backend
+docker compose down
+```
+
+Open **http://127.0.0.1:8000/inspector**. Rebuild after a code or `requirements.txt` change.
+
 ## Tests
 
 ```
@@ -51,6 +85,19 @@ cd backend
 .venv\Scripts\activate
 python -m pytest -q
 ```
+
+## CI
+
+Every push to GitHub runs `.github/workflows/ci.yml`: **lint** (ruff, pyflakes rules), **test** (`pytest` against a throwaway Postgres 17) and **image** (`docker build` of the backend). `main` only accepts a pull request whose 3 checks are green.
+
+Same lint on the laptop (venv active, from the project root):
+
+```
+pip install ruff==0.17.4
+ruff check --select F backend
+```
+
+Merging a stage: push the branch, open a pull request into `main` on GitHub, merge it when the checks are green, then `git checkout main` and `git pull`.
 
 ## Config
 

@@ -1,13 +1,18 @@
 from __future__ import annotations
 
-import sqlite3
 from typing import TypedDict
 
 from langgraph.graph import END, StateGraph
-from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.types import Command, interrupt
 
-from .config import PROJECT_ROOT, get_config
+from psycopg.conninfo import make_conninfo
+from psycopg.rows import dict_row
+from psycopg_pool import ConnectionPool
+from sqlalchemy.engine import make_url
+
+from .config import get_config
+from .db import database_url
 from .nodes.locate import run_locate
 from .nodes.frames import run_frames
 from .nodes.verify import run_verify
@@ -20,18 +25,25 @@ from .nodes.pricing import run_pricing
 from .nodes.report import run_report
 from .runs import TERMINAL, append_event, node_result, read_events
 
-_conn: sqlite3.Connection | None = None
-_checkpointer: SqliteSaver | None = None
+_checkpointer: PostgresSaver | None = None
 
 
-def _get_checkpointer() -> SqliteSaver:
-    global _conn, _checkpointer
+def _get_checkpointer() -> PostgresSaver:
+    """Confirm pause in Postgres (stage 2.5b; was runs/checkpoints.sqlite). setup() creates LangGraph's own tables once."""
+    global _checkpointer
     if _checkpointer is None:
-        cfg = get_config()
-        db_path = PROJECT_ROOT / cfg.paths.runs_dir / "checkpoints.sqlite"
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-        _conn = sqlite3.connect(str(db_path), check_same_thread=False)
-        _checkpointer = SqliteSaver(_conn)
+        url = database_url()
+        if not url:
+            raise RuntimeError("DATABASE_URL is not set in .env")
+        u = make_url(url)  # parsed like the rest of the backend (SQLAlchemy), so the password is read the same way
+        # connect_timeout: a host that does not answer (e.g. "localhost" → IPv6 ::1 on Windows) fails in 10 s, not minutes
+        conninfo = make_conninfo(host=u.host, port=u.port, dbname=u.database, user=u.username, password=u.password,
+                                 connect_timeout=10)
+        pool = ConnectionPool(conninfo=conninfo, max_size=10, open=True,
+                              kwargs={"autocommit": True, "prepare_threshold": 0, "row_factory": dict_row})
+        saver = PostgresSaver(pool)
+        saver.setup()  # kept only after setup worked, so a failed setup is retried (and its error shown) next time
+        _checkpointer = saver
     return _checkpointer
 
 
@@ -79,14 +91,32 @@ _RUNNERS = {"locate": run_locate, "frames": run_frames, "verify": run_verify,
             "report": run_report}
 
 
+def _past_stop(node: str) -> bool:
+    """True when config.yaml dev.stop_after names a node at or before this one (read on every run)."""
+    stop = get_config().dev.stop_after
+    return stop in ORDER and ORDER.index(node) > ORDER.index(stop)
+
+
+def _after(state: GraphState, node: str, nxt: str) -> str:
+    """Next node, or END when this node failed or the next one is past dev.stop_after."""
+    if state.get(f"{node}_status") == "failed" or nxt == END or _past_stop(nxt):
+        return END
+    return nxt
+
+
+def _entry(state: GraphState) -> str:
+    """Start node; END when it is past dev.stop_after (e.g. confirm by hand must not start photos … report)."""
+    start = state.get("start_at") or "locate"
+    return END if _past_stop(start) else start
+
+
 def _build_graph() -> object:
     g = StateGraph(GraphState)
     for node in ORDER:
         g.add_node(node, _confirm_node if node == "confirm" else _step(node, _RUNNERS[node]))
-    g.set_conditional_entry_point(lambda s: s.get("start_at") or "locate", list(ORDER))
+    g.set_conditional_entry_point(_entry, list(ORDER) + [END])
     for node, nxt in zip(ORDER, ORDER[1:] + (END,)):
-        g.add_conditional_edges(node, lambda s, node=node, nxt=nxt: END if s.get(f"{node}_status") == "failed" else nxt,
-                                list({nxt, END}))
+        g.add_conditional_edges(node, lambda s, node=node, nxt=nxt: _after(s, node, nxt), list({nxt, END}))
     return g.compile(checkpointer=_get_checkpointer())
 
 

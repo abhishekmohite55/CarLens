@@ -9,7 +9,8 @@ from pathlib import Path
 from ..config import PROJECT_ROOT, get_config
 from ..llm.gemini_video import call_gemini_video
 from ..llm.tracing import trace_locate
-from ..runs import append_event, run_dir, write_json_atomic
+from ..results import load_result, save_result
+from ..runs import append_event, run_dir
 from ..timecode import mmss_to_seconds, seconds_to_mmss
 from ..video import shrink_video
 
@@ -115,7 +116,7 @@ def run_locate(run_id: str, claimed: bool = False) -> None:
 
 def _run_locate_inner(run_id: str) -> None:
     rd = run_dir(run_id)
-    meta = json.loads((rd / "meta.json").read_text(encoding="utf-8"))
+    meta = load_result(run_id, "meta.json")
     duration_sec = meta["duration_sec"]
 
     # Find video file
@@ -186,7 +187,7 @@ def _run_locate_inner(run_id: str) -> None:
         }],
         "sent_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
-    write_json_atomic(out_dir / "request.json", request_data)
+    save_result(run_id, "01_locate/request.json", request_data)
 
     def emit(msg: str) -> None:
         append_event(run_id, "locate", "node_progress", {"message": msg})
@@ -221,8 +222,8 @@ def _run_locate_inner(run_id: str) -> None:
         request_data["model"] = model_used
         if "fallback" in result:
             request_data["fallback"] = result["fallback"]
-        write_json_atomic(out_dir / "request.json", request_data)
-    except Exception as exc:
+        save_result(run_id, "01_locate/request.json", request_data)
+    except Exception:
         log.exception("Failed to update request.json for %s", run_id)
 
     # Trace to Langfuse (record the model that actually answered)
@@ -250,8 +251,8 @@ def _run_locate_inner(run_id: str) -> None:
         fail_reason = str(exc)
         parsed = None
 
-    # Write response.json
-    write_json_atomic(out_dir / "response.json", {
+    # response.json is a node_results row from stage 2.2 (video_small.mp4 stays a file)
+    save_result(run_id, "01_locate/response.json", {
         "received_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "duration_ms": result["duration_ms"],
         "tokens": result["tokens"],

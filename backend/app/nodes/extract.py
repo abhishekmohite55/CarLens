@@ -1,8 +1,7 @@
 """Extract node: trims 07_search results, asks the extract LLM chain to copy price text, then Python checks every
-figure (in its snippet, rupees, limits, model + year, outliers). Writes 08_extract/."""
+figure (in its snippet, rupees, limits, model + year, outliers). Saves trimmed.txt/.json, request, response, figures in the database."""
 from __future__ import annotations
 
-import json
 import logging
 import threading
 from datetime import datetime, timezone
@@ -14,7 +13,8 @@ from ..extract import car_line, check_figures, drop_outliers, group_summary, ren
 from ..llm.chat import ask_chain
 from ..llm.tracing import langchain_callbacks
 from ..photos import apply_photos
-from ..runs import append_event, run_dir, write_json_atomic
+from ..results import load_result, save_result
+from ..runs import append_event
 from .photos import load_photos_answer
 
 log = logging.getLogger(__name__)
@@ -83,25 +83,21 @@ def run_extract(run_id: str, claimed: bool = False) -> None:
 
 
 def _run_extract_inner(run_id: str) -> None:
-    rd = run_dir(run_id)
-    results_path = rd / "07_search" / "results.json"
-    if not results_path.exists():
+    results = load_result(run_id, "07_search/results.json")
+    if results is None:
         append_event(run_id, "extract", "node_skipped", {"reason": "Search has no results"})
         return
     append_event(run_id, "extract", "node_started", {"label": "Reading prices from search results"})
-    load = lambda p: json.loads(p.read_text(encoding="utf-8"))
-    confirm = load(rd / "04_confirm.json")
-    confirm = apply_photos(confirm, [], load_photos_answer(rd), get_config().photos.km_min_confidence)[0]  # photo km
+    confirm = load_result(run_id, "04_confirm.json")
+    confirm = apply_photos(confirm, [], load_photos_answer(run_id), get_config().photos.km_min_confidence)[0]  # photo km
     e = get_config().extract
-    trimmed = trim_results(load(results_path), load(rd / "06_plan" / "queries.json"),
+    trimmed = trim_results(results, load_result(run_id, "06_plan/queries.json"),
                            e.max_results_per_group, e.max_snippet_chars)
     text = render_trimmed(car_line(confirm), trimmed)
     trimmed["stats"]["chars_out"] = len(text)
 
-    out = rd / "08_extract"
-    out.mkdir(exist_ok=True)
-    (out / "trimmed.txt").write_text(text, encoding="utf-8")
-    write_json_atomic(out / "trimmed.json", trimmed)
+    save_result(run_id, "08_extract/trimmed.txt", text)  # saved before the call, so it exists even if every model fails
+    save_result(run_id, "08_extract/trimmed.json", trimmed)
     files = ["08_extract/trimmed.txt", "08_extract/trimmed.json"]
     emit = lambda msg: append_event(run_id, "extract", "node_progress", {"message": msg})
     emit(f"{len(text):,} chars to the extract model")
@@ -111,7 +107,7 @@ def _run_extract_inner(run_id: str) -> None:
                           metadata={"langfuse_session_id": run_id, "langfuse_trace_name": "extract"})
     for name in ("request", "response", "figures"):
         if result[name] is not None:
-            write_json_atomic(out / f"{name}.json", result[name])
+            save_result(run_id, f"08_extract/{name}.json", result[name])  # figures.json also fills price_figures
             files.append(f"08_extract/{name}.json")
 
     f = result["figures"]

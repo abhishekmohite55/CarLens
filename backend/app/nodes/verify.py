@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import logging
 import threading
 import time
@@ -13,7 +12,8 @@ from ..config import get_config, PROJECT_ROOT
 from ..llm.chat import ask_chain, image_blocks
 from ..llm.tracing import langchain_callbacks
 from ..plate import normalise_plate, pick_plate, plates_in_texts
-from ..runs import append_event, run_dir, write_json_atomic
+from ..results import load_result, save_result
+from ..runs import append_event, run_dir
 from langchain_core.messages import HumanMessage, SystemMessage
 
 log = logging.getLogger(__name__)
@@ -139,28 +139,24 @@ def run_verify(run_id: str, claimed: bool = False) -> None:
 
 def _run_verify_inner(run_id: str) -> None:
     rd = run_dir(run_id)
-    manifest_path = rd / "02_frames" / "manifest.json"
-    if not manifest_path.exists():
+    manifest = load_result(run_id, "02_frames/manifest.json")
+    if manifest is None:
         append_event(run_id, "verify", "node_skipped", {"reason": "Frames did not finish"})
         return
 
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     all_items = [i for i in manifest.get("items", []) if i.get("sharpest")]
     if not all_items:
         append_event(run_id, "verify", "node_skipped", {"reason": "Frames did not finish"})
         return
 
     frames_dir = rd / "02_frames"
-    out_dir = rd / "03_verify"
-    out_dir.mkdir(exist_ok=True)
-
     # --- Plate OCR ---
     plate_items = [i for i in all_items if i.get("category") == "plate"]
     if plate_items:
         ocr_result = _run_ocr(plate_items, frames_dir)
     else:
         ocr_result = {"engine": "rapidocr", "elapsed_s": 0.0, "frames": [], "plate": None}
-    write_json_atomic(out_dir / "ocr.json", ocr_result)
+    save_result(run_id, "03_verify/ocr.json", ocr_result)
 
     plate_from_ocr = ocr_result.get("plate") is not None
     if plate_from_ocr:
@@ -202,7 +198,7 @@ def _run_verify_inner(run_id: str) -> None:
         ],
         "sent_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
-    write_json_atomic(out_dir / "request.json", request_data)
+    save_result(run_id, "03_verify/request.json", request_data)
 
     # --- Model chain ---
     cbs = langchain_callbacks(run_id, "verify")
@@ -255,7 +251,7 @@ def _run_verify_inner(run_id: str) -> None:
     if winning:
         response_data["tokens"] = winning["tokens"]
         response_data["raw_text"] = winning["raw_text"]
-    write_json_atomic(out_dir / "response.json", response_data)
+    save_result(run_id, "03_verify/response.json", response_data)  # also fills verify_findings, verify_vehicle
 
     files = ["03_verify/ocr.json", "03_verify/request.json", "03_verify/response.json"]
 
