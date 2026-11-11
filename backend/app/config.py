@@ -123,6 +123,16 @@ class DevConfig(BaseModel):
     stop_after: Optional[str] = None  # node name: the pipeline ends after it (platform step 2 testing); empty = all
 
 
+class AuthConfig(BaseModel):
+    """Sign-in (platform step 5, docs/platform/05-login.md)."""
+    session_hours: int = 24
+    max_failed_logins: int = 4
+    lockout_minutes: int = 15
+    max_signups_per_hour: int = 5
+    cookie_secure: bool = False  # true on AWS (https only)
+    allowed_origins: list[str] = ["http://127.0.0.1:8000", "http://localhost:8000", "http://localhost:5173"]
+
+
 class AppConfig(BaseModel):
     upload: UploadConfig
     models: ModelsConfig
@@ -136,6 +146,7 @@ class AppConfig(BaseModel):
     paths: PathsConfig
     locate_video: LocateVideoConfig
     dev: DevConfig = DevConfig()
+    auth: AuthConfig = AuthConfig()
 
 
 def get_config() -> AppConfig:

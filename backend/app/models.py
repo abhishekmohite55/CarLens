@@ -53,6 +53,7 @@ class Run(Base):
     failed_at: Mapped[str | None] = mapped_column(Text)
     error: Mapped[str | None] = mapped_column(Text)
     git_commit: Mapped[str | None] = mapped_column(Text)
+    user_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("users.id"), index=True)  # step 5; NULL before
     created_at: Mapped[datetime] = _now()
     updated_at: Mapped[datetime] = _now()
 
@@ -267,3 +268,37 @@ class Price(Base):
     listings_used: Mapped[int | None] = mapped_column(Integer)
     repairs_total_inr: Mapped[int | None] = mapped_column(Integer)
     reason: Mapped[str | None] = mapped_column(Text)
+
+
+# --- Users and sessions (platform step 5, docs/platform/05-login.md §5) ---
+
+class User(Base):
+    __tablename__ = "users"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    email: Mapped[str] = mapped_column(Text, unique=True)  # lowercase, trimmed
+    password_hash: Mapped[str | None] = mapped_column(Text)  # argon2; NULL for Google-only users
+    google_sub: Mapped[str | None] = mapped_column(Text, unique=True)  # Google's id for the person (stage 5.2)
+    role: Mapped[str] = mapped_column(Text, default="tester")  # admin / tester
+    status: Mapped[str] = mapped_column(Text, default="pending")  # pending / approved / rejected
+    tokens: Mapped[int] = mapped_column(Integer, default=0)  # runs left (1 token = 1 run)
+    totp_secret: Mapped[str | None] = mapped_column(Text)  # authenticator setup key, admin only
+    failed_logins: Mapped[int] = mapped_column(Integer, default=0)
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = _now()
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class Session(Base):
+    __tablename__ = "sessions"
+    key_hash: Mapped[str] = mapped_column(Text, primary_key=True)  # sha256 of the cookie value; the value is never stored
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    created_at: Mapped[datetime] = _now()
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class SignupAttempt(Base):
+    __tablename__ = "signup_attempts"  # new accounts per internet address per hour (stage 5.2)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    ip: Mapped[str] = mapped_column(Text, index=True)
+    created_at: Mapped[datetime] = _now()

@@ -29,3 +29,5 @@ pillow==13.0.0
 pillow-heif==1.8.1
 six==1.17.0
 requests==2.34.2
+argon2-cffi==25.1.0
+pyotp==2.10.0

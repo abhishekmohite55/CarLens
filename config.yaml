@@ -115,6 +115,14 @@ pricing:
 dev: # platform step 2 testing: the pipeline ends after this node; re-run buttons start the next ones
   stop_after: locate # node name, or empty for the full pipeline
 
+auth: # platform step 5 sign-in (docs/platform/05-login.md)
+  session_hours: 24 # a sign-in lasts this long
+  max_failed_logins: 4 # wrong password/code tries per email, then the email waits
+  lockout_minutes: 15
+  max_signups_per_hour: 5 # new accounts per internet address (stage 5.2)
+  cookie_secure: false # true on AWS (https); false on the laptop (http)
+  allowed_origins: ["http://127.0.0.1:8000", "http://localhost:8000", "http://localhost:5173"]
+
 paths:
   runs_dir: runs
   prompts_dir: prompts

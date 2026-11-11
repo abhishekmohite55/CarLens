@@ -19,8 +19,13 @@ def test_verify_409_without_manifest(tmp_path, monkeypatch):
     monkeypatch.setattr(runs_mod, "run_dir", lambda rid: tmp_path / rid)
     monkeypatch.setattr(main_mod, "run_dir", lambda rid: tmp_path / rid)
 
+    from app.auth import SignedIn, require_admin
     from app.main import app
-    client = TestClient(app)
-    resp = client.post(f"/api/runs/{run_id}/verify")
+    app.dependency_overrides[require_admin] = lambda: SignedIn(1, "admin@test", "admin", "approved", 0)
+    try:
+        client = TestClient(app)
+        resp = client.post(f"/api/runs/{run_id}/verify")
+    finally:
+        app.dependency_overrides.clear()
     assert resp.status_code == 409
     assert resp.json()["error"]["code"] == "no_frames_result"

@@ -7,13 +7,16 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
+from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse, StreamingResponse
 from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
+from .auth import NO_STORE, AuthError, require_admin, signed_in_user
+from .auth_routes import router as auth_router
 from .config import get_config
 from .events import sse_stream
 from .graph import is_paused, resume_from, resume_graph, run_graph
@@ -56,7 +59,17 @@ async def _lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="CarLens backend", lifespan=_lifespan)
+# /docs and /openapi.json are served below, admin only (platform step 5).
+app = FastAPI(title="CarLens backend", lifespan=_lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+app.include_router(auth_router)
+
+# Stage 5.1: every /api route except /api/auth/* is admin only; 5.2 / 5.3 open some to approved testers (05-login.md §6).
+_ADMIN = [Depends(require_admin)]
+
+
+@app.exception_handler(AuthError)
+def _auth_error(request: Request, exc: AuthError):
+    return JSONResponse(status_code=exc.status, content={"error": {"code": exc.code, "message": exc.message}})
 
 
 def _mark_interrupted() -> None:
@@ -96,7 +109,7 @@ _NODES = [
 ]
 
 
-@app.get("/api/config")
+@app.get("/api/config", dependencies=_ADMIN)
 def api_config():
     cfg = get_config()
     return {
@@ -109,12 +122,12 @@ def api_config():
     }
 
 
-@app.post("/api/runs")
+@app.post("/api/runs", dependencies=_ADMIN)
 async def api_create_run(video: UploadFile = File(...)):
     return await process_upload(video)
 
 
-@app.get("/api/runs/{run_id}")
+@app.get("/api/runs/{run_id}", dependencies=_ADMIN)
 def api_get_run(run_id: str):
     rd = run_dir(run_id)
     if not rd.exists():
@@ -165,7 +178,7 @@ def _has_locate_event(run_id: str) -> bool:
     return False
 
 
-@app.get("/api/runs/{run_id}/events")
+@app.get("/api/runs/{run_id}/events", dependencies=_ADMIN)
 async def api_run_events(run_id: str):
     rd = run_dir(run_id)
     if not rd.exists():
@@ -205,7 +218,7 @@ def _clear_node(rd: Path, node: str) -> None:
             p.unlink(missing_ok=True)
 
 
-@app.post("/api/runs/{run_id}/locate", status_code=202)
+@app.post("/api/runs/{run_id}/locate", status_code=202, dependencies=_ADMIN)
 def api_run_locate(run_id: str):
     """Dev (used by /inspector): re-run only locate; reuses 01_locate/video_small.mp4 when the shrink already finished."""
     rd = run_dir(run_id)
@@ -220,7 +233,7 @@ def api_run_locate(run_id: str):
     return {"started": True}
 
 
-@app.post("/api/runs/{run_id}/resume", status_code=202)
+@app.post("/api/runs/{run_id}/resume", status_code=202, dependencies=_ADMIN)
 def api_resume(run_id: str):
     """Start the pipeline again at the node the run stopped at, then carry on to the end."""
     rd = run_dir(run_id)
@@ -248,7 +261,7 @@ def api_resume(run_id: str):
     return {"resuming_from": node}
 
 
-@app.post("/api/runs/{run_id}/frames", status_code=202)
+@app.post("/api/runs/{run_id}/frames", status_code=202, dependencies=_ADMIN)
 def api_run_frames(run_id: str):
     rd = run_dir(run_id)
     if not rd.exists():
@@ -268,7 +281,7 @@ def api_run_frames(run_id: str):
     return {"started": True}
 
 
-@app.post("/api/runs/{run_id}/verify", status_code=202)
+@app.post("/api/runs/{run_id}/verify", status_code=202, dependencies=_ADMIN)
 def api_run_verify(run_id: str):
     rd = run_dir(run_id)
     if not rd.exists():
@@ -311,7 +324,7 @@ _confirming: set[str] = set()
 _confirm_lock = threading.Lock()
 
 
-@app.post("/api/runs/{run_id}/confirm/start")
+@app.post("/api/runs/{run_id}/confirm/start", dependencies=_ADMIN)
 def api_confirm_start(run_id: str):
     """Dev (used by /inspector): show the confirm step on a run whose graph already ended after verify."""
     rd = run_dir(run_id)
@@ -333,7 +346,7 @@ def api_confirm_start(run_id: str):
     return {"started": True}
 
 
-@app.post("/api/runs/{run_id}/confirm")
+@app.post("/api/runs/{run_id}/confirm", dependencies=_ADMIN)
 def api_confirm(run_id: str, answer: ConfirmAnswer):
     rd = run_dir(run_id)
     if not rd.exists():
@@ -381,7 +394,7 @@ def _photo_guard(run_id: str, slot: str):
     return rd, None
 
 
-@app.post("/api/runs/{run_id}/photos/{slot}")
+@app.post("/api/runs/{run_id}/photos/{slot}", dependencies=_ADMIN)
 async def api_upload_photo(run_id: str, slot: str, photo: UploadFile = File(...)):
     """Stage 6: one extra photo per slot (front_left, front_right, rear_left, rear_right, odometer); replaces the old one."""
     rd, err = _photo_guard(run_id, slot)
@@ -394,7 +407,7 @@ async def api_upload_photo(run_id: str, slot: str, photo: UploadFile = File(...)
     return {"saved": f"05_photos/{slot}.jpg"}
 
 
-@app.delete("/api/runs/{run_id}/photos/{slot}")
+@app.delete("/api/runs/{run_id}/photos/{slot}", dependencies=_ADMIN)
 def api_delete_photo(run_id: str, slot: str):
     rd, err = _photo_guard(run_id, slot)
     if err:
@@ -403,7 +416,7 @@ def api_delete_photo(run_id: str, slot: str):
     return {"deleted": True}
 
 
-@app.post("/api/runs/{run_id}/plan", status_code=202)
+@app.post("/api/runs/{run_id}/plan", status_code=202, dependencies=_ADMIN)
 def api_run_plan(run_id: str):
     """Dev (used by /inspector): re-run only the plan node on a confirmed run; deletes its old results."""
     rd = run_dir(run_id)
@@ -422,7 +435,7 @@ def api_run_plan(run_id: str):
     return {"started": True}
 
 
-@app.post("/api/runs/{run_id}/search", status_code=202)
+@app.post("/api/runs/{run_id}/search", status_code=202, dependencies=_ADMIN)
 def api_run_search(run_id: str):
     """Dev (used by /inspector): re-run only the search node on a run with plan queries; deletes its old results."""
     rd = run_dir(run_id)
@@ -441,7 +454,7 @@ def api_run_search(run_id: str):
     return {"started": True}
 
 
-@app.post("/api/runs/{run_id}/extract", status_code=202)
+@app.post("/api/runs/{run_id}/extract", status_code=202, dependencies=_ADMIN)
 def api_run_extract(run_id: str):
     """Dev (used by /inspector): re-run only the extract node on a run with search results; deletes its old results."""
     rd = run_dir(run_id)
@@ -460,7 +473,7 @@ def api_run_extract(run_id: str):
     return {"started": True}
 
 
-@app.post("/api/runs/{run_id}/pricing", status_code=202)
+@app.post("/api/runs/{run_id}/pricing", status_code=202, dependencies=_ADMIN)
 def api_run_pricing(run_id: str):
     """Dev (used by /inspector): re-run only the pricing node on a run with extract figures; deletes its old price."""
     rd = run_dir(run_id)
@@ -479,7 +492,7 @@ def api_run_pricing(run_id: str):
     return {"started": True}
 
 
-@app.post("/api/runs/{run_id}/report", status_code=202)
+@app.post("/api/runs/{run_id}/report", status_code=202, dependencies=_ADMIN)
 def api_run_report(run_id: str):
     """Dev (used by /inspector): rebuild only the report from the saved node results (no AI call)."""
     rd = run_dir(run_id)
@@ -497,7 +510,7 @@ def api_run_report(run_id: str):
     return {"started": True}
 
 
-@app.get("/api/cities")
+@app.get("/api/cities", dependencies=_ADMIN)
 def api_cities(state: str = ""):
     """City type-ahead list from the RTO table, optionally one state. The browser filters as you type."""
     rows = rto_rows()
@@ -511,7 +524,7 @@ def api_cities(state: str = ""):
     return sorted(out, key=lambda c: c["city"])
 
 
-@app.get("/api/runs/{run_id}/files/{path:path}")
+@app.get("/api/runs/{run_id}/files/{path:path}", dependencies=_ADMIN)
 def api_run_file(run_id: str, path: str):
     rd = run_dir(run_id)
     if not rd.exists():
@@ -542,5 +555,18 @@ def api_run_file(run_id: str, path: str):
 
 
 @app.get("/inspector")
-def inspector():
-    return FileResponse(_INSPECTOR)
+def inspector(request: Request):
+    user = signed_in_user(request)
+    if user is None or user.role != "admin":
+        return RedirectResponse("/login", status_code=303, headers=NO_STORE)
+    return FileResponse(_INSPECTOR, headers=NO_STORE)  # never from the browser cache: a signed-out visit must redirect
+
+
+@app.get("/openapi.json", dependencies=_ADMIN)
+def openapi_json():
+    return app.openapi()
+
+
+@app.get("/docs", dependencies=_ADMIN)
+def docs():
+    return get_swagger_ui_html(openapi_url="/openapi.json", title="CarLens API")
