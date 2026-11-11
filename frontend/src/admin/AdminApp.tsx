@@ -1,16 +1,19 @@
 import { NavLink, Navigate, Route, Routes } from "react-router";
 import { SignIn } from "../shared/SignIn";
 import { useMe } from "../shared/useMe";
+import { Audit } from "./pages/Audit";
+import { Runs } from "./pages/Runs";
+import { Users } from "./pages/Users";
 
-// Admin sections (docs/platform/06-admin.md §1). Each fills in at its stage.
-const SECTIONS = [
+// Admin sections (docs/platform/06-admin.md §1). A section without a page shows "comes in stage …".
+const SECTIONS: { path: string; label: string; stage: string; page?: () => React.JSX.Element }[] = [
   { path: "dashboard", label: "Dashboard", stage: "6.4" },
-  { path: "users", label: "Users & requests", stage: "6.2" },
-  { path: "runs", label: "Runs", stage: "6.2" },
+  { path: "users", label: "Users & requests", stage: "6.2", page: Users },
+  { path: "runs", label: "Runs", stage: "6.2", page: Runs },
   { path: "config", label: "Config", stage: "6.3" },
   { path: "prompts", label: "Prompts", stage: "6.3" },
   { path: "tables", label: "Tables", stage: "6.4" },
-  { path: "audit", label: "Audit log", stage: "6.2" },
+  { path: "audit", label: "Audit log", stage: "6.2", page: Audit },
 ];
 
 export function AdminApp() {
@@ -51,11 +54,11 @@ export function AdminApp() {
         </header>
         <main className="p-6">
           <Routes>
-            <Route index element={<Navigate to="dashboard" replace />} />
+            <Route index element={<Navigate to="users" replace />} />
             {SECTIONS.map((s) => (
-              <Route key={s.path} path={s.path} element={<Placeholder label={s.label} stage={s.stage} />} />
+              <Route key={s.path} path={s.path} element={s.page ? <s.page /> : <Placeholder label={s.label} stage={s.stage} />} />
             ))}
-            <Route path="*" element={<Navigate to="dashboard" replace />} />
+            <Route path="*" element={<Navigate to="users" replace />} />
           </Routes>
         </main>
       </div>

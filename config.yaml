@@ -125,6 +125,9 @@ auth: # platform step 5 sign-in (docs/platform/05-login.md)
   allowed_origins: # :5173 = frontend dev server (npm run dev)
     ["http://127.0.0.1:8000", "http://localhost:8000", "http://127.0.0.1:5173", "http://localhost:5173"]
 
+access: # access requests (platform step 6)
+  default_tokens: 5 # runs given when the owner approves a request
+
 paths:
   runs_dir: runs
   prompts_dir: prompts

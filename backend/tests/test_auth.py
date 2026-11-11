@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import pyotp
 
 from app.auth import code_matches, hash_password, key_hash, origin_allowed, password_matches
+from app.admin_data import new_tokens, step_status
 from app.run_index import run_refusal
 from app.users import after_failed_login, is_locked, looks_like_email, normal_email, signup_allowed
 
@@ -68,3 +69,16 @@ def test_run_refusal_one_run_and_tokens():
     assert run_refusal(0, 1) is None
     assert run_refusal(1, 5).code == "run_in_progress"
     assert run_refusal(0, 0).code == "no_tokens"
+
+
+def test_admin_token_change_never_below_zero():
+    assert new_tokens(3, None, 2) == 5
+    assert new_tokens(3, None, -10) == 0
+    assert new_tokens(3, 7, None) == 7
+    assert new_tokens(3, -1, None) == 0
+
+
+def test_open_confirm_step_reads_as_awaiting_confirm():
+    assert step_status("confirm", "running", None) == "awaiting_confirm"
+    assert step_status("verify", "running", None) == "running"
+    assert step_status("confirm", "done", None) == "done"
