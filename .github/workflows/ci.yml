@@ -1,9 +1,9 @@
 # CI (platform step 4, docs/platform/04-ci-tests.md): lint, tests with Postgres, backend image build.
-# Runs on every push and on pull requests into main. main only accepts a PR whose 3 checks are green.
+# Runs on pull requests into main only (owner, 12 Nov 2026): one branch and one PR per platform step, so CI runs
+# once per step (and again for each fix pushed to that PR), not for every stage commit.
 name: CI
 
 on:
-  push:
   pull_request:
     branches: [main]
 
