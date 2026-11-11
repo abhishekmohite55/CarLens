@@ -4,6 +4,7 @@
 <head>
 <meta charset="utf-8">
 <title>CarLens sign in</title>
+<script src="https://accounts.google.com/gsi/client" async></script>
 <style>
   body { font-family: system-ui, sans-serif; background: #111; color: #ddd; display: flex; justify-content: center; padding-top: 10vh; }
   .box { width: 320px; }
@@ -11,6 +12,8 @@
   label { display: block; margin: 12px 0 4px; font-size: 13px; color: #aaa; }
   input { width: 100%; padding: 8px; box-sizing: border-box; background: #222; color: #eee; border: 1px solid #444; border-radius: 4px; }
   button { margin-top: 16px; padding: 8px 14px; background: #2d6cdf; color: #fff; border: 0; border-radius: 4px; cursor: pointer; }
+  .link { background: none; color: #8bf; padding: 0; margin-top: 12px; font-size: 13px; }
+  .or { margin: 18px 0 10px; font-size: 12px; color: #777; }
   #msg { margin-top: 12px; min-height: 18px; color: #f88; font-size: 13px; }
   #signedin a { color: #8bf; }
   .hidden { display: none; }
@@ -20,20 +23,26 @@
 <div class="box">
   <h1>CarLens</h1>
 
-  <form id="form" class="hidden">
-    <label for="email">Email</label>
-    <input id="email" type="email" autocomplete="username" required>
-    <label for="password">Password</label>
-    <input id="password" type="password" autocomplete="current-password" required>
-    <div id="codeRow" class="hidden">
-      <label for="code">Authenticator code</label>
-      <input id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6">
-    </div>
-    <button type="submit">Sign in</button>
-  </form>
+  <div id="signedout" class="hidden">
+    <form id="form">
+      <label for="email">Email</label>
+      <input id="email" type="email" autocomplete="username" required>
+      <label for="password">Password <span id="pwHint" class="hidden">(at least 10 characters)</span></label>
+      <input id="password" type="password" autocomplete="current-password" required>
+      <div id="codeRow" class="hidden">
+        <label for="code">Authenticator code</label>
+        <input id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6">
+      </div>
+      <button type="submit" id="submit">Sign in</button>
+    </form>
+    <button class="link" id="toggle">No account? Request access</button>
+    <div class="or">or</div>
+    <div id="googleBtn"></div>
+  </div>
 
   <div id="signedin" class="hidden">
-    <p>Signed in as <b id="who"></b> (<span id="role"></span>, <span id="status"></span>).</p>
+    <p>Signed in as <b id="who"></b>.</p>
+    <p id="state"></p>
     <p id="adminLink" class="hidden"><a href="/inspector">Open the inspector</a></p>
     <button id="logout">Sign out</button>
   </div>
@@ -42,34 +51,73 @@
 </div>
 <script>
 const $ = id => document.getElementById(id);
+const GOOGLE_CLIENT_ID = "__GOOGLE_CLIENT_ID__";
+let signingUp = false;
+
+function stateText(me) {
+  if (me.role === "admin") return "Admin.";
+  if (me.status === "approved") return `Access approved: ${me.tokens} run(s) left.`;
+  if (me.status === "rejected") return "Your access request was not approved.";
+  return "Access requested. You can use CarLens once the owner approves it.";
+}
 
 function show(me) {
-  $("form").classList.toggle("hidden", !!me);
+  $("signedout").classList.toggle("hidden", !!me);
   $("signedin").classList.toggle("hidden", !me);
   if (!me) return;
   $("who").textContent = me.email;
-  $("role").textContent = me.role;
-  $("status").textContent = me.status;
+  $("state").textContent = stateText(me);
   $("adminLink").classList.toggle("hidden", me.role !== "admin");
+}
+
+async function post(url, body) {
+  const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  return { ok: r.ok, data: await r.json() };
+}
+
+function setMode(up) {
+  signingUp = up;
+  $("submit").textContent = up ? "Request access" : "Sign in";
+  $("toggle").textContent = up ? "Have an account? Sign in" : "No account? Request access";
+  $("pwHint").classList.toggle("hidden", !up);
+  $("password").autocomplete = up ? "new-password" : "current-password";
+  $("codeRow").classList.add("hidden");
+  $("msg").textContent = "";
 }
 
 fetch("/api/auth/me").then(r => r.ok ? r.json() : null).then(show);
 
+$("toggle").addEventListener("click", () => setMode(!signingUp));
+
 $("form").addEventListener("submit", async e => {
   e.preventDefault();
   $("msg").textContent = "";
-  const body = { email: $("email").value, password: $("password").value, code: $("code").value || null };
-  const r = await fetch("/api/auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-  const data = await r.json();
-  if (r.ok) { show(data); if (data.role === "admin") location.href = "/inspector"; return; }
-  if (data.error && data.error.code === "code_required") { $("codeRow").classList.remove("hidden"); $("code").focus(); }
-  $("msg").textContent = data.error ? data.error.message : "Sign-in failed.";
+  const res = signingUp
+    ? await post("/api/auth/signup", { email: $("email").value, password: $("password").value })
+    : await post("/api/auth/login", { email: $("email").value, password: $("password").value, code: $("code").value || null });
+  if (res.ok) { show(res.data); if (res.data.role === "admin") location.href = "/inspector"; return; }
+  if (res.data.error && res.data.error.code === "code_required") { $("codeRow").classList.remove("hidden"); $("code").focus(); }
+  $("msg").textContent = res.data.error ? res.data.error.message : "That did not work.";
 });
 
 $("logout").addEventListener("click", async () => {
   await fetch("/api/auth/logout", { method: "POST" });
   $("password").value = ""; $("code").value = "";
   show(null);
+});
+
+// Google button (Google Identity Services): Google gives the page a signed ID token; the backend checks it.
+window.addEventListener("load", () => {
+  if (!GOOGLE_CLIENT_ID || !window.google) { $("googleBtn").textContent = "Google sign-in is not set up."; return; }
+  google.accounts.id.initialize({
+    client_id: GOOGLE_CLIENT_ID,
+    callback: async resp => {
+      $("msg").textContent = "";
+      const res = await post("/api/auth/google", { credential: resp.credential });
+      if (res.ok) show(res.data); else $("msg").textContent = res.data.error ? res.data.error.message : "Google sign-in failed.";
+    },
+  });
+  google.accounts.id.renderButton($("googleBtn"), { theme: "filled_black", size: "large", width: 320 });
 });
 </script>
 </body>

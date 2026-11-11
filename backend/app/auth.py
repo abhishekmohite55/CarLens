@@ -6,6 +6,7 @@ Pure helpers take plain values; only the guards and session functions touch the 
 from __future__ import annotations
 
 import hashlib
+import os
 import secrets
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -81,6 +82,22 @@ def origin_allowed(origin: str | None, referer: str | None, allowed: list[str]) 
     return bool(origin) and origin.rstrip("/") in {a.rstrip("/") for a in allowed}
 
 
+def google_client_id() -> str:
+    return os.environ.get("GOOGLE_CLIENT_ID", "").strip()
+
+
+def verify_google_token(credential: str) -> dict:
+    """Checks the ID token from Google's button (signature, audience = our client ID, expiry) and returns its
+    claims (sub, email, email_verified, ...). Raises ValueError when the token is not valid."""
+    from google.auth.transport import requests as google_requests
+    from google.oauth2 import id_token
+
+    client_id = google_client_id()
+    if not client_id:
+        raise ValueError("GOOGLE_CLIENT_ID is not set in .env")
+    return id_token.verify_oauth2_token(credential, google_requests.Request(), client_id)
+
+
 # --- sessions ---
 
 def start_session(response: Response, user_id: int) -> None:
@@ -135,6 +152,14 @@ def require_user(request: Request) -> SignedIn:
     user = signed_in_user(request)
     if user is None:
         raise AuthError(401, "not_signed_in", "Please sign in.")
+    return user
+
+
+def require_approved(request: Request) -> SignedIn:
+    """Signed in and approved by the owner (the admin is approved too)."""
+    user = require_user(request)
+    if user.status != "approved":
+        raise AuthError(403, "not_approved", "Your access request is waiting for approval.")
     return user
 
 

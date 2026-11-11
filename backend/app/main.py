@@ -15,7 +15,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
-from .auth import NO_STORE, AuthError, require_admin, signed_in_user
+from .auth import NO_STORE, AuthError, require_admin, require_approved, signed_in_user
 from .auth_routes import router as auth_router
 from .config import get_config
 from .events import sse_stream
@@ -63,8 +63,9 @@ async def _lifespan(app: FastAPI):
 app = FastAPI(title="CarLens backend", lifespan=_lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 app.include_router(auth_router)
 
-# Stage 5.1: every /api route except /api/auth/* is admin only; 5.2 / 5.3 open some to approved testers (05-login.md §6).
+# Who may call what: 05-login.md §6. Upload and run routes stay admin-only until stage 5.3 (tokens, own runs).
 _ADMIN = [Depends(require_admin)]
+_APPROVED = [Depends(require_approved)]
 
 
 @app.exception_handler(AuthError)
@@ -109,7 +110,7 @@ _NODES = [
 ]
 
 
-@app.get("/api/config", dependencies=_ADMIN)
+@app.get("/api/config", dependencies=_APPROVED)
 def api_config():
     cfg = get_config()
     return {
@@ -510,7 +511,7 @@ def api_run_report(run_id: str):
     return {"started": True}
 
 
-@app.get("/api/cities", dependencies=_ADMIN)
+@app.get("/api/cities", dependencies=_APPROVED)
 def api_cities(state: str = ""):
     """City type-ahead list from the RTO table, optionally one state. The browser filters as you type."""
     rows = rto_rows()

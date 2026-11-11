@@ -11,11 +11,11 @@ import sys
 from datetime import datetime, timedelta, timezone
 
 import pyotp
-from sqlalchemy import insert, select, update
+from sqlalchemy import func, insert, select, update
 
 from .auth import hash_password
 from .db import require_engine
-from .models import User
+from .models import SignupAttempt, User
 
 MIN_PASSWORD = 10
 
@@ -36,9 +36,47 @@ def is_locked(locked_until: datetime | None, now: datetime) -> bool:
     return locked_until is not None and locked_until > now
 
 
+def looks_like_email(email: str) -> bool:
+    """Light shape check only (no verification email, owner decision): one @, a dot in the domain, no spaces."""
+    email = normal_email(email)
+    local, _, domain = email.partition("@")
+    return bool(local) and "." in domain.strip(".") and " " not in email and email.count("@") == 1
+
+
+def signup_allowed(recent_signups: int, max_per_hour: int) -> bool:
+    return recent_signups < max_per_hour
+
+
 def find_user(email: str):
     with require_engine().connect() as conn:
         return conn.execute(select(User).where(User.email == normal_email(email))).first()
+
+
+def find_google_user(google_sub: str):
+    with require_engine().connect() as conn:
+        return conn.execute(select(User).where(User.google_sub == google_sub)).first()
+
+
+def signups_last_hour(ip: str) -> int:
+    since = datetime.now(timezone.utc) - timedelta(hours=1)
+    with require_engine().connect() as conn:
+        return conn.execute(select(func.count()).select_from(SignupAttempt)
+                            .where(SignupAttempt.ip == ip, SignupAttempt.created_at > since)).scalar_one()
+
+
+def create_tester(email: str, ip: str, password_hash: str | None = None, google_sub: str | None = None) -> int:
+    """New pending tester (= an access request) and one sign-up attempt for the address, in one transaction."""
+    with require_engine().begin() as conn:
+        user_id = conn.execute(insert(User).values(
+            email=normal_email(email), password_hash=password_hash, google_sub=google_sub, role="tester",
+            status="pending", tokens=0).returning(User.id)).scalar_one()
+        conn.execute(insert(SignupAttempt).values(ip=ip))
+    return user_id
+
+
+def link_google(user_id: int, google_sub: str) -> None:
+    with require_engine().begin() as conn:
+        conn.execute(update(User).where(User.id == user_id).values(google_sub=google_sub))
 
 
 def record_failed_login(user_id: int, failed: int, max_failed: int, lockout_minutes: int) -> None:
