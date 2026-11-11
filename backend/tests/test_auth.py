@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import pyotp
 
 from app.auth import code_matches, hash_password, key_hash, origin_allowed, password_matches
-from app.users import after_failed_login, is_locked, normal_email
+from app.users import after_failed_login, is_locked, looks_like_email, normal_email, signup_allowed
 
 ALLOWED = ["http://127.0.0.1:8000", "http://localhost:8000"]
 
@@ -52,3 +52,12 @@ def test_origin_check():
 def test_email_and_key_hash():
     assert normal_email("  Someone@Gmail.COM ") == "someone@gmail.com"
     assert key_hash("abc") == key_hash("abc") and key_hash("abc") != "abc"
+
+
+def test_signup_email_shape_and_limit():
+    assert looks_like_email("someone@gmail.com")
+    assert not looks_like_email("someone")
+    assert not looks_like_email("some one@gmail.com")
+    assert not looks_like_email("a@b@gmail.com")
+    assert not looks_like_email("someone@localhost")
+    assert signup_allowed(4, 5) and not signup_allowed(5, 5)
