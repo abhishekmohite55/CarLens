@@ -14,9 +14,10 @@ ORIGIN = {"Origin": "http://127.0.0.1:8000"}
 @pytest.fixture
 def client(db_engine):
     from app.models import SignupAttempt, User
-    with db_engine.begin() as conn:  # every test starts with no testers and no sign-up attempts
+    with db_engine.begin() as conn:  # every test starts with no sign-up testers and no sign-up attempts
         conn.execute(delete(SignupAttempt))
-        conn.execute(delete(User).where(User.role == "tester"))
+        # testers of test_runs_tokens.py (@runs.test) own runs and stay
+        conn.execute(delete(User).where(User.role == "tester", User.email.not_like("%@runs.test")))
     from app.main import app
     return TestClient(app)
 

@@ -2,6 +2,7 @@ upload:
   allowed_types: [mp4, mov, webm]
   max_size_mb: 500
   max_duration_sec: 300
+  pending_minutes: 30 # same video uploaded again: the file waits this long while the user chooses old run / fresh run
 
 models: # fill model names before each stage
   locate:
@@ -121,7 +122,8 @@ auth: # platform step 5 sign-in (docs/platform/05-login.md)
   lockout_minutes: 15
   max_signups_per_hour: 5 # new accounts per internet address (stage 5.2)
   cookie_secure: false # true on AWS (https); false on the laptop (http)
-  allowed_origins: ["http://127.0.0.1:8000", "http://localhost:8000", "http://localhost:5173"]
+  allowed_origins:
+    ["http://127.0.0.1:8000", "http://localhost:8000", "http://localhost:5173"]
 
 paths:
   runs_dir: runs

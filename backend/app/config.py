@@ -30,6 +30,7 @@ class UploadConfig(BaseModel):
     allowed_types: list[str]
     max_size_mb: int
     max_duration_sec: int
+    pending_minutes: int = 30  # same video again: the kept upload waits this long for the user's choice (step 5)
 
 
 class ModelsConfig(BaseModel):

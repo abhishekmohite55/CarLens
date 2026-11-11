@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import pyotp
 
 from app.auth import code_matches, hash_password, key_hash, origin_allowed, password_matches
+from app.run_index import run_refusal
 from app.users import after_failed_login, is_locked, looks_like_email, normal_email, signup_allowed
 
 ALLOWED = ["http://127.0.0.1:8000", "http://localhost:8000"]
@@ -61,3 +62,9 @@ def test_signup_email_shape_and_limit():
     assert not looks_like_email("a@b@gmail.com")
     assert not looks_like_email("someone@localhost")
     assert signup_allowed(4, 5) and not signup_allowed(5, 5)
+
+
+def test_run_refusal_one_run_and_tokens():
+    assert run_refusal(0, 1) is None
+    assert run_refusal(1, 5).code == "run_in_progress"
+    assert run_refusal(0, 0).code == "no_tokens"
