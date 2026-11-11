@@ -16,6 +16,7 @@ from typing import Literal, Optional
 from pydantic import BaseModel, Field
 
 from .auth import NO_STORE, AuthError, SignedIn, require_admin, require_approved, signed_in_user
+from .admin_routes import router as admin_router
 from .auth_routes import router as auth_router
 from .config import get_config
 from .events import sse_stream
@@ -44,7 +45,8 @@ from .llm.tracing import _get_client as _warmup_tracing
 from .nodes.upload import DuplicateUpload, clean_old_pending, drop_pending, process_upload, start_pending
 from .db import get_engine
 from .results import FILES as RESULT_FILES, delete_results, load_result
-from .run_index import RunRefused, close_open_rows, interrupted_nodes, other_active_run, run_owner, user_runs
+from .run_index import (RunRefused, close_open_rows, interrupted_nodes, latest_node_result, other_active_run, run_owner,
+                        user_runs)
 from .runs import append_event, events_path, failed_at, run_dir
 
 # run_ids that have started or are starting the graph
@@ -63,6 +65,7 @@ async def _lifespan(app: FastAPI):
 # /docs and /openapi.json are served below, admin only (platform step 5).
 app = FastAPI(title="CarLens backend", lifespan=_lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 app.include_router(auth_router)
+app.include_router(admin_router)
 
 # Who may call what: 05-login.md §6. Upload and run routes stay admin-only until stage 5.3 (tokens, own runs).
 _ADMIN = [Depends(require_admin)]
@@ -237,6 +240,21 @@ async def api_run_events(run_id: str):
     )
 
 
+def _single_step(run_id: str, node: str, step) -> None:
+    """Dev re-run of one step (inspector buttons). A pipeline run ends with run_done; a single step did not, so the
+    run stayed "running" (owner check, 12 Nov). Now: run_done partial (stopped after this step) or failed at it.
+    Skipped while the run's graph waits at confirm (its status stays awaiting_confirm)."""
+    try:
+        step(run_id, claimed=True)
+    finally:
+        if not is_paused(run_id):
+            status, error = latest_node_result(run_id, node)
+            if status == "failed":
+                append_event(run_id, "pipeline", "run_done", {"status": "failed", "failed_at": node, "error": error})
+            else:
+                append_event(run_id, "pipeline", "run_done", {"status": "partial", "stopped_after": node})
+
+
 # What a node clears before it runs again (resume). Locate keeps video_small.mp4, photos keep the uploaded jpgs.
 _NODE_FILES = {"locate": ["01_locate/request.json", "01_locate/response.json"],
                "confirm": [PAYLOAD_FILE, RECORD_FILE],
@@ -269,7 +287,7 @@ def api_run_locate(run_id: str):
             "error": {"code": "already_running", "message": "Locate is already running for this run."}
         })
     _clear_node(rd, "locate")
-    threading.Thread(target=run_locate, args=(run_id,), kwargs={"claimed": True}, daemon=True).start()
+    threading.Thread(target=_single_step, args=(run_id, "locate", run_locate), daemon=True).start()
     return {"started": True}
 
 
@@ -319,7 +337,7 @@ def api_run_frames(run_id: str):
             "error": {"code": "already_running", "message": "Frames extraction is already running for this run."}
         })
 
-    threading.Thread(target=run_frames, args=(run_id,), kwargs={"claimed": True}, daemon=True).start()
+    threading.Thread(target=_single_step, args=(run_id, "frames", run_frames), daemon=True).start()
     return {"started": True}
 
 
@@ -341,7 +359,7 @@ def api_run_verify(run_id: str):
 
     _clear_node(rd, "verify")  # old 03_verify folder (pre-step-2 runs) and its database rows
 
-    threading.Thread(target=run_verify, args=(run_id,), kwargs={"claimed": True}, daemon=True).start()
+    threading.Thread(target=_single_step, args=(run_id, "verify", run_verify), daemon=True).start()
     return {"started": True}
 
 
@@ -473,7 +491,7 @@ def api_run_plan(run_id: str):
             "error": {"code": "already_running", "message": "Plan is already running for this run."}
         })
     _clear_node(rd, "plan")  # old rows (and pre-step-2 06_plan/ folder)
-    threading.Thread(target=run_plan, args=(run_id,), kwargs={"claimed": True}, daemon=True).start()
+    threading.Thread(target=_single_step, args=(run_id, "plan", run_plan), daemon=True).start()
     return {"started": True}
 
 
@@ -492,7 +510,7 @@ def api_run_search(run_id: str):
             "error": {"code": "already_running", "message": "Search is already running for this run."}
         })
     _clear_node(rd, "search")  # this run's results.json (search_results keeps every result, by date)
-    threading.Thread(target=run_search, args=(run_id,), kwargs={"claimed": True}, daemon=True).start()
+    threading.Thread(target=_single_step, args=(run_id, "search", run_search), daemon=True).start()
     return {"started": True}
 
 
@@ -511,7 +529,7 @@ def api_run_extract(run_id: str):
             "error": {"code": "already_running", "message": "Extract is already running for this run."}
         })
     _clear_node(rd, "extract")  # this run's extract rows (price_figures keeps every figure, by date)
-    threading.Thread(target=run_extract, args=(run_id,), kwargs={"claimed": True}, daemon=True).start()
+    threading.Thread(target=_single_step, args=(run_id, "extract", run_extract), daemon=True).start()
     return {"started": True}
 
 
@@ -530,7 +548,7 @@ def api_run_pricing(run_id: str):
             "error": {"code": "already_running", "message": "Pricing is already running for this run."}
         })
     _clear_node(rd, "pricing")  # price.json row + prices row; report.json stays until the report is re-run
-    threading.Thread(target=run_pricing, args=(run_id,), kwargs={"claimed": True}, daemon=True).start()
+    threading.Thread(target=_single_step, args=(run_id, "pricing", run_pricing), daemon=True).start()
     return {"started": True}
 
 
@@ -548,7 +566,7 @@ def api_run_report(run_id: str):
         return JSONResponse(status_code=409, content={
             "error": {"code": "already_running", "message": "Report is already running for this run."}
         })
-    threading.Thread(target=run_report, args=(run_id,), kwargs={"claimed": True}, daemon=True).start()
+    threading.Thread(target=_single_step, args=(run_id, "report", run_report), daemon=True).start()
     return {"started": True}
 
 

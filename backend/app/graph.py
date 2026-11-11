@@ -134,6 +134,11 @@ import logging as _logging
 _glog = _logging.getLogger(__name__)
 
 
+def forget_run(run_id: str) -> None:
+    """Delete the run's paused state (LangGraph checkpoint rows); used when the admin deletes a run."""
+    _get_checkpointer().delete_thread(run_id)
+
+
 def is_paused(run_id: str) -> bool:
     """True while the run's graph waits at the confirm interrupt (survives a restart via the checkpointer)."""
     state = get_graph().get_state({"configurable": {"thread_id": run_id}})

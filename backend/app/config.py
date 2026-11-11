@@ -134,6 +134,11 @@ class AuthConfig(BaseModel):
     allowed_origins: list[str] = ["http://127.0.0.1:8000", "http://localhost:8000", "http://localhost:5173"]
 
 
+class AccessConfig(BaseModel):
+    """Access requests (platform step 5/6)."""
+    default_tokens: int = 5  # given when the owner approves a request
+
+
 class AppConfig(BaseModel):
     upload: UploadConfig
     models: ModelsConfig
@@ -148,6 +153,7 @@ class AppConfig(BaseModel):
     locate_video: LocateVideoConfig
     dev: DevConfig = DevConfig()
     auth: AuthConfig = AuthConfig()
+    access: AccessConfig = AccessConfig()
 
 
 def get_config() -> AppConfig:

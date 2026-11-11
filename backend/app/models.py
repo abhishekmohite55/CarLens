@@ -54,6 +54,8 @@ class Run(Base):
     error: Mapped[str | None] = mapped_column(Text)
     git_commit: Mapped[str | None] = mapped_column(Text)
     user_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("users.id"), index=True)  # step 5; NULL before
+    config_version_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("config_versions.id"))  # step 6.3
+    prompt_version_ids: Mapped[Any | None] = mapped_column(JSONB)  # step 6.3: {"verify.system.md": 7, ...}
     created_at: Mapped[datetime] = _now()
     updated_at: Mapped[datetime] = _now()
 
@@ -302,3 +304,34 @@ class SignupAttempt(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     ip: Mapped[str] = mapped_column(Text, index=True)
     created_at: Mapped[datetime] = _now()
+
+
+# --- Admin app (platform step 6, docs/platform/06-admin.md §5) ---
+
+class AuditLog(Base):
+    __tablename__ = "audit_log"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    at: Mapped[datetime] = _now()
+    admin_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="SET NULL"))
+    action: Mapped[str] = mapped_column(Text, index=True)  # approve_user, set_tokens, delete_run, ...
+    target: Mapped[str | None] = mapped_column(Text)  # "user 12", "run r_abc..."
+    details: Mapped[Any | None] = mapped_column(JSONB)
+
+
+class ConfigVersion(Base):
+    __tablename__ = "config_versions"  # newest row = active (stage 6.3)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    created_at: Mapped[datetime] = _now()
+    created_by: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="SET NULL"))
+    note: Mapped[str | None] = mapped_column(Text)
+    data: Mapped[Any] = mapped_column(JSONB)
+
+
+class PromptVersion(Base):
+    __tablename__ = "prompt_versions"  # newest row per name = active (stage 6.3)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    name: Mapped[str] = mapped_column(Text, index=True)
+    created_at: Mapped[datetime] = _now()
+    created_by: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="SET NULL"))
+    note: Mapped[str | None] = mapped_column(Text)
+    text: Mapped[str] = mapped_column(Text)

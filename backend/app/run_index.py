@@ -82,9 +82,19 @@ def create_run_row(*, sha256: str, original_filename: str, size_bytes: int, dura
                     id=run_id, video_sha256=sha256, original_filename=original_filename,
                     size_bytes=size_bytes, duration_sec=duration_sec, git_commit=commit, user_id=user_id))
             return run_id
-        except IntegrityError:
-            continue
+        except IntegrityError as exc:
+            if getattr(getattr(exc.orig, "diag", None), "constraint_name", None) == "runs_pkey":
+                continue  # the random id is taken: draw another
+            raise  # any other refusal (missing value, foreign key) is a real error
     raise RuntimeError("Could not draw a free run id")
+
+
+def latest_node_result(run_id: str, node: str) -> tuple[str | None, str | None]:
+    """(status, error) of the newest attempt of one node of a run."""
+    with require_engine().connect() as conn:
+        row = conn.execute(select(NodeRun.status, NodeRun.error).where(NodeRun.run_id == run_id, NodeRun.node == node)
+                           .order_by(NodeRun.started_at.desc()).limit(1)).first()
+    return (row.status, row.error) if row else (None, None)
 
 
 def run_owner(run_id: str) -> tuple[bool, int | None]:
