@@ -1,0 +1,76 @@
+<!doctype html>
+<!-- Plain sign-in page (platform step 5, P1). The real frontend replaces it later; the API stays. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>CarLens sign in</title>
+<style>
+  body { font-family: system-ui, sans-serif; background: #111; color: #ddd; display: flex; justify-content: center; padding-top: 10vh; }
+  .box { width: 320px; }
+  h1 { font-size: 20px; }
+  label { display: block; margin: 12px 0 4px; font-size: 13px; color: #aaa; }
+  input { width: 100%; padding: 8px; box-sizing: border-box; background: #222; color: #eee; border: 1px solid #444; border-radius: 4px; }
+  button { margin-top: 16px; padding: 8px 14px; background: #2d6cdf; color: #fff; border: 0; border-radius: 4px; cursor: pointer; }
+  #msg { margin-top: 12px; min-height: 18px; color: #f88; font-size: 13px; }
+  #signedin a { color: #8bf; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<div class="box">
+  <h1>CarLens</h1>
+
+  <form id="form" class="hidden">
+    <label for="email">Email</label>
+    <input id="email" type="email" autocomplete="username" required>
+    <label for="password">Password</label>
+    <input id="password" type="password" autocomplete="current-password" required>
+    <div id="codeRow" class="hidden">
+      <label for="code">Authenticator code</label>
+      <input id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6">
+    </div>
+    <button type="submit">Sign in</button>
+  </form>
+
+  <div id="signedin" class="hidden">
+    <p>Signed in as <b id="who"></b> (<span id="role"></span>, <span id="status"></span>).</p>
+    <p id="adminLink" class="hidden"><a href="/inspector">Open the inspector</a></p>
+    <button id="logout">Sign out</button>
+  </div>
+
+  <div id="msg"></div>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+
+function show(me) {
+  $("form").classList.toggle("hidden", !!me);
+  $("signedin").classList.toggle("hidden", !me);
+  if (!me) return;
+  $("who").textContent = me.email;
+  $("role").textContent = me.role;
+  $("status").textContent = me.status;
+  $("adminLink").classList.toggle("hidden", me.role !== "admin");
+}
+
+fetch("/api/auth/me").then(r => r.ok ? r.json() : null).then(show);
+
+$("form").addEventListener("submit", async e => {
+  e.preventDefault();
+  $("msg").textContent = "";
+  const body = { email: $("email").value, password: $("password").value, code: $("code").value || null };
+  const r = await fetch("/api/auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const data = await r.json();
+  if (r.ok) { show(data); if (data.role === "admin") location.href = "/inspector"; return; }
+  if (data.error && data.error.code === "code_required") { $("codeRow").classList.remove("hidden"); $("code").focus(); }
+  $("msg").textContent = data.error ? data.error.message : "Sign-in failed.";
+});
+
+$("logout").addEventListener("click", async () => {
+  await fetch("/api/auth/logout", { method: "POST" });
+  $("password").value = ""; $("code").value = "";
+  show(null);
+});
+</script>
+</body>
+</html>
