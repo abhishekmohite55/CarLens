@@ -86,6 +86,17 @@ cd backend
 python -m pytest -q
 ```
 
+## Frontend (tester app + admin app)
+
+`frontend/` is one React + Vite + TypeScript + Tailwind project with two apps: the tester app at `/` (built in the frontend chat) and the admin app at `/admin/`. Needs Node.js 20 or newer. The backend must be running on port 8000 (container or venv).
+
+```
+cd frontend
+npm install        # first time, and after package.json changes
+npm run dev        # http://127.0.0.1:5173/admin/
+npm run build      # type check + production build into frontend/dist
+```
+
 ## CI
 
 Every push to GitHub runs `.github/workflows/ci.yml`: **lint** (ruff, pyflakes rules), **test** (`pytest` against a throwaway Postgres 17) and **image** (`docker build` of the backend). `main` only accepts a pull request whose 3 checks are green.
