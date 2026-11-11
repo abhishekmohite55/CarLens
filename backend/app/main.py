@@ -15,7 +15,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
-from .auth import NO_STORE, AuthError, require_admin, require_approved, signed_in_user
+from .auth import NO_STORE, AuthError, SignedIn, require_admin, require_approved, signed_in_user
 from .auth_routes import router as auth_router
 from .config import get_config
 from .events import sse_stream
@@ -41,10 +41,10 @@ from .nodes.report import run_report
 from .nodes.report import try_claim as report_try_claim
 from .nodes.verify import try_claim as verify_try_claim
 from .llm.tracing import _get_client as _warmup_tracing
-from .nodes.upload import process_upload
+from .nodes.upload import DuplicateUpload, clean_old_pending, drop_pending, process_upload, start_pending
 from .db import get_engine
 from .results import FILES as RESULT_FILES, delete_results, load_result
-from .run_index import close_open_rows, interrupted_nodes
+from .run_index import RunRefused, close_open_rows, interrupted_nodes, other_active_run, run_owner, user_runs
 from .runs import append_event, events_path, failed_at, run_dir
 
 # run_ids that have started or are starting the graph
@@ -56,6 +56,7 @@ async def _lifespan(app: FastAPI):
     """Runs once when the server starts (before the first request), then the server runs."""
     _warmup_tracing()
     _mark_interrupted()
+    clean_old_pending()
     yield
 
 
@@ -68,8 +69,21 @@ _ADMIN = [Depends(require_admin)]
 _APPROVED = [Depends(require_approved)]
 
 
+def run_access(run_id: str, user: SignedIn = Depends(require_approved)) -> SignedIn:
+    """The admin opens every run; a tester only their own. Someone else's run answers 404, so ids cannot be probed."""
+    if user.role != "admin":
+        exists, owner = run_owner(run_id)
+        if not exists or owner != user.id:
+            raise AuthError(404, "not_found", "Run not found.")
+    return user
+
+
+_RUN = [Depends(run_access)]
+
+
 @app.exception_handler(AuthError)
-def _auth_error(request: Request, exc: AuthError):
+@app.exception_handler(RunRefused)
+def _auth_error(request: Request, exc: AuthError | RunRefused):
     return JSONResponse(status_code=exc.status, content={"error": {"code": exc.code, "message": exc.message}})
 
 
@@ -123,12 +137,37 @@ def api_config():
     }
 
 
-@app.post("/api/runs", dependencies=_ADMIN)
-async def api_create_run(video: UploadFile = File(...)):
-    return await process_upload(video)
+@app.post("/api/runs")
+async def api_create_run(video: UploadFile = File(...), user: SignedIn = Depends(require_approved)):
+    """Upload → new run. Testers: 1 token, one run at a time, same video again asks first (05-login.md §7.2, §7.3)."""
+    try:
+        return await process_upload(video, user.id, is_admin=user.role == "admin")
+    except DuplicateUpload as dup:
+        return JSONResponse(status_code=409, content={
+            "error": {"code": "same_video", "message": "You uploaded this video before. Open the old run, or start a fresh run (1 token)."},
+            "duplicate_of": dup.duplicate_of, "pending_id": dup.pending_id})
 
 
-@app.get("/api/runs/{run_id}", dependencies=_ADMIN)
+@app.get("/api/runs")
+def api_list_runs(user: SignedIn = Depends(require_approved)):
+    """The signed-in user's runs, newest first (the admin sees every run)."""
+    return {"runs": user_runs(None if user.role == "admin" else user.id)}
+
+
+@app.post("/api/uploads/{pending_id}/start")
+def api_start_pending(pending_id: str, user: SignedIn = Depends(require_approved)):
+    """Same video again → "fresh run": the kept upload becomes a new run (1 token)."""
+    return start_pending(pending_id, user.id)
+
+
+@app.delete("/api/uploads/{pending_id}")
+def api_drop_pending(pending_id: str, user: SignedIn = Depends(require_approved)):
+    """Same video again → "open old run": the kept upload is deleted, no token spent."""
+    drop_pending(pending_id, user.id)
+    return {"ok": True}
+
+
+@app.get("/api/runs/{run_id}", dependencies=_RUN)
 def api_get_run(run_id: str):
     rd = run_dir(run_id)
     if not rd.exists():
@@ -179,7 +218,7 @@ def _has_locate_event(run_id: str) -> bool:
     return False
 
 
-@app.get("/api/runs/{run_id}/events", dependencies=_ADMIN)
+@app.get("/api/runs/{run_id}/events", dependencies=_RUN)
 async def api_run_events(run_id: str):
     rd = run_dir(run_id)
     if not rd.exists():
@@ -234,12 +273,14 @@ def api_run_locate(run_id: str):
     return {"started": True}
 
 
-@app.post("/api/runs/{run_id}/resume", status_code=202, dependencies=_ADMIN)
-def api_resume(run_id: str):
-    """Start the pipeline again at the node the run stopped at, then carry on to the end."""
+@app.post("/api/runs/{run_id}/resume", status_code=202)
+def api_resume(run_id: str, user: SignedIn = Depends(run_access)):
+    """Start the pipeline again at the node the run stopped at, then carry on to the end. Free (no token)."""
     rd = run_dir(run_id)
     if not rd.exists():
         raise HTTPException(404, detail=f"Run '{run_id}' not found.")
+    if user.role != "admin" and other_active_run(user.id, run_id):
+        raise RunRefused(409, "run_in_progress", "You already have a run in progress. Wait until it is finished.")
     node = failed_at(run_id)
     if node is None:
         return JSONResponse(status_code=409, content={
@@ -325,7 +366,7 @@ _confirming: set[str] = set()
 _confirm_lock = threading.Lock()
 
 
-@app.post("/api/runs/{run_id}/confirm/start", dependencies=_ADMIN)
+@app.post("/api/runs/{run_id}/confirm/start", dependencies=_RUN)
 def api_confirm_start(run_id: str):
     """Dev (used by /inspector): show the confirm step on a run whose graph already ended after verify."""
     rd = run_dir(run_id)
@@ -347,7 +388,7 @@ def api_confirm_start(run_id: str):
     return {"started": True}
 
 
-@app.post("/api/runs/{run_id}/confirm", dependencies=_ADMIN)
+@app.post("/api/runs/{run_id}/confirm", dependencies=_RUN)
 def api_confirm(run_id: str, answer: ConfirmAnswer):
     rd = run_dir(run_id)
     if not rd.exists():
@@ -395,7 +436,7 @@ def _photo_guard(run_id: str, slot: str):
     return rd, None
 
 
-@app.post("/api/runs/{run_id}/photos/{slot}", dependencies=_ADMIN)
+@app.post("/api/runs/{run_id}/photos/{slot}", dependencies=_RUN)
 async def api_upload_photo(run_id: str, slot: str, photo: UploadFile = File(...)):
     """Stage 6: one extra photo per slot (front_left, front_right, rear_left, rear_right, odometer); replaces the old one."""
     rd, err = _photo_guard(run_id, slot)
@@ -408,7 +449,7 @@ async def api_upload_photo(run_id: str, slot: str, photo: UploadFile = File(...)
     return {"saved": f"05_photos/{slot}.jpg"}
 
 
-@app.delete("/api/runs/{run_id}/photos/{slot}", dependencies=_ADMIN)
+@app.delete("/api/runs/{run_id}/photos/{slot}", dependencies=_RUN)
 def api_delete_photo(run_id: str, slot: str):
     rd, err = _photo_guard(run_id, slot)
     if err:
@@ -525,7 +566,7 @@ def api_cities(state: str = ""):
     return sorted(out, key=lambda c: c["city"])
 
 
-@app.get("/api/runs/{run_id}/files/{path:path}", dependencies=_ADMIN)
+@app.get("/api/runs/{run_id}/files/{path:path}", dependencies=_RUN)
 def api_run_file(run_id: str, path: str):
     rd = run_dir(run_id)
     if not rd.exists():

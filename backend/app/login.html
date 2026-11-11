@@ -17,6 +17,13 @@
   #msg { margin-top: 12px; min-height: 18px; color: #f88; font-size: 13px; }
   #signedin a { color: #8bf; }
   .hidden { display: none; }
+  #tester { margin-top: 20px; border-top: 1px solid #333; padding-top: 10px; }
+  #tester h2 { font-size: 15px; }
+  #runs { list-style: none; padding: 0; font-size: 13px; }
+  #runs li { padding: 6px 0; border-bottom: 1px solid #222; }
+  #runs button, #dup button { margin: 4px 6px 0 0; padding: 4px 10px; font-size: 12px; }
+  #live { font-size: 12px; color: #9c9; min-height: 16px; }
+  .box { width: 360px; }
 </style>
 </head>
 <body>
@@ -45,6 +52,20 @@
     <p id="state"></p>
     <p id="adminLink" class="hidden"><a href="/inspector">Open the inspector</a></p>
     <button id="logout">Sign out</button>
+
+    <!-- Tester test section (stage 5.3, owner option a): until the frontend exists. Same API the frontend will use. -->
+    <div id="tester" class="hidden">
+      <h2>Your runs (test section)</h2>
+      <input id="video" type="file" accept="video/*">
+      <button id="upload">Upload</button>
+      <div id="dup" class="hidden">
+        <p>You uploaded this video before.</p>
+        <button id="openOld">Open the old run (free)</button>
+        <button id="fresh">Start a fresh run (1 token)</button>
+      </div>
+      <div id="live"></div>
+      <ul id="runs"></ul>
+    </div>
   </div>
 
   <div id="msg"></div>
@@ -68,7 +89,95 @@ function show(me) {
   $("who").textContent = me.email;
   $("state").textContent = stateText(me);
   $("adminLink").classList.toggle("hidden", me.role !== "admin");
+  const tester = me.role !== "admin" && me.status === "approved";
+  $("tester").classList.toggle("hidden", !tester);
+  if (tester) loadRuns();
 }
+
+// --- tester test section (stage 5.3) ---
+let pendingId = null, oldRunId = null, source = null;
+
+async function refreshMe() {
+  const r = await fetch("/api/auth/me");
+  if (r.ok) $("state").textContent = stateText(await r.json());
+}
+
+async function loadRuns() {
+  const r = await fetch("/api/runs");
+  if (!r.ok) return;
+  const list = $("runs");
+  list.innerHTML = "";
+  for (const run of (await r.json()).runs) {
+    const li = document.createElement("li");
+    li.textContent = `${run.file} · ${run.status}${run.failed_at ? " at " + run.failed_at : ""} · ${run.created_at.slice(0, 16).replace("T", " ")} `;
+    const watch = document.createElement("button");
+    watch.textContent = "Watch";
+    watch.onclick = () => watchRun(run.run_id);
+    li.appendChild(watch);
+    if (run.status === "failed") {
+      const resume = document.createElement("button");
+      resume.textContent = "Resume (free)";
+      resume.onclick = async () => {
+        const res = await fetch(`/api/runs/${run.run_id}/resume`, { method: "POST" });
+        if (res.ok) watchRun(run.run_id); else showError(await res.json());
+      };
+      li.appendChild(resume);
+    }
+    list.appendChild(li);
+  }
+}
+
+function showError(data) {
+  $("msg").textContent = data.error ? data.error.message : (data.detail && data.detail.error ? data.detail.error.message : "That did not work.");
+}
+
+// Opening the event stream also starts a new run's pipeline (as in the inspector).
+function watchRun(runId) {
+  if (source) source.close();
+  $("live").textContent = `Run ${runId}: connecting…`;
+  source = new EventSource(`/api/runs/${runId}/events`);
+  source.onmessage = e => {
+    const ev = JSON.parse(e.data);
+    $("live").textContent = `Run ${runId}: ${ev.node} ${ev.type}`;
+    if (ev.node === "pipeline" && ev.type === "run_done") {
+      $("live").textContent = `Run ${runId}: finished (${ev.data.status})`;
+      source.close(); source = null; loadRuns(); refreshMe();
+    }
+  };
+}
+
+async function afterStart(res) {
+  const data = await res.json();
+  if (res.ok) { $("dup").classList.add("hidden"); refreshMe(); loadRuns(); watchRun(data.run_id); return; }
+  if (data.error && data.error.code === "same_video") {
+    pendingId = data.pending_id; oldRunId = data.duplicate_of;
+    $("dup").classList.remove("hidden");
+    return;
+  }
+  showError(data);
+}
+
+$("upload").addEventListener("click", async () => {
+  const file = $("video").files[0];
+  if (!file) return;
+  $("msg").textContent = "";
+  $("live").textContent = "Uploading… (large videos take a while)";
+  const form = new FormData();
+  form.append("video", file);
+  await afterStart(await fetch("/api/runs", { method: "POST", body: form }));
+  if ($("live").textContent.startsWith("Uploading")) $("live").textContent = "";
+});
+
+$("openOld").addEventListener("click", async () => {
+  await fetch(`/api/uploads/${pendingId}`, { method: "DELETE" });
+  $("dup").classList.add("hidden");
+  watchRun(oldRunId);
+});
+
+$("fresh").addEventListener("click", async () => {
+  $("msg").textContent = "";
+  await afterStart(await fetch(`/api/uploads/${pendingId}/start`, { method: "POST" }));
+});
 
 async function post(url, body) {
   const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
