@@ -1,6 +1,7 @@
 # Dev database for the laptop (platform step 1) and the backend image (step 3).
 # Daily work: docker compose up -d postgres pgadmin (backend from its venv).
-# Prove the image: docker compose up -d (stop the venv server first: both use port 8000).
+# Prove the images: docker compose up -d (stop the venv server first: both use port 8000).
+# Frontend container: http://127.0.0.1:8080 (step 6.5); daily frontend work stays on npm run dev (:5173).
 # Values in ${...} come from .env next to this file (see .env.example).
 services:
   postgres:
@@ -52,6 +53,14 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+
+  frontend: # platform step 6.5: nginx serves the admin and tester apps and passes /api to the backend
+    build:
+      context: ./frontend
+    ports:
+      - "127.0.0.1:8080:80" # open http://127.0.0.1:8080/admin
+    depends_on:
+      - backend
 
 volumes:
   pgdata:
