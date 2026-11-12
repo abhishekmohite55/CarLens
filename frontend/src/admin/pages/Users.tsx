@@ -64,7 +64,7 @@ export function Users() {
   return (
     <div>
       <h1 className="mb-4 text-xl font-semibold">Users & requests</h1>
-      <div className="mb-4 flex gap-2">
+      <div className="mb-4 flex flex-wrap gap-2">
         {FILTERS.map((f) => (
           <button key={f || "all"} onClick={() => setStatus(f)}
             className={`rounded px-3 py-1 text-sm ${status === f ? "bg-neutral-700 text-white" : "bg-neutral-900 text-neutral-400"}`}>

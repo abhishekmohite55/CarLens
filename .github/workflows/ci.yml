@@ -1,9 +1,10 @@
-# CI (platform step 4, docs/platform/04-ci-tests.md): lint, tests with Postgres, backend image build.
-# Runs on every push and on pull requests into main. main only accepts a PR whose 3 checks are green.
+# CI (platform step 4, docs/platform/04-ci-tests.md): lint, tests with Postgres, backend image build;
+# frontend type check + build and frontend image build (step 6.5).
+# Runs on pull requests into main only (owner, 12 Nov 2026): one branch and one PR per platform step, so CI runs
+# once per step (and again for each fix pushed to that PR), not for every stage commit.
 name: CI
 
 on:
-  push:
   pull_request:
     branches: [main]
 
@@ -54,3 +55,20 @@ jobs:
       - uses: actions/checkout@v7
       # Plain docker build: compose would need .env. The image never needs it. Not pushed (CD, step 9).
       - run: docker build -f backend/Dockerfile --build-arg GIT_COMMIT=${GITHUB_SHA::7} -t carlens-backend:ci .
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24.20.0" # same as the laptop and the image
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run build # type check (tsc) + both apps (vite)
+      # The image too, so a broken Dockerfile or nginx.conf shows here. Not pushed (CD, step 9).
+      - run: docker build -t carlens-frontend:ci .

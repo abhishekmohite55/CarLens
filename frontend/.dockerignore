@@ -1,0 +1,4 @@
+# Build context for frontend/Dockerfile: the image builds from source, so local installs and builds stay out.
+node_modules
+dist
+*.log

@@ -11,7 +11,7 @@ export function Button({ children, onClick, kind = "plain", disabled }: {
     danger: "bg-red-700 text-white hover:bg-red-600",
   }[kind];
   return (
-    <button disabled={disabled} onClick={onClick} className={`rounded px-2 py-1 text-xs disabled:opacity-40 ${colors}`}>
+    <button disabled={disabled} onClick={onClick} className={`rounded-full px-3 py-1 text-xs transition-colors disabled:opacity-40 ${colors}`}>
       {children}
     </button>
   );
@@ -27,7 +27,7 @@ export function Badge({ text }: { text: string }) {
     complete: "bg-green-900 text-green-200", partial: "bg-neutral-700 text-neutral-200", failed: "bg-red-900 text-red-200",
     done: "bg-green-900 text-green-200", skipped: "bg-neutral-700 text-neutral-300", admin: "bg-blue-900 text-blue-200",
   };
-  return <span className={`rounded px-2 py-0.5 text-xs ${colors[text] ?? "bg-neutral-800 text-neutral-300"}`}>{LABELS[text] ?? text}</span>;
+  return <span className={`rounded-full px-2.5 py-0.5 text-xs ${colors[text] ?? "bg-neutral-800 text-neutral-300"}`}>{LABELS[text] ?? text}</span>;
 }
 
 export function when(iso: string | null): string {
@@ -60,5 +60,5 @@ export function useLoad<T>(load: () => Promise<T>) {
   return { data, error, reload, act };
 }
 
-export const th = "border-b border-neutral-800 px-3 py-2 text-left text-xs font-medium uppercase text-neutral-500";
+export const th = "border-b border-neutral-800 px-3 py-2 text-left text-xs font-medium text-neutral-500";
 export const td = "border-b border-neutral-900 px-3 py-2 align-top text-sm";

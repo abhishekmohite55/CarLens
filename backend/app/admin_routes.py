@@ -1,12 +1,14 @@
 """/api/admin/* (platform step 6, docs/platform/06-admin.md §6). Admin only; every change is audited."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from typing import Any
+
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 
-from . import admin_data
+from . import admin_data, settings_store
 from .auth import SignedIn, require_admin
-from .graph import forget_run
+from .graph import ORDER, forget_run
 from .runs import run_dir
 
 router = APIRouter(prefix="/api/admin")
@@ -86,3 +88,96 @@ def remove_run(run_id: str, admin: SignedIn = Depends(require_admin)):
 @router.get("/audit")
 def audit(action: str | None = None, admin: SignedIn = Depends(require_admin)):
     return {"entries": admin_data.list_audit(action)}
+
+
+# --- config and prompts (stage 6.3): versions in the database; a save applies to runs that start from now ---
+
+class ConfigBody(BaseModel):
+    data: dict[str, Any]
+    note: str | None = None
+
+
+class PromptBody(BaseModel):
+    text: str
+    note: str | None = None
+
+
+def _origin(request: Request) -> str | None:
+    return request.headers.get("origin")
+
+
+@router.get("/config")
+def config(admin: SignedIn = Depends(require_admin)):
+    return {**settings_store.get_config_version(),
+            "options": {"stop_after": ORDER, "providers": list(settings_store.PROVIDERS)}}
+
+
+@router.get("/config/versions")
+def config_versions(admin: SignedIn = Depends(require_admin)):
+    return {"versions": settings_store.list_config_versions()}
+
+
+@router.get("/config/versions/{version_id}")
+def config_version(version_id: int, admin: SignedIn = Depends(require_admin)):
+    return settings_store.get_config_version(version_id)
+
+
+@router.put("/config")
+def save_config(body: ConfigBody, request: Request, admin: SignedIn = Depends(require_admin)):
+    return {"version": settings_store.save_config(admin.id, body.data, body.note, ORDER, _origin(request))}
+
+
+@router.post("/config/rollback/{version_id}")
+def rollback_config(version_id: int, request: Request, admin: SignedIn = Depends(require_admin)):
+    return {"version": settings_store.rollback_config(admin.id, version_id, ORDER, _origin(request))}
+
+
+@router.post("/config/import")
+def import_config(request: Request, admin: SignedIn = Depends(require_admin)):
+    return {"version": settings_store.import_config(admin.id, ORDER, _origin(request))}
+
+
+@router.get("/prompts")
+def prompts(admin: SignedIn = Depends(require_admin)):
+    return {"prompts": settings_store.list_prompts()}
+
+
+@router.get("/prompts/{name}")
+def prompt(name: str, version: int | None = None, admin: SignedIn = Depends(require_admin)):
+    return settings_store.get_prompt(name, version)
+
+
+@router.put("/prompts/{name}")
+def save_prompt(name: str, body: PromptBody, admin: SignedIn = Depends(require_admin)):
+    version_id = settings_store.save_prompt(admin.id, name, body.text, body.note)
+    return {"version": settings_store.prompt_number(name, version_id)}
+
+
+@router.post("/prompts/{name}/rollback/{version_id}")
+def rollback_prompt(name: str, version_id: int, admin: SignedIn = Depends(require_admin)):
+    new_id = settings_store.rollback_prompt(admin.id, name, version_id)
+    return {"version": settings_store.prompt_number(name, new_id)}
+
+
+@router.post("/prompts/{name}/import")
+def import_prompt(name: str, admin: SignedIn = Depends(require_admin)):
+    new_id = settings_store.import_prompt(admin.id, name)
+    return {"version": settings_store.prompt_number(name, new_id)}
+
+
+# --- dashboard and tables (stage 6.4) ---
+
+@router.get("/dashboard")
+def dashboard(days: int = 30, admin: SignedIn = Depends(require_admin)):
+    return admin_data.dashboard(days)
+
+
+@router.get("/tables")
+def tables(admin: SignedIn = Depends(require_admin)):
+    return {"tables": admin_data.list_tables()}
+
+
+@router.get("/tables/{name}")
+def table(name: str, page: int = 1, sort: str | None = None, desc: bool = True, search: str | None = None,
+          column: str | None = None, value: str | None = None, admin: SignedIn = Depends(require_admin)):
+    return admin_data.table_rows(name, page, sort, desc, search, column, value)

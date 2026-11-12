@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from tavily import TavilyClient
 
-from ..config import get_config
+from ..config import get_config, pinned
 from ..results import load_result, save_result
 from ..runs import append_event
 from ..search import dedupe_urls, flatten_queries, search_totals
@@ -58,6 +58,7 @@ def search_all(items: list[dict], client: TavilyClient, emit=None) -> tuple[list
     return done, round(time.perf_counter() - started, 2)
 
 
+@pinned
 def run_search(run_id: str, claimed: bool = False) -> None:
     if not claimed and not try_claim(run_id):
         log.warning("search already running for %s", run_id)

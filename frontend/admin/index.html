@@ -5,6 +5,18 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="robots" content="noindex" />
     <title>CarLens admin</title>
+    <!-- Admin typefaces (dashboard design, 12 Nov): Bricolage Grotesque for headings and figures, Hanken Grotesk for text -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300;12..96,400;12..96,500;12..96,600&family=Hanken+Grotesk:wght@400;500;600&display=swap" rel="stylesheet" />
+    <!-- Theme before the first paint, so a light-theme admin does not flash dark (src/admin/theme.tsx keeps it after). -->
+    <script>
+      try {
+        var t = localStorage.getItem("carlens-admin-theme");
+        document.documentElement.dataset.theme = t === "light" || t === "dark" ? t
+          : matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <div id="root"></div>

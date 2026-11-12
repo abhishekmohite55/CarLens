@@ -122,8 +122,8 @@ auth: # platform step 5 sign-in (docs/platform/05-login.md)
   lockout_minutes: 15
   max_signups_per_hour: 5 # new accounts per internet address (stage 5.2)
   cookie_secure: false # true on AWS (https); false on the laptop (http)
-  allowed_origins: # :5173 = frontend dev server (npm run dev)
-    ["http://127.0.0.1:8000", "http://localhost:8000", "http://127.0.0.1:5173", "http://localhost:5173"]
+  allowed_origins: # :5173 = frontend dev server (npm run dev), :8080 = frontend container
+    ["http://127.0.0.1:8000", "http://localhost:8000", "http://127.0.0.1:5173", "http://localhost:5173", "http://127.0.0.1:8080", "http://localhost:8080"]
 
 access: # access requests (platform step 6)
   default_tokens: 5 # runs given when the owner approves a request

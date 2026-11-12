@@ -4,17 +4,19 @@ Every change writes its audit_log row in the same transaction. Rules live here, 
 """
 from __future__ import annotations
 
+import json
+import os
 import shutil
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import delete, func, insert, select, update
+from sqlalchemy import String, Table, Text, cast, delete, false, func, insert, or_, select, text, update
 from sqlalchemy.engine import Connection
 
 from .auth import AuthError, hash_password
 from .config import get_config
 from .db import require_engine
-from .models import AuditLog, NodeRun, Run, RunEvent, Session, User
+from .models import AuditLog, Base, NodeRun, Run, RunEvent, Session, User
 from .users import MIN_PASSWORD
 
 
@@ -204,3 +206,127 @@ def list_audit(action: str | None = None, limit: int = 200) -> list[dict[str, An
     with require_engine().connect() as conn:
         return [{"id": r.id, "at": _iso(r.at), "admin": r.email, "action": r.action, "target": r.target,
                  "details": r.details} for r in conn.execute(q)]
+
+
+# --- dashboard (stage 6.4, 06-admin.md §6.6) ---
+
+AI_NODES = ("verify", "photos", "plan", "extract")
+TAVILY_FREE_CREDITS = 1000  # Tavily free plan per month (basic search = 1 credit per query)
+
+
+def dashboard(days: int = 30) -> dict[str, Any]:
+    """Numbers for the admin dashboard over the last `days` days (status counts and access: now)."""
+    days = max(1, min(days, 365))
+    with require_engine().connect() as conn:
+        def rows(sql: str, **params) -> list[dict]:
+            return [dict(r._mapping) for r in conn.execute(text(sql), {"days": days, **params})]
+
+        runs_per_day = rows("""
+            SELECT (created_at AT TIME ZONE 'Asia/Kolkata')::date::text AS day, status, count(*) AS n
+            FROM runs WHERE created_at > now() - make_interval(days => :days)
+            GROUP BY 1, 2 ORDER BY 1""")
+        steps = rows("""
+            SELECT node,
+                   count(*) FILTER (WHERE status = 'done') AS done,
+                   count(*) FILTER (WHERE status = 'failed') AS failed,
+                   round(avg(extract(epoch FROM finished_at - started_at)) FILTER (WHERE status = 'done')::numeric, 1) AS avg_sec,
+                   round(max(extract(epoch FROM finished_at - started_at)) FILTER (WHERE status = 'done')::numeric, 1) AS max_sec
+            FROM node_runs WHERE started_at > now() - make_interval(days => :days) AND node NOT IN ('upload', 'confirm')
+            GROUP BY node""")
+        last_errors = rows("""
+            SELECT node, run_id, error, finished_at::text AS at FROM node_runs
+            WHERE status = 'failed' AND started_at > now() - make_interval(days => :days)
+            ORDER BY finished_at DESC NULLS LAST LIMIT 10""")
+        models = rows("""
+            SELECT node, data->'answered_by'->>'model' AS model,
+                   count(*) AS answers,
+                   count(*) FILTER (WHERE jsonb_array_length(coalesce(data->'attempts', '[]')) > 1) AS after_fallback
+            FROM node_results
+            WHERE name = 'response.json' AND node = ANY(:nodes) AND saved_at > now() - make_interval(days => :days)
+            GROUP BY 1, 2 ORDER BY 1, 3 DESC""", nodes=list(AI_NODES))
+        tavily = conn.execute(text("""
+            SELECT coalesce(sum((SELECT count(*) FROM plan_queries q WHERE q.run_id = n.run_id)), 0)
+            FROM node_runs n
+            WHERE n.node = 'search' AND n.status = 'done'
+              AND n.started_at >= date_trunc('month', now() AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata'""")).scalar_one()
+        access = rows("""
+            SELECT count(*) FILTER (WHERE status = 'pending' AND role = 'tester') AS pending,
+                   count(*) FILTER (WHERE status = 'approved' AND role = 'tester') AS approved,
+                   count(*) FILTER (WHERE locked_until > now()) AS locked
+            FROM users""")[0]
+        tokens = rows("""
+            SELECT u.email, u.tokens AS tokens_left, count(r.id) AS runs
+            FROM users u LEFT JOIN runs r ON r.user_id = u.id
+            WHERE u.role = 'tester' AND u.status = 'approved'
+            GROUP BY u.id ORDER BY runs DESC, u.email LIMIT 50""")
+        prices = rows("""
+            SELECT coalesce(p.status, 'none') AS status, count(*) AS n FROM prices p JOIN runs r ON r.id = p.run_id
+            WHERE r.created_at > now() - make_interval(days => :days) GROUP BY 1""")
+        now_runs = rows("""
+            SELECT r.id AS run_id, r.status, r.original_filename AS file, u.email AS user, r.updated_at::text AS since
+            FROM runs r LEFT JOIN users u ON u.id = r.user_id
+            WHERE r.status IN ('uploaded', 'running', 'awaiting_confirm') ORDER BY r.updated_at DESC LIMIT 50""")
+    langfuse = os.environ.get("LANGFUSE_HOST", "").strip() or None
+    return {"days": days, "runs_per_day": runs_per_day, "steps": steps, "last_errors": last_errors, "models": models,
+            "tavily": {"queries_this_month": int(tavily), "free_credits": TAVILY_FREE_CREDITS,
+                       "note": "approximate: search runs this month x their plan queries (1 credit each, basic)"},
+            "access": access, "tokens": tokens, "prices": prices, "in_progress": now_runs, "langfuse_url": langfuse}
+
+
+# --- table browser (stage 6.4, 06-admin.md §6.7): read-only, allow-listed tables, secrets masked ---
+
+SECRET_COLUMNS = {("users", "password_hash"), ("users", "totp_secret"), ("sessions", "key_hash")}
+PAGE_SIZE = 50
+CELL_CHARS = 400  # long text / JSON cells are cut in the list (full JSON: the run's files in the Runs page)
+
+
+def _table(name: str) -> Table:
+    table = Base.metadata.tables.get(name)
+    if table is None:
+        raise AuthError(404, "not_found", "Unknown table.")
+    return table
+
+
+def list_tables() -> list[dict[str, Any]]:
+    with require_engine().connect() as conn:
+        return [{"name": name, "rows": conn.execute(select(func.count()).select_from(t)).scalar_one(),
+                 "columns": [c.name for c in t.columns]}
+                for name, t in sorted(Base.metadata.tables.items())]
+
+
+def _cell(table: str, column: str, value: Any) -> Any:
+    if (table, column) in SECRET_COLUMNS:
+        return None if value is None else "•••"
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, (dict, list)):
+        value = json.dumps(value, ensure_ascii=False)
+    if isinstance(value, str) and len(value) > CELL_CHARS:
+        return value[:CELL_CHARS] + f"… ({len(value):,} chars)"
+    return value
+
+
+def table_rows(name: str, page: int = 1, sort: str | None = None, desc: bool = True, search: str | None = None,
+               column: str | None = None, value: str | None = None) -> dict[str, Any]:
+    """One page of a table. sort / column must be real column names (checked); search looks in every text column."""
+    table = _table(name)
+    cols = {c.name: c for c in table.columns}
+    q = select(table)
+    if search:
+        texts = [c for c in table.columns if isinstance(c.type, (Text, String)) and (name, c.name) not in SECRET_COLUMNS]
+        q = q.where(or_(*[c.ilike(f"%{search}%") for c in texts])) if texts else q.where(false())
+    if column:
+        if column not in cols or (name, column) in SECRET_COLUMNS:
+            raise AuthError(400, "bad_column", f"No column {column} to filter on.")
+        q = q.where(cast(cols[column], Text).ilike(f"%{value or ''}%"))
+    order = cols.get(sort) if sort else next(iter(table.primary_key.columns), None)
+    if sort and order is None:
+        raise AuthError(400, "bad_column", f"No column {sort} to sort by.")
+    if order is not None:
+        q = q.order_by(order.desc() if desc else order.asc())
+    page = max(1, page)
+    with require_engine().connect() as conn:
+        total = conn.execute(select(func.count()).select_from(q.subquery())).scalar_one()
+        rows = conn.execute(q.limit(PAGE_SIZE).offset((page - 1) * PAGE_SIZE)).all()
+    return {"table": name, "columns": list(cols), "page": page, "page_size": PAGE_SIZE, "total": total,
+            "rows": [{k: _cell(name, k, v) for k, v in r._mapping.items()} for r in rows]}

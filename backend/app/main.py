@@ -48,6 +48,7 @@ from .results import FILES as RESULT_FILES, delete_results, load_result
 from .run_index import (RunRefused, close_open_rows, interrupted_nodes, latest_node_result, other_active_run, run_owner,
                         user_runs)
 from .runs import append_event, events_path, failed_at, run_dir
+from .settings_store import SettingsError, repin_run
 
 # run_ids that have started or are starting the graph
 _started: set[str] = set()
@@ -82,6 +83,13 @@ def run_access(run_id: str, user: SignedIn = Depends(require_approved)) -> Signe
 
 
 _RUN = [Depends(run_access)]
+
+
+@app.exception_handler(SettingsError)
+def _settings_error(request: Request, exc: SettingsError):
+    """A config or prompt save that was refused: every problem with its field."""
+    return JSONResponse(status_code=422, content={
+        "error": {"code": "invalid", "message": str(exc), "problems": exc.problems}})
 
 
 @app.exception_handler(AuthError)
@@ -245,6 +253,7 @@ def _single_step(run_id: str, node: str, step) -> None:
     run stayed "running" (owner check, 12 Nov). Now: run_done partial (stopped after this step) or failed at it.
     Skipped while the run's graph waits at confirm (its status stays awaiting_confirm)."""
     try:
+        repin_run(run_id)  # a new attempt uses the config and prompts active now (step 6.3)
         step(run_id, claimed=True)
     finally:
         if not is_paused(run_id):
@@ -310,6 +319,7 @@ def api_resume(run_id: str, user: SignedIn = Depends(run_access)):
                 "error": {"code": "already_running", "message": "This run is already running or waiting for confirm."}
             })
         _resuming.add(run_id)
+    repin_run(run_id)  # resume uses the config and prompts active now (step 6.3)
     _clear_node(rd, node)
 
     def _go():

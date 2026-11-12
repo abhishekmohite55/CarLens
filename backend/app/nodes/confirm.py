@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import select
 
-from ..config import get_config
+from ..config import get_config, pinned
 from ..confirm import build_payload, build_record
 from ..db import require_engine
 from ..models import RtoCode, State
@@ -44,6 +44,7 @@ def rto_rows() -> list[dict]:
             for code, number, state, city in rows if number.isdigit()]
 
 
+@pinned
 def start_confirm(run_id: str) -> dict | None:
     """Emit awaiting_confirm once and return the payload; None (node skipped) when verify has no answer."""
     saved = load_payload(run_id)
@@ -63,6 +64,7 @@ def start_confirm(run_id: str) -> dict | None:
     return payload
 
 
+@pinned
 def finish_confirm(run_id: str, payload: dict, answer: dict) -> dict:
     record = build_record(payload, answer, list_photos(run_dir(run_id) / "05_photos"))
     record["confirmed_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")

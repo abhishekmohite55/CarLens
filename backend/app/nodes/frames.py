@@ -11,7 +11,7 @@ from pathlib import Path
 
 import cv2
 
-from ..config import get_config
+from ..config import get_config, pinned
 from ..frames import best_frame, sample_indices, save_jpeg
 from ..results import delete_results, load_result, save_result
 from ..runs import append_event, run_dir
@@ -41,6 +41,7 @@ def load_locate_items(run_id: str) -> list | None:
     return parsed.get("items") if parsed else None
 
 
+@pinned
 def run_frames(run_id: str, claimed: bool = False) -> None:
     """claimed=True when the caller already holds try_claim(run_id)."""
     if not claimed and not try_claim(run_id):

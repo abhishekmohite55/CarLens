@@ -6,7 +6,7 @@ import logging
 import threading
 from datetime import datetime, timezone
 
-from ..config import get_config
+from ..config import get_config, pinned
 from ..report import build_report, inr
 from ..results import load_result, save_result
 from ..runs import append_event
@@ -27,6 +27,7 @@ def try_claim(run_id: str) -> bool:
         return True
 
 
+@pinned
 def run_report(run_id: str, claimed: bool = False) -> None:
     if not claimed and not try_claim(run_id):
         log.warning("report already running for %s", run_id)

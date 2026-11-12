@@ -64,8 +64,11 @@ def create_run_row(*, sha256: str, original_filename: str, size_bytes: int, dura
                    user_id: int | None = None, spend_token: bool = False) -> str:
     """Insert the runs row under a new random id and return the id. A clash draws a new id.
     spend_token (testers): in the same transaction, check one run at a time and take 1 token; raises RunRefused."""
+    from .settings_store import new_run_pins  # imported here: settings_store imports config and models too
+
     engine = require_engine()
     commit = git_commit()
+    config_id, prompt_ids = new_run_pins()  # the run keeps these versions (step 6.3)
     for _ in range(5):
         run_id = new_run_id()
         try:
@@ -80,7 +83,8 @@ def create_run_row(*, sha256: str, original_filename: str, size_bytes: int, dura
                     conn.execute(update(User).where(User.id == user_id).values(tokens=User.tokens - 1))
                 conn.execute(insert(Run).values(
                     id=run_id, video_sha256=sha256, original_filename=original_filename,
-                    size_bytes=size_bytes, duration_sec=duration_sec, git_commit=commit, user_id=user_id))
+                    size_bytes=size_bytes, duration_sec=duration_sec, git_commit=commit, user_id=user_id,
+                    config_version_id=config_id, prompt_version_ids=prompt_ids))
             return run_id
         except IntegrityError as exc:
             if getattr(getattr(exc.orig, "diag", None), "constraint_name", None) == "runs_pkey":
