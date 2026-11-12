@@ -88,7 +88,7 @@ python -m pytest -q
 
 ## Frontend (tester app + admin app)
 
-`frontend/` is one React + Vite + TypeScript + Tailwind project with two apps: the tester app at `/` (built in the frontend chat) and the admin app at `/admin/`. Needs Node.js 20 or newer. The backend must be running on port 8000 (container or venv).
+`frontend/` is one React + Vite + TypeScript + Tailwind project with two apps: the tester app at `/` (built in the frontend chat) and the admin app at `/admin/`. Needs Node.js 24 (the image and CI use 24.20.0). The backend must be running on port 8000 (container or venv).
 
 ```
 cd frontend
@@ -97,9 +97,11 @@ npm run dev        # http://127.0.0.1:5173/admin/
 npm run build      # type check + production build into frontend/dist
 ```
 
+Container (nginx, the same image AWS will run): `docker compose up -d --build frontend`, then **http://127.0.0.1:8080/admin/**. nginx serves both apps and passes `/api` to the backend container. To open it from a phone on the home Wi-Fi: `FRONTEND_BIND=0.0.0.0` in `.env`, add `http://<laptop IP>:8080` to `auth.allowed_origins` on the admin Config page, allow TCP 8080 in Windows firewall (Private networks). Plain HTTP: home Wi-Fi only.
+
 ## CI
 
-Every pull request into `main` runs `.github/workflows/ci.yml`: **lint** (ruff, pyflakes rules), **test** (`pytest` against a throwaway Postgres 17) and **image** (`docker build` of the backend). `main` only accepts a pull request whose 3 checks are green.
+Every pull request into `main` runs `.github/workflows/ci.yml`: **lint** (ruff, pyflakes rules), **test** (`pytest` against a throwaway Postgres 17), **image** (`docker build` of the backend) and **frontend** (`npm ci`, type check + build, `docker build` of the frontend). Merge a pull request only when all 4 checks are green.
 
 Same lint on the laptop (venv active, from the project root):
 
@@ -112,6 +114,6 @@ One branch per platform step; its stages are commits on that branch (pushing the
 
 ## Config
 
-- `config.yaml` (project root): models, limits and pricing settings. Changes apply without a restart.
+- Settings and prompts live in the database as versions, edited on the admin Config and Prompts pages (each save is checked, versioned and audited; a run keeps the versions active when it started). `config.yaml` and `prompts/*.md` are only the first version and the source for "Import": editing the files does not change the running app.
 - `.env`: API keys only. Restart the server after changing it.
 - `runs/` and `.env` are never committed.
