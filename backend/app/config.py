@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import logging
+import threading
+from contextlib import contextmanager
+from functools import wraps
 from pathlib import Path
 from threading import Lock
 from typing import Optional
@@ -13,7 +16,7 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent  # F:\CarLens
 
 load_dotenv(dotenv_path=PROJECT_ROOT / ".env")
 
-_CONFIG_PATH = PROJECT_ROOT / "config.yaml"
+_CONFIG_PATH = CONFIG_PATH = PROJECT_ROOT / "config.yaml"
 _lock = Lock()
 _mtime: float = -1.0
 _config: Optional["AppConfig"] = None
@@ -24,6 +27,8 @@ class ModelEntry(BaseModel):
     provider: str
     model: str
     fallback_model: Optional[str] = None
+    timeout_sec: Optional[int] = None  # this model only; empty = the chain's timeout (step 6.3)
+    temperature: Optional[float] = None  # this model only; empty = models.temperature
 
 
 class UploadConfig(BaseModel):
@@ -156,7 +161,68 @@ class AppConfig(BaseModel):
     access: AccessConfig = AccessConfig()
 
 
+# --- which config a caller gets (platform step 6.3, docs/platform/06-admin.md §6.1) ---
+# From step 6.3 the config lives in the database (settings_store): the newest version is active, and a run is
+# pinned to the version active when it started. config.yaml is the seed and the fallback without a database.
+
+_pin = threading.local()
+_parsed: dict[int, AppConfig] = {}
+
+
+@contextmanager
+def pinned_run(run_id: str | None):
+    """Inside this block, get_config() on this thread returns the config version pinned on the run."""
+    previous = getattr(_pin, "run_id", None)
+    _pin.run_id = run_id
+    try:
+        yield
+    finally:
+        _pin.run_id = previous
+
+
+def pinned(fn):
+    """Decorator for node entry points fn(run_id, ...): the node works with its run's config and prompts."""
+    @wraps(fn)
+    def wrapper(run_id, *args, **kwargs):
+        with pinned_run(run_id):
+            return fn(run_id, *args, **kwargs)
+    return wrapper
+
+
+def current_run_id() -> str | None:
+    return getattr(_pin, "run_id", None)
+
+
+def _from_version(version_id: int, data: dict) -> AppConfig:
+    if version_id not in _parsed:
+        if len(_parsed) > 50:
+            _parsed.clear()
+        _parsed[version_id] = AppConfig(**data)
+    return _parsed[version_id]
+
+
 def get_config() -> AppConfig:
+    """The config for this thread's pinned run, else the newest version, else config.yaml (no database)."""
+    from . import settings_store  # imported here: settings_store imports this module
+
+    run_id = current_run_id()
+    if run_id:
+        version_id = settings_store.pinned_ids(run_id)[0]
+        data = settings_store.config_version(version_id) if version_id else None
+        if data is not None:
+            return _from_version(version_id, data)
+    active = settings_store.active_config()
+    if active is None:
+        return file_config()
+    try:
+        return _from_version(*active)
+    except Exception as exc:  # a stored version this code can no longer read
+        logging.warning("config version %s not usable (%s); using config.yaml", active[0], exc)
+        return file_config()
+
+
+def file_config() -> AppConfig:
+    """config.yaml, re-read when the file changes."""
     global _mtime, _config, _last_valid
     with _lock:
         try:

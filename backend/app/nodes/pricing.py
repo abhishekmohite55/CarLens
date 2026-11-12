@@ -5,7 +5,7 @@ import logging
 import threading
 from datetime import datetime
 
-from ..config import get_config
+from ..config import get_config, pinned
 from ..pricing import price_report
 from ..results import load_result, save_result
 from ..runs import append_event
@@ -31,6 +31,7 @@ def pricing_settings() -> dict:
             "min_listing_age": p.min_listing_age, "tyre_minor_wear_deduction_inr": p.tyre_minor_wear_deduction_inr}
 
 
+@pinned
 def run_pricing(run_id: str, claimed: bool = False) -> None:
     if not claimed and not try_claim(run_id):
         log.warning("pricing already running for %s", run_id)

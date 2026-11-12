@@ -8,7 +8,8 @@ from datetime import datetime, timezone
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from ..config import PROJECT_ROOT, get_config
+from ..config import get_config, pinned
+from ..settings_store import load_prompt
 from ..extract import car_line, check_figures, drop_outliers, group_summary, render_trimmed, trim_results
 from ..llm.chat import ask_chain
 from ..llm.tracing import langchain_callbacks
@@ -42,9 +43,8 @@ def make_extract(trimmed: dict, text: str, car: dict, emit, callbacks: list, met
     cfg = get_config()
     entries = entries or cfg.models.extract_chain
     e = cfg.extract
-    prompts = PROJECT_ROOT / cfg.paths.prompts_dir
-    system_prompt = (prompts / "extract_prices.system.md").read_text(encoding="utf-8")
-    user_prompt = (prompts / "extract_prices.user.md").read_text(encoding="utf-8").format(trimmed_text=text)
+    system_prompt = load_prompt("extract_prices.system.md")
+    user_prompt = load_prompt("extract_prices.user.md").format(trimmed_text=text)
     request = {"node": "extract", "chain": [{"provider": m.provider, "model": m.model} for m in entries],
                "timeout_per_model_sec": cfg.models.extract_timeout_per_model_sec,
                "reasoning_effort": cfg.models.extract_reasoning_effort,
@@ -68,6 +68,7 @@ def make_extract(trimmed: dict, text: str, car: dict, emit, callbacks: list, met
     return {"request": request, "response": response, "figures": figures}
 
 
+@pinned
 def run_extract(run_id: str, claimed: bool = False) -> None:
     if not claimed and not try_claim(run_id):
         log.warning("extract already running for %s", run_id)

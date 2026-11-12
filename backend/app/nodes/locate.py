@@ -6,7 +6,8 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ..config import PROJECT_ROOT, get_config
+from ..config import get_config, pinned
+from ..settings_store import load_prompt
 from ..llm.gemini_video import call_gemini_video
 from ..llm.tracing import trace_locate
 from ..results import load_result, save_result
@@ -78,9 +79,7 @@ def _validate_locate_items(items: list, duration_sec: float) -> list:
 
 
 def _read_prompt(name: str) -> str:
-    cfg = get_config()
-    path = PROJECT_ROOT / cfg.paths.prompts_dir / name
-    return path.read_text(encoding="utf-8")
+    return load_prompt(name)
 
 
 _running: set[str] = set()
@@ -95,6 +94,7 @@ def try_claim(run_id: str) -> bool:
         return True
 
 
+@pinned
 def run_locate(run_id: str, claimed: bool = False) -> None:
     if not claimed and not try_claim(run_id):
         log.warning("locate already running for %s", run_id)
@@ -199,9 +199,9 @@ def _run_locate_inner(run_id: str) -> None:
             user_prompt=user_prompt,
             model=cfg.models.locate.model,
             fallback_model=cfg.models.locate.fallback_model,
-            temperature=cfg.models.temperature,
+            temperature=cfg.models.temperature if cfg.models.locate.temperature is None else cfg.models.locate.temperature,
             media_resolution=cfg.models.locate_media_resolution,
-            timeout_sec=cfg.models.timeout_sec,
+            timeout_sec=cfg.models.locate.timeout_sec or cfg.models.timeout_sec,
             emit=emit,
             response_schema=_RESPONSE_SCHEMA,
             thinking_level=cfg.models.locate_thinking_level,

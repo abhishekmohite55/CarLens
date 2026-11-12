@@ -8,7 +8,8 @@ from datetime import datetime, timezone
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from ..config import PROJECT_ROOT, get_config
+from ..config import get_config, pinned
+from ..settings_store import load_prompt
 from ..llm.chat import ask_chain
 from ..llm.tracing import langchain_callbacks
 from ..plan import (build_user_prompt, car_problem, check_plan, damage_findings, listing_queries,
@@ -59,9 +60,8 @@ def make_plan(confirm: dict, findings: list[dict], emit, callbacks: list, metada
     if not queries["llm_called"]:
         return {"request": None, "response": None, "queries": queries}
 
-    prompts = PROJECT_ROOT / cfg.paths.prompts_dir
-    system_prompt = (prompts / "plan_searches.system.md").read_text(encoding="utf-8")
-    user_prompt = build_user_prompt((prompts / "plan_searches.user.md").read_text(encoding="utf-8"),
+    system_prompt = load_prompt("plan_searches.system.md")
+    user_prompt = build_user_prompt(load_prompt("plan_searches.user.md"),
                                     confirm, damage, tyres, cfg.plan.queries_per_part)
     request = {"node": "plan", "chain": [{"provider": e.provider, "model": e.model} for e in cfg.models.plan_chain],
                "timeout_per_model_sec": cfg.models.plan_timeout_per_model_sec,
@@ -80,6 +80,7 @@ def make_plan(confirm: dict, findings: list[dict], emit, callbacks: list, metada
     return {"request": request, "response": response, "queries": queries}
 
 
+@pinned
 def run_plan(run_id: str, claimed: bool = False) -> None:
     if not claimed and not try_claim(run_id):
         log.warning("plan already running for %s", run_id)

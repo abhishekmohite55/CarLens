@@ -2,7 +2,8 @@
 // Errors come back as {"error": {"code", "message"}} (older routes: {"detail": {"error": ...}}).
 
 export class ApiError extends Error {
-  constructor(public status: number, public code: string, message: string) {
+  /** problems: the fields a refused config / prompt save names. */
+  constructor(public status: number, public code: string, message: string, public problems?: { field: string; message: string }[]) {
     super(message);
   }
 }
@@ -16,7 +17,7 @@ export async function api<T>(path: string, options: { method?: string; body?: un
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     const error = data.error ?? data.detail?.error ?? {};
-    throw new ApiError(response.status, error.code ?? "error", error.message ?? `Request failed (${response.status}).`);
+    throw new ApiError(response.status, error.code ?? "error", error.message ?? `Request failed (${response.status}).`, error.problems);
   }
   return data as T;
 }

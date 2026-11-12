@@ -48,6 +48,14 @@ def parse_json(raw: str) -> dict:
     return json.loads(m.group(1) if m else text)
 
 
+def own_settings(entry, chain_timeout: int, chain_temperature: float) -> tuple[int, float]:
+    """(timeout, temperature) for one model: its own values when set, else the chain's."""
+    timeout = getattr(entry, "timeout_sec", None)
+    temperature = getattr(entry, "temperature", None)
+    return (timeout if isinstance(timeout, (int, float)) and timeout > 0 else chain_timeout,
+            temperature if isinstance(temperature, (int, float)) else chain_temperature)
+
+
 def ask_chain(
     entries,
     build_messages: Callable,
@@ -71,12 +79,15 @@ def ask_chain(
     answered_by = None
     parsed_result = None
 
+    chain_temperature, chain_timeout = temperature, timeout_sec
     for n, entry in enumerate(entries, start=1):
+        # a model's own timeout / temperature wins over the chain's (config.yaml models, step 6.3)
+        timeout_sec, temperature = own_settings(entry, chain_timeout, chain_temperature)
         emit(f"[{n}/{len(entries)}] {entry.model}")
         attempt: dict = {"provider": entry.provider, "model": entry.model}
         box: dict = {}
 
-        def call(e=entry) -> None:
+        def call(e=entry, temperature=temperature, timeout_sec=timeout_sec) -> None:
             try:
                 msgs = build_messages(e)
                 m = make_chat_model(e.provider, e.model, temperature, timeout_sec, thinking_level, reasoning_effort)

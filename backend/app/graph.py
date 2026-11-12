@@ -11,7 +11,7 @@ from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 from sqlalchemy.engine import make_url
 
-from .config import get_config
+from .config import get_config, pinned_run
 from .db import database_url
 from .nodes.locate import run_locate
 from .nodes.frames import run_frames
@@ -99,15 +99,17 @@ def _past_stop(node: str) -> bool:
 
 def _after(state: GraphState, node: str, nxt: str) -> str:
     """Next node, or END when this node failed or the next one is past dev.stop_after."""
-    if state.get(f"{node}_status") == "failed" or nxt == END or _past_stop(nxt):
+    if state.get(f"{node}_status") == "failed" or nxt == END:
         return END
-    return nxt
+    with pinned_run(state.get("run_id")):  # the run's own config version (step 6.3)
+        return END if _past_stop(nxt) else nxt
 
 
 def _entry(state: GraphState) -> str:
     """Start node; END when it is past dev.stop_after (e.g. confirm by hand must not start photos … report)."""
     start = state.get("start_at") or "locate"
-    return END if _past_stop(start) else start
+    with pinned_run(state.get("run_id")):
+        return END if _past_stop(start) else start
 
 
 def _build_graph() -> object:

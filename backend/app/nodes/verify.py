@@ -8,7 +8,8 @@ from pathlib import Path
 
 import cv2
 
-from ..config import get_config, PROJECT_ROOT
+from ..config import get_config, pinned
+from ..settings_store import load_prompt
 from ..llm.chat import ask_chain, image_blocks
 from ..llm.tracing import langchain_callbacks
 from ..plate import normalise_plate, pick_plate, plates_in_texts
@@ -117,6 +118,7 @@ def validate_answer(parsed) -> str | None:
     return None
 
 
+@pinned
 def run_verify(run_id: str, claimed: bool = False) -> None:
     if not claimed and not try_claim(run_id):
         log.warning("verify already running for %s", run_id)
@@ -177,9 +179,8 @@ def _run_verify_inner(run_id: str) -> None:
 
     # --- Prompts ---
     cfg = get_config()
-    prompts_dir = PROJECT_ROOT / cfg.paths.prompts_dir
-    system_prompt = (prompts_dir / "verify.system.md").read_text(encoding="utf-8")
-    user_prompt = (prompts_dir / "verify.user.md").read_text(encoding="utf-8").format(
+    system_prompt = load_prompt("verify.system.md")
+    user_prompt = load_prompt("verify.user.md").format(
         frame_count=len(frame_dicts)
     )
 

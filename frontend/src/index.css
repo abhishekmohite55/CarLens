@@ -1,1 +1,86 @@
 @import "tailwindcss";
+
+/* Admin typefaces (loaded in admin/index.html); the tester app keeps the system font until the frontend chat. */
+@theme {
+  --font-display: "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif;
+  --font-admin: "Hanken Grotesk", ui-sans-serif, system-ui, sans-serif;
+}
+
+/* Admin theme tokens (owner, 12 Nov: light / dark switch). Utilities: bg-page, bg-card, bg-inset, text-ink, text-ink-2,
+   text-ink-3, border-line, text-accent, … The values change with <html data-theme>. */
+@theme inline {
+  --color-page: var(--t-page);
+  --color-card: var(--t-card);
+  --color-inset: var(--t-inset);
+  --color-ink: var(--t-ink);
+  --color-ink-2: var(--t-ink-2);
+  --color-ink-3: var(--t-ink-3);
+  --color-line: var(--t-line);
+  --color-accent: var(--t-accent);
+  --color-bad: var(--t-bad);
+  --shadow-card: var(--t-shadow);
+}
+
+:root,
+[data-theme="dark"] {
+  color-scheme: dark;
+  --t-page: #16181c;
+  --t-card: #1e2126;
+  --t-inset: #272b31;
+  --t-ink: #eef0f3;
+  --t-ink-2: #a4aab4;
+  --t-ink-3: #737a85;
+  --t-line: #2c3037;
+  --t-accent: #3987e5;
+  --t-bad: #e66767;
+  --t-shadow: 0 1px 0 0 #ffffff0a inset, 0 16px 32px -24px #000000cc;
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+  --t-page: #e9ebef;
+  --t-card: #ffffff;
+  --t-inset: #f2f3f6;
+  --t-ink: #16181c;
+  --t-ink-2: #555b66;
+  --t-ink-3: #868c97;
+  --t-line: #e3e5ea;
+  --t-accent: #2a78d6;
+  --t-bad: #c63a3a;
+  --t-shadow: 0 1px 2px 0 #1b1e230d, 0 16px 32px -24px #1b1e2340;
+
+  /* The other admin pages are written with Tailwind's dark neutral scale and -900 / -200 badge colours.
+     In the light theme those colours are turned around here, so each page needs no change of its own. */
+  --color-neutral-950: #e9ebef;
+  --color-neutral-900: #ffffff;
+  --color-neutral-800: #eceef1;
+  --color-neutral-700: #d9dce1;
+  --color-neutral-600: #a4a9b2;
+  --color-neutral-500: #7d838e;
+  --color-neutral-400: #555b66;
+  --color-neutral-300: #3d424b;
+  --color-neutral-200: #2a2e35;
+  --color-neutral-100: #16181c;
+  --color-green-900: #dcf2df;
+  --color-green-200: #17692a;
+  --color-green-400: #1d8a33;
+  --color-blue-900: #dde9fb;
+  --color-blue-200: #1d5fb0;
+  --color-red-900: #fbe2e2;
+  --color-red-200: #a32727;
+  --color-red-400: #c63a3a;
+  --color-amber-900: #fcefd0;
+  --color-amber-200: #865700;
+  --color-amber-400: #a86b00;
+  --color-purple-900: #ece8fd;
+  --color-purple-200: #5a46c4;
+}
+
+/* Light theme: white text on a (now light) selected pill becomes dark; row lines on white cards stay visible. */
+[data-theme="light"] .bg-neutral-800.text-white,
+[data-theme="light"] .bg-neutral-700.text-white {
+  color: #16181c;
+}
+[data-theme="light"] .border-neutral-900 {
+  border-color: #eef0f3;
+}

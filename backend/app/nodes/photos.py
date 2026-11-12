@@ -11,7 +11,8 @@ import cv2
 import numpy as np
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from ..config import PROJECT_ROOT, get_config
+from ..config import get_config, pinned
+from ..settings_store import load_prompt
 from ..frames import save_jpeg
 from ..llm.chat import ask_chain, image_blocks
 from ..llm.tracing import langchain_callbacks
@@ -64,6 +65,7 @@ def load_photos_answer(run_id: str) -> dict | None:
     return data.get("parsed") if data.get("answered_by") else None
 
 
+@pinned
 def run_photos(run_id: str) -> None:
     try:
         _run_photos_inner(run_id)
@@ -82,9 +84,8 @@ def _run_photos_inner(run_id: str) -> None:
     append_event(run_id, "photos", "node_started", {"label": f"Reading {len(photos)} extra photo(s)"})
     cfg = get_config()
     chain = cfg.models.photos_chain or cfg.models.verify_chain
-    prompts = PROJECT_ROOT / cfg.paths.prompts_dir
-    system_prompt = (prompts / "photos.system.md").read_text(encoding="utf-8")
-    user_prompt = (prompts / "photos.user.md").read_text(encoding="utf-8").format(photo_count=len(photos))
+    system_prompt = load_prompt("photos.system.md")
+    user_prompt = load_prompt("photos.user.md").format(photo_count=len(photos))
     frames = [{"file": f"{p['slot']}.jpg", "item_id": p["slot"],
                "category": "odometer" if p["slot"] == "odometer" else "tyre",
                "label": "odometer" if p["slot"] == "odometer" else p["slot"].replace("_", " ") + " tyre"} for p in photos]
