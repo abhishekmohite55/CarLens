@@ -49,13 +49,13 @@ export function Tables() {
   const pages = data ? Math.max(1, Math.ceil(data.total / data.page_size)) : 1;
 
   return (
-    <div className="flex gap-6">
-      <ul className="w-52 shrink-0 space-y-1">
+    <div className="flex flex-col gap-4 md:flex-row md:gap-6">
+      <ul className="no-scrollbar -mx-4 flex shrink-0 gap-1 overflow-x-auto px-4 md:mx-0 md:block md:w-52 md:space-y-1 md:overflow-visible md:px-0">
         {listError && <li className="text-sm text-red-400">{listError}</li>}
         {list?.tables.map((t) => (
           <li key={t.name}>
             <button onClick={() => open(t.name)}
-              className={`flex w-full justify-between rounded px-3 py-1 text-left font-mono text-xs ${table === t.name ? "bg-neutral-800 text-white" : "text-neutral-400 hover:bg-neutral-900"}`}>
+              className={`flex w-full justify-between gap-3 whitespace-nowrap rounded px-3 py-1 text-left font-mono text-xs ${table === t.name ? "bg-neutral-800 text-white" : "text-neutral-400 hover:bg-neutral-900"}`}>
               <span>{t.name}</span><span className="text-neutral-600">{t.rows}</span>
             </button>
           </li>
@@ -67,12 +67,12 @@ export function Tables() {
         {table && data && (
           <>
             <div className="mb-3 flex flex-wrap items-center gap-2">
-              <input className={`${input} w-64`} placeholder="Search text columns" value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} />
+              <input className={`${input} w-64 max-w-full`} placeholder="Search text columns" value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} />
               <select className={input} value={column} onChange={(e) => { setColumn(e.target.value); setPage(1); }}>
                 <option value="">filter column…</option>
                 {data.columns.map((c) => <option key={c}>{c}</option>)}
               </select>
-              {column && <input className={`${input} w-48`} placeholder="contains" value={value} onChange={(e) => { setValue(e.target.value); setPage(1); }} />}
+              {column && <input className={`${input} w-48 max-w-full`} placeholder="contains" value={value} onChange={(e) => { setValue(e.target.value); setPage(1); }} />}
               <span className="flex-1 text-right text-sm text-neutral-400">{data.total} rows</span>
               <Button disabled={page <= 1} onClick={() => setPage(page - 1)}>‹</Button>
               <span className="text-sm text-neutral-400">{page} / {pages}</span>

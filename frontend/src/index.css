@@ -84,3 +84,20 @@
 [data-theme="light"] .border-neutral-900 {
   border-color: #eef0f3;
 }
+
+/* Section capsule on a phone: swipes sideways without a scrollbar. */
+@utility no-scrollbar {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* Phones (owner, 12 Nov): a table wider than the screen scrolls sideways inside itself instead of widening the page. */
+@media (max-width: 767px) {
+  main table {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+  }
+}

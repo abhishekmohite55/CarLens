@@ -53,12 +53,12 @@ export function Prompts() {
   return (
     <div>
       <h1 className="mb-4 text-xl font-semibold">Prompts</h1>
-      <div className="flex gap-6">
-        <ul className="w-56 shrink-0 space-y-1">
+      <div className="flex flex-col gap-4 md:flex-row md:gap-6">
+        <ul className="no-scrollbar -mx-4 flex shrink-0 gap-1 overflow-x-auto px-4 md:mx-0 md:block md:w-56 md:space-y-1 md:overflow-visible md:px-0">
           {list.map((p) => (
             <li key={p.name}>
               <button onClick={() => (!dirty || window.confirm("Drop your unsaved changes?")) && open(p.name)}
-                className={`w-full rounded px-3 py-1 text-left font-mono text-xs ${prompt?.name === p.name ? "bg-neutral-800 text-white" : "text-neutral-400 hover:bg-neutral-900"}`}>
+                className={`w-full whitespace-nowrap rounded px-3 py-1 text-left font-mono text-xs ${prompt?.name === p.name ? "bg-neutral-800 text-white" : "text-neutral-400 hover:bg-neutral-900"}`}>
                 {p.name} <span className="text-neutral-600">v{p.number}</span>
               </button>
             </li>
@@ -73,8 +73,8 @@ export function Prompts() {
             )}
             <textarea value={text} onChange={(e) => setText(e.target.value)} spellCheck={false}
               className="h-[60vh] w-full rounded border border-neutral-700 bg-neutral-900 p-3 font-mono text-sm text-neutral-100" />
-            <div className="mt-2 flex items-center gap-2">
-              <input className="w-72 rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-sm" placeholder="Note for this version (optional)"
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <input className="w-72 max-w-full rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-sm" placeholder="Note for this version (optional)"
                 value={note} onChange={(e) => setNote(e.target.value)} />
               <Button kind="primary" disabled={!dirty} onClick={save}>Save as new version</Button>
               <Button disabled={!dirty} onClick={() => open(prompt.name)}>Discard</Button>

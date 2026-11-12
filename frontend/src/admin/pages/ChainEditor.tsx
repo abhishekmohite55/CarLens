@@ -21,10 +21,10 @@ export function EntryFields({ entry, providers, onChange, withFallback }: {
       <select className={input} value={entry.provider} onChange={(e) => onChange({ ...entry, provider: e.target.value })}>
         {providers.map((p) => <option key={p}>{p}</option>)}
       </select>
-      <input className={`${input} min-w-0 flex-1`} placeholder="model name" value={entry.model}
+      <input className={`${input} min-w-[10rem] flex-1`} placeholder="model name" value={entry.model}
         onChange={(e) => onChange({ ...entry, model: e.target.value })} />
       {withFallback && (
-        <input className={`${input} w-48`} placeholder="fallback model" value={entry.fallback_model ?? ""}
+        <input className={`${input} w-48 max-w-full`} placeholder="fallback model" value={entry.fallback_model ?? ""}
           onChange={(e) => onChange({ ...entry, fallback_model: e.target.value || null })} />
       )}
       <input className={`${input} w-24`} type="number" min={1} placeholder="timeout s" title="Timeout in seconds for this model; empty = the chain's timeout"
@@ -41,7 +41,7 @@ function Row({ id, position, entry, providers, onChange, onRemove }: {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
   return (
     <li ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition }}
-      className={`flex items-center gap-2 rounded border border-neutral-800 bg-neutral-950 p-2 ${isDragging ? "opacity-60" : ""}`}>
+      className={`flex flex-wrap items-center gap-2 rounded border border-neutral-800 bg-neutral-950 p-2 ${isDragging ? "opacity-60" : ""}`}>
       <button type="button" {...attributes} {...listeners} title="Drag to reorder" className="cursor-grab px-1 text-neutral-500 hover:text-neutral-200">⠿</button>
       <span className="w-5 text-xs text-neutral-500">{position}</span>
       <EntryFields entry={entry} providers={providers} onChange={onChange} />

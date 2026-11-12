@@ -159,7 +159,7 @@ function RunsTotal({ data, colors }: { data: Dash["runs_per_day"]; colors: Recor
   return (
     <>
       <div className="flex items-end gap-3">
-        <span className="font-display text-6xl font-light tabular-nums tracking-tighter text-ink">{total}</span>
+        <span className="font-display text-5xl font-light tabular-nums tracking-tighter text-ink sm:text-6xl">{total}</span>
         {total > 0 && <span className="mb-2"><Pill>{Math.round((counts.complete / total) * 100)}% finished</Pill></span>}
       </div>
       <ul className="mt-6 space-y-4">
@@ -401,8 +401,8 @@ export function Dashboard() {
   return (
     <div className="mx-auto max-w-[1320px]">
       <header className="mb-6 flex flex-wrap items-end justify-between gap-4">
-        <h1 className="font-display text-5xl font-light tracking-tighter text-ink">Dashboard</h1>
-        <div className="flex items-center gap-2">
+        <h1 className="font-display text-4xl font-light tracking-tighter text-ink sm:text-5xl">Dashboard</h1>
+        <div className="flex flex-wrap items-center gap-2">
           {d?.langfuse_url && (
             <a className="rounded-full bg-card px-4 py-2 text-sm text-ink-2 shadow-card transition-colors hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
               href={d.langfuse_url} target="_blank" rel="noreferrer">AI cost in Langfuse</a>
@@ -446,10 +446,10 @@ export function Dashboard() {
             {d.last_errors.length === 0 ? <Empty>No step failed in this period.</Empty> : (
               <ul className="space-y-1.5">
                 {d.last_errors.map((e, i) => (
-                  <li key={i} className="grid grid-cols-[8.5rem_6rem_minmax(0,1fr)] items-center gap-4 rounded-2xl bg-inset px-4 py-2.5 text-sm">
+                  <li key={i} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-1 rounded-2xl bg-inset px-4 py-2.5 text-sm sm:grid-cols-[8.5rem_6rem_minmax(0,1fr)]">
                     <span className="truncate tabular-nums text-ink-3" title={when(e.at)}>{shortWhen(e.at)}</span>
                     <span><Pill tone="solid">{STEP_NAMES[e.node] ?? e.node}</Pill></span>
-                    <span className="truncate text-bad" title={`${e.run_id}: ${e.error ?? ""}`}>{e.error ?? "no message"}</span>
+                    <span className="col-span-2 truncate text-bad sm:col-span-1" title={`${e.run_id}: ${e.error ?? ""}`}>{e.error ?? "no message"}</span>
                   </li>
                 ))}
               </ul>

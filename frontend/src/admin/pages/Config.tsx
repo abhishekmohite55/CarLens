@@ -75,7 +75,7 @@ function Field({ path, name, value, saved, options, readOnly, onChange }: {
   } else {
     // text; an optional field (saved empty) goes back to empty (null) when the box is cleared
     control = (
-      <input className={`${input} w-80`} disabled={readOnly} value={(value as string | null) ?? ""}
+      <input className={`${input} w-80 max-w-full`} disabled={readOnly} value={(value as string | null) ?? ""}
         onChange={(e) => onChange(saved === null ? e.target.value || null : e.target.value)} />
     );
   }
@@ -141,21 +141,21 @@ export function Config() {
   const sections = [...SECTIONS.filter((s) => s in draft), ...Object.keys(draft).filter((s) => !SECTIONS.includes(s))];
   return (
     <div>
-      <div className="mb-4 flex items-baseline justify-between">
+      <div className="mb-4 flex flex-wrap items-baseline justify-between gap-2">
         <h1 className="text-xl font-semibold">Config</h1>
         <span className="text-xs text-neutral-500">
           Active: version {loaded.id}, {when(loaded.saved_at)}{loaded.saved_by ? ` by ${loaded.saved_by}` : ""}{loaded.note ? ` · ${loaded.note}` : ""}
         </span>
       </div>
-      <div className="flex gap-6">
-        <ul className="w-36 shrink-0 space-y-1">
+      <div className="flex flex-col gap-4 md:flex-row md:gap-6">
+        <ul className="no-scrollbar -mx-4 flex shrink-0 gap-1 overflow-x-auto px-4 md:mx-0 md:block md:w-36 md:space-y-1 md:overflow-visible md:px-0">
           {sections.map((s) => {
             const changed = JSON.stringify(draft[s]) !== JSON.stringify(loaded.data[s]);
             const hasProblem = problems.some((p) => p.field.startsWith(`${s}.`) || p.field === s);
             return (
               <li key={s}>
                 <button onClick={() => setSection(s)}
-                  className={`w-full rounded px-3 py-1 text-left font-mono text-sm ${section === s ? "bg-neutral-800 text-white" : "text-neutral-400 hover:bg-neutral-900"}`}>
+                  className={`w-full whitespace-nowrap rounded px-3 py-1 text-left font-mono text-sm ${section === s ? "bg-neutral-800 text-white" : "text-neutral-400 hover:bg-neutral-900"}`}>
                   {s}{changed && <span className="text-amber-400"> •</span>}{hasProblem && <span className="text-red-400"> !</span>}
                 </button>
               </li>
@@ -179,8 +179,8 @@ export function Config() {
             {problems.map((p, i) => <li key={i}><span className="font-mono">{p.field}</span>: {p.message}</li>)}
           </ul>
         )}
-        <div className="flex items-center gap-2">
-          <input className={`${input} w-72`} placeholder="Note for this version (optional)" value={note} onChange={(e) => setNote(e.target.value)} />
+        <div className="flex flex-wrap items-center gap-2">
+          <input className={`${input} w-72 max-w-full`} placeholder="Note for this version (optional)" value={note} onChange={(e) => setNote(e.target.value)} />
           <Button kind="primary" disabled={!dirty} onClick={save}>Save as new version</Button>
           <Button disabled={!dirty} onClick={() => { setDraft(structuredClone(loaded.data)); setShown((n) => n + 1); setProblems([]); setMessage(""); }}>Discard</Button>
           <span className="flex-1 text-sm text-neutral-400">{message}</span>
