@@ -58,7 +58,9 @@ services:
     build:
       context: ./frontend
     ports:
-      - "127.0.0.1:8080:80" # open http://127.0.0.1:8080/admin
+      # Laptop only by default. FRONTEND_BIND=0.0.0.0 in .env opens it to phones on the same Wi-Fi
+      # (plain HTTP: home Wi-Fi only; add http://<laptop IP>:8080 to auth.allowed_origins on the Config page).
+      - "${FRONTEND_BIND:-127.0.0.1}:8080:80" # open http://127.0.0.1:8080/admin
     depends_on:
       - backend
 
