@@ -3,9 +3,10 @@
 // Testers see no Sent / Received (owner, 14 Nov).
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useMemo, useState } from "react";
-import { Link, useParams } from "react-router";
+import { Link, useNavigate, useParams } from "react-router";
 import { Car3D } from "./Car3D";
 import { ConfirmCard, type ConfirmPayload } from "./ConfirmCard";
+import { PriceCard, ReportBody, type Report } from "./Report";
 import { SPOTS, VIEWS, type Spot } from "./car";
 import { Lens } from "./Lens";
 import { springs, swap } from "./motion";
@@ -153,14 +154,22 @@ export function RunPage() {
   useEffect(() => {
     if (s.extract.state === "done" && !figures) getJson(`/api/runs/${id}/files/08_extract/figures.json`).then((r) => r && setFigures(r));
   }, [s.extract.state, id, figures]);
+  const [report, setReport] = useState<Report>();
+  useEffect(() => {
+    if (s.report.state === "done" && !report) getJson(`/api/runs/${id}/files/09_report/report.json`).then((r) => r && setReport(r));
+  }, [s.report.state, id, report]);
+  const navigate = useNavigate();
+  const pricingStarted = !!s.pricing.startedAt || s.pricing.state !== "waiting";
   const queries = plan ? allQueries(plan) : [];
   const searchedSoFar = Number(/^(\d+)\//.exec(s.search.progress ?? "")?.[1] ?? 0);
   const planGoal = useCycle(2200, current === "plan" && live);
   const goals = ["used listings", "today's new price", "repair costs", "tyre prices"];
-  const webStep = ["plan", "search", "extract"].includes(current ?? "") || (!!plan && !run.steps.pricing.startedAt);
+  const webStep = ["plan", "search", "extract"].includes(current ?? "") || (!!plan && !pricingStarted);
   const extra: Record<string, string> = {};
   if (plan) extra.plan = plan.llm_called ? `Wrote ${queries.length} searches.` : `Wrote ${queries.length} searches. No damage to price, so no AI was needed.`;
   if (search) extra.search = `${search.totals.queries} searches, ${search.totals.results} results from ${search.totals.unique_urls} sites.`;
+  extra.pricing = "Price worked out.";
+  extra.report = "Report ready.";
   if (figures) extra.extract = `Kept ${figures.kept.length} prices that match their source; dropped ${figures.rejected.length + figures.outliers.length}, each with a reason.`;
 
   // The tab says what is happening, because people leave it during a run.
@@ -186,7 +195,13 @@ export function RunPage() {
   // --- The Lens: step pill while running, a still card when the run needs the user or has stopped ---
   let lens;
   const lastDone = [...STEPS].reverse().find((k) => s[k].state === "done");
-  if (run.ended?.status === "failed") {
+  if (report) {
+    lens = (
+      <Lens scene="price" radius={32} className="w-[min(94vw,40rem)]">
+        <PriceCard report={report} />
+      </Lens>
+    );
+  } else if (run.ended?.status === "failed") {
     const at = run.ended.failedAt ?? "";
     lens = (
       <Lens scene="failed" radius={32} tone="danger" className="w-[min(92vw,28rem)]">
@@ -262,7 +277,9 @@ export function RunPage() {
       </header>
 
       {/* The Lens stays pinned while the page scrolls. While confirm waits, the Lens is the card on the right instead. */}
-      {!waiting && <div className="sticky top-0 z-10 flex min-h-20 justify-center bg-canvas/85 px-4 py-4 backdrop-blur-sm">{lens}</div>}
+      {!waiting && (
+        <div className={`${report ? "" : "sticky top-0 bg-canvas/85 backdrop-blur-sm"} z-10 flex min-h-20 justify-center px-4 py-4`}>{lens}</div>
+      )}
       {!online && !run.ended && (
         <p className="text-small text-center text-warn-text">Connection lost. Reconnecting.</p>
       )}
@@ -304,14 +321,21 @@ export function RunPage() {
 
         {/* The web: queries, then their sites, then the prices read from them. */}
         <div className="mt-6 space-y-4">
-          {current === "extract" && live && trimmed && <Ticker trimmed={trimmed} moving />}
-          {figures && <PriceList figures={figures} trimmed={trimmed} />}
-          {search && !figures && current !== "extract" && <SearchRows search={search} />}
-          {plan && !search && <QueryList queries={queries} done={current === "search" ? searchedSoFar : undefined} />}
+          {/* Once pricing starts, the web lists fold away into their diary lines (owner, 14 Nov). */}
+          {!pricingStarted && (
+            <>
+              {current === "extract" && live && trimmed && <Ticker trimmed={trimmed} moving />}
+              {figures && <PriceList figures={figures} trimmed={trimmed} />}
+              {search && !figures && current !== "extract" && <SearchRows search={search} />}
+              {plan && !search && <QueryList queries={queries} done={current === "search" ? searchedSoFar : undefined} />}
+            </>
+          )}
         </div>
 
+        {report && <ReportBody report={report} runId={id} />}
+
         {/* The shelf: facts the pipeline has learned (Scene 8). */}
-        {verdicts && (
+        {verdicts && !report && (
           <div className="mt-6 flex flex-wrap justify-center gap-2">
             {[verdicts.car, verdicts.plate, verdicts.km !== undefined ? `${verdicts.km.toLocaleString("en-IN")} km` : undefined]
               .filter(Boolean).map((fact, i) => (
@@ -330,6 +354,14 @@ export function RunPage() {
               </motion.li>
             ))}
           </ol>
+        )}
+
+        {/* The loop (Scene 16): the price card closes back into the upload pill on Home. */}
+        {report && (
+          <div className="mt-20 flex flex-col items-center gap-3">
+            <button onClick={() => navigate("/home")} className="text-label rounded-full bg-ink px-6 py-3.5 text-canvas shadow-lens">New inspection</button>
+            <p className="text-small text-ink-3">Prices are estimates from public listings, not an offer or a certified valuation.</p>
+          </div>
         )}
         </div>
       </main>
