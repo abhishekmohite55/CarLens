@@ -1,0 +1,154 @@
+/* Tester app look (docs/frontend/13-storyboard.md, Part 1). The admin app keeps its own file, src/index.css. */
+@import "tailwindcss";
+
+@font-face {
+  font-family: "Geist";
+  src: url("./fonts/Geist-Variable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-display: block; /* no flash of a fallback font; the file is preloaded in index.html */
+}
+
+@theme {
+  --font-sans: "Geist", ui-sans-serif, system-ui, sans-serif;
+  --radius-chip: 8px;
+  --radius-input: 14px;
+  --radius-panel: 22px;
+  --radius-lens: 32px;
+}
+
+/* Utilities: bg-canvas, bg-deep, bg-surface, bg-top, border-line, text-ink, text-ink-2, text-danger-text, shadow-lens, …
+   The values change with <html data-theme>. */
+@theme inline {
+  --color-canvas: var(--c-canvas);
+  --color-deep: var(--c-deep);
+  --color-surface: var(--c-surface);
+  --color-top: var(--c-top);
+  --color-line: var(--c-line);
+  --color-line-strong: var(--c-line-strong);
+  --color-ink: var(--c-ink);
+  --color-ink-2: var(--c-ink-2);
+  --color-ink-3: var(--c-ink-3);
+  --color-on-status: var(--c-on-status);
+  --color-danger: var(--c-danger);
+  --color-danger-text: var(--c-danger-text);
+  --color-danger-soft: var(--c-danger-soft);
+  --color-danger-line: var(--c-danger-line);
+  --color-warn: var(--c-warn);
+  --color-warn-text: var(--c-warn-text);
+  --color-warn-soft: var(--c-warn-soft);
+  --color-warn-line: var(--c-warn-line);
+  --color-ok: var(--c-ok);
+  --color-ok-text: var(--c-ok-text);
+  --color-ok-soft: var(--c-ok-soft);
+  --color-ok-line: var(--c-ok-line);
+  --shadow-panel: var(--c-shadow-panel);
+  --shadow-lens: var(--c-shadow-lens);
+}
+
+:root,
+[data-theme="light"] {
+  color-scheme: light;
+  --c-canvas: #eceae6;
+  --c-deep: #e2dfda;
+  --c-surface: #f7f6f3;
+  --c-top: #ffffff;
+  --c-line: #d3cfc8;
+  --c-line-strong: #b9b4ab;
+  --c-ink: #151412;
+  --c-ink-2: #45413b;
+  --c-ink-3: #656058;
+  --c-on-status: #ffffff;
+  --c-danger: #b5473f;
+  --c-danger-text: #9c3a33;
+  --c-danger-soft: #f1dad6;
+  --c-danger-line: #dda9a3;
+  --c-warn: #a5652a;
+  --c-warn-text: #8f5318;
+  --c-warn-soft: #f3e3d0;
+  --c-warn-line: #e0bc92;
+  --c-ok: #3d825d;
+  --c-ok-text: #2f6b4b;
+  --c-ok-soft: #d9e9df;
+  --c-ok-line: #a5cbb5;
+  --c-shadow-panel: 0 1px 2px #1514120f, 0 8px 24px #15141214;
+  --c-shadow-lens: 0 2px 4px #1514121a, 0 18px 40px #15141229;
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+  --c-canvas: #171614;
+  --c-deep: #100f0e;
+  --c-surface: #201f1c;
+  --c-top: #2a2825;
+  --c-line: #36332f;
+  --c-line-strong: #4a4640;
+  --c-ink: #f2f0eb;
+  --c-ink-2: #c9c4ba;
+  --c-ink-3: #9a948a;
+  --c-on-status: #151412;
+  --c-danger: #d2695f;
+  --c-danger-text: #e58b82;
+  --c-danger-soft: #3a211e;
+  --c-danger-line: #6b3630;
+  --c-warn: #d6914a;
+  --c-warn-text: #e5a968;
+  --c-warn-soft: #3a2a19;
+  --c-warn-line: #6b4a26;
+  --c-ok: #5fa57d;
+  --c-ok-text: #7dbf98;
+  --c-ok-soft: #1d3226;
+  --c-ok-line: #325a43;
+  /* Shadows alone do not read on dark: a lighter line on the top edge is added. */
+  --c-shadow-panel: inset 0 1px 0 #ffffff0f, 0 1px 2px #00000066, 0 8px 24px #00000080;
+  --c-shadow-lens: 0 2px 4px #00000080, 0 18px 40px #000000a6;
+}
+
+@layer base {
+  html {
+    background-color: var(--c-canvas);
+    color: var(--c-ink);
+    -webkit-font-smoothing: antialiased;
+    -webkit-text-size-adjust: 100%;
+  }
+  :focus-visible {
+    outline: 2px solid var(--c-ink);
+    outline-offset: 2px;
+  }
+}
+
+/* Type scale: grows smoothly from a 360 px phone to a 1440 px screen. */
+@utility text-display {
+  font-size: clamp(2.5rem, 1.5rem + 4.444vw, 5.5rem);
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: -0.03em;
+}
+@utility text-title {
+  font-size: clamp(1.75rem, 1.5rem + 1.111vw, 2.5rem);
+  font-weight: 600;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+}
+@utility text-heading {
+  font-size: clamp(1.25rem, 1.1667rem + 0.3704vw, 1.5rem);
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+}
+@utility text-body-l {
+  font-size: clamp(1.0625rem, 1.0208rem + 0.1852vw, 1.1875rem);
+  line-height: 1.5;
+}
+@utility text-body {
+  font-size: clamp(0.9375rem, 0.9167rem + 0.0926vw, 1rem);
+  line-height: 1.5;
+}
+@utility text-label {
+  font-size: clamp(0.8125rem, 0.7917rem + 0.0926vw, 0.875rem);
+  font-weight: 500;
+  line-height: 1.2;
+}
+@utility text-small {
+  font-size: clamp(0.75rem, 0.7292rem + 0.0926vw, 0.8125rem);
+  line-height: 1.4;
+}
