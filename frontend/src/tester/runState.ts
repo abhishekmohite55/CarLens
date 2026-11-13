@@ -20,6 +20,7 @@ export type Run = {
   note?: string; // latest model-switch note (orange)
   plate?: string; // read by OCR, shown as it arrives
   waiting: boolean; // paused at confirm
+  confirmPayload?: Record<string, any>; // what the confirm card shows (awaiting_confirm event)
   ended?: { status: string; failedAt?: string; error?: string };
 };
 
@@ -48,7 +49,7 @@ export function apply(run: Run, e: RunEvent): Run {
     steps[e.node] = { ...step, state: "skipped", summary: d.reason };
   } else if (e.type === "awaiting_confirm") {
     steps.confirm = { state: "running", startedAt: e.ts };
-    Object.assign(next, { current: "confirm", waiting: true });
+    Object.assign(next, { current: "confirm", waiting: true, confirmPayload: d });
   } else if (e.type === "run_done") {
     next.ended = { status: d.status, failedAt: d.failed_at, error: d.error };
     next.current = undefined;
@@ -64,6 +65,8 @@ export function diaryLine(step: string, run: Run, moments?: Moment[], verdicts?:
   if (step === "upload") return `Video accepted: ${s.summary ?? ""}.`;
   if (step === "locate") return moments ? `Found ${moments.length} moments in the video.` : "Found the moments in the video.";
   if (step === "frames") return "Kept the sharpest frame of each moment.";
+  if (step === "confirm") return "Details confirmed.";
+  if (step === "photos") return "Your photos were read.";
   if (step === "verify" && verdicts) {
     const rejected = verdicts.rejected.length;
     return `Confirmed ${verdicts.confirmed.length} ${verdicts.confirmed.length === 1 ? "finding" : "findings"}` +

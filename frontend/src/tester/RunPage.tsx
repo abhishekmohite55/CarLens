@@ -5,6 +5,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router";
 import { Car3D } from "./Car3D";
+import { ConfirmCard, type ConfirmPayload } from "./ConfirmCard";
 import { SPOTS, VIEWS, type Spot } from "./car";
 import { Lens } from "./Lens";
 import { springs, swap } from "./motion";
@@ -93,6 +94,7 @@ export function RunPage() {
   const [moments, setMoments] = useState<Moment[]>();
   const [verdicts, setVerdicts] = useState<Verdicts>();
   const s = run.steps;
+  const [sentConfirm, setSentConfirm] = useState(false); // confirmed here; the next events are on their way
 
   // Moments once locate is done; verdicts once verify is done (read from the run's saved results).
   useEffect(() => {
@@ -118,22 +120,23 @@ export function RunPage() {
 
   const current = run.current;
   const step = current ? s[current] : undefined;
-  const live = !!current && !run.waiting && !run.ended;
+  const waiting = run.waiting && !sentConfirm;
+  const live = !!current && !waiting && !run.ended;
   const timer = useTimer(step?.startedAt, live);
   const lookingFor = useCycle(2600, current === "locate" && /Asking/i.test(step?.progress ?? ""));
   const checkOn = live && (current === "frames" || current === "verify") && !!moments?.length;
   const checkIndex = useCycle(current === "frames" ? 700 : 1900, checkOn);
   const checking = checkOn ? moments![checkIndex % moments!.length] : undefined;
-  const view = checking ? viewFor(spotFor(checking)) : run.waiting || run.ended ? VIEWS.front : undefined;
+  const view = checking ? viewFor(spotFor(checking)) : waiting || run.ended ? VIEWS.front : undefined;
   const pins = useMemo(() => pinsFor(moments, verdicts), [moments, verdicts]);
 
   // The tab says what is happening, because people leave it during a run.
   useEffect(() => {
-    document.title = run.waiting ? "Waiting for you — CarLens"
+    document.title = waiting ? "Waiting for you — CarLens"
       : run.ended?.status === "failed" ? `Stopped at ${STEP_NAME[run.ended.failedAt ?? ""] ?? "a step"} — CarLens`
       : current ? `${STEP_NAME[current]} — CarLens` : "CarLens";
     return () => { document.title = "CarLens"; };
-  }, [run.waiting, run.ended, current]);
+  }, [waiting, run.ended, current]);
 
   if (missing)
     return (
@@ -170,22 +173,18 @@ export function RunPage() {
         </div>
       </Lens>
     );
-  } else if (run.waiting) {
+  } else if (waiting && run.confirmPayload) {
     lens = (
-      <Lens scene="waiting" radius={32} className="w-[min(92vw,28rem)]">
-        <div className="space-y-2 p-6">
-          <p className="text-title">Is this your car?</p>
-          {verdicts?.car && <p className="text-body opacity-80">{verdicts.car}</p>}
-          <p className="text-small opacity-75">Confirming the details arrives in the next stage.</p>
-        </div>
+      <Lens scene="confirm" radius={32} className="w-full">
+        <ConfirmCard runId={id} payload={run.confirmPayload as ConfirmPayload} onConfirmed={() => setSentConfirm(true)} />
       </Lens>
     );
   } else {
     lens = (
       <Lens scene={current ?? "connecting"} radius={22} spring="rubber" className="h-11">
         <div className="text-label flex h-full items-center gap-4 px-5 whitespace-nowrap">
-          <span>{current ? STEP_NAME[current] : "Connecting"}</span>
-          {current && <span className="tabular-nums opacity-70">{timer}</span>}
+          <span>{current && !(current === "confirm" && sentConfirm) ? STEP_NAME[current] : current ? "Details confirmed" : "Connecting"}</span>
+          {current && current !== "confirm" && <span className="tabular-nums opacity-70">{timer}</span>}
         </div>
       </Lens>
     );
@@ -203,6 +202,8 @@ export function RunPage() {
     stageLine = m ? `Checking frames around each moment, ${m[1]} of ${m[2]}` : "Checking frames around each moment";
   }
   if (current === "verify") stageLine = checking ? question(checking) : run.plate ? "Reading the plate" : "Getting the frames ready";
+  if (current === "photos") stageLine = "Scoring your photos";
+  if (current === "confirm" && sentConfirm) stageLine = "Starting the next step";
 
   const locateStage = current === "locate" ? LOCATE_STAGES.findIndex(([re]) => re.test(step?.progress ?? "")) : -1;
   const diary = STEPS.filter((k) => s[k].state === "done" || s[k].state === "skipped");
@@ -214,13 +215,17 @@ export function RunPage() {
         <Link to="/home" className="text-label rounded-full px-4 py-2 text-ink-2 hover:text-ink">My runs</Link>
       </header>
 
-      {/* The Lens stays pinned while the page scrolls. */}
-      <div className="sticky top-0 z-10 flex min-h-20 justify-center bg-canvas/85 px-4 py-4 backdrop-blur-sm">{lens}</div>
+      {/* The Lens stays pinned while the page scrolls. While confirm waits, the Lens is the card on the right instead. */}
+      {!waiting && <div className="sticky top-0 z-10 flex min-h-20 justify-center bg-canvas/85 px-4 py-4 backdrop-blur-sm">{lens}</div>}
       {!online && !run.ended && (
         <p className="text-small text-center text-warn-text">Connection lost. Reconnecting.</p>
       )}
 
-      <main className="mx-auto max-w-3xl px-4 pb-24 sm:px-8">
+      <main className={`mx-auto px-4 pb-24 sm:px-8 ${waiting ? "max-w-6xl pt-4 lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(22rem,28rem)] lg:items-start lg:gap-10" : "max-w-3xl"}`}>
+        {/* Confirm: the card sits on the right on wide screens, above the car on phones. No scroll box around it:
+            the Lens's shape animation measures wrongly inside one (the card came out stretched and clipped). */}
+        {waiting && <aside className="mb-8 min-w-0 lg:order-2 lg:mb-0">{lens}</aside>}
+        <div>
         <div className="relative h-[clamp(15rem,48vw,26rem)]">
           <Car3D className="absolute inset-0 h-full w-full" view={view} pins={pins} checking={checking ? spotFor(checking) : undefined}
             secondsPerTurn={live ? 24 : 60} />
@@ -237,7 +242,7 @@ export function RunPage() {
           )}
           {current === "verify" && run.plate && !verdicts && <div className="mb-4"><Plate text={run.plate} /></div>}
           <AnimatePresence mode="wait" initial={false}>
-            {stageLine && !run.waiting && !run.ended && (
+            {stageLine && !waiting && !run.ended && (
               <motion.p key={stageLine} {...swap} transition={{ duration: 0.2 }} className="text-body-l text-ink-2">{stageLine}</motion.p>
             )}
           </AnimatePresence>
@@ -271,6 +276,7 @@ export function RunPage() {
             ))}
           </ol>
         )}
+        </div>
       </main>
     </div>
   );
