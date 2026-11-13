@@ -14,6 +14,10 @@ import {
   type Moment, type Run, type RunEvent, type Verdicts,
 } from "./runState";
 import { durationText } from "./upload";
+import {
+  allQueries, PriceList, QueryList, SearchRows, Ticker, Typing,
+  type Figures, type PlanQueries, type SearchResults, type Trimmed,
+} from "./WebSteps";
 
 async function getJson(path: string): Promise<any> {
   const response = await fetch(path, { cache: "no-store" });
@@ -130,6 +134,35 @@ export function RunPage() {
   const view = checking ? viewFor(spotFor(checking)) : waiting || run.ended ? VIEWS.front : undefined;
   const pins = useMemo(() => pinsFor(moments, verdicts), [moments, verdicts]);
 
+  // --- Web steps (F7): read each step's saved result when it is there ---
+  const [plan, setPlan] = useState<PlanQueries>();
+  const [search, setSearch] = useState<SearchResults>();
+  const [trimmed, setTrimmed] = useState<Trimmed>();
+  const [figures, setFigures] = useState<Figures>();
+  useEffect(() => {
+    if (s.plan.state === "done" && !plan) getJson(`/api/runs/${id}/files/06_plan/queries.json`).then((r) => r && setPlan(r));
+  }, [s.plan.state, id, plan]);
+  useEffect(() => {
+    if (s.search.state === "done" && !search) getJson(`/api/runs/${id}/files/07_search/results.json`).then((r) => r && setSearch(r));
+  }, [s.search.state, id, search]);
+  // trimmed.json is saved before the extract model is asked, so the ticker can start while it reads.
+  useEffect(() => {
+    if ((s.extract.state === "running" && s.extract.progress !== undefined) || s.extract.state === "done")
+      if (!trimmed) getJson(`/api/runs/${id}/files/08_extract/trimmed.json`).then((r) => r && setTrimmed(r));
+  }, [s.extract.state, s.extract.progress, id, trimmed]);
+  useEffect(() => {
+    if (s.extract.state === "done" && !figures) getJson(`/api/runs/${id}/files/08_extract/figures.json`).then((r) => r && setFigures(r));
+  }, [s.extract.state, id, figures]);
+  const queries = plan ? allQueries(plan) : [];
+  const searchedSoFar = Number(/^(\d+)\//.exec(s.search.progress ?? "")?.[1] ?? 0);
+  const planGoal = useCycle(2200, current === "plan" && live);
+  const goals = ["used listings", "today's new price", "repair costs", "tyre prices"];
+  const webStep = ["plan", "search", "extract"].includes(current ?? "") || (!!plan && !run.steps.pricing.startedAt);
+  const extra: Record<string, string> = {};
+  if (plan) extra.plan = plan.llm_called ? `Wrote ${queries.length} searches.` : `Wrote ${queries.length} searches. No damage to price, so no AI was needed.`;
+  if (search) extra.search = `${search.totals.queries} searches, ${search.totals.results} results from ${search.totals.unique_urls} sites.`;
+  if (figures) extra.extract = `Kept ${figures.kept.length} prices that match their source; dropped ${figures.rejected.length + figures.outliers.length}, each with a reason.`;
+
   // The tab says what is happening, because people leave it during a run.
   useEffect(() => {
     document.title = waiting ? "Waiting for you — CarLens"
@@ -179,6 +212,16 @@ export function RunPage() {
         <ConfirmCard runId={id} payload={run.confirmPayload as ConfirmPayload} onConfirmed={() => setSentConfirm(true)} />
       </Lens>
     );
+  } else if (current === "plan" && live) {
+    // The pill stretches into a search bar (Scene 11).
+    lens = (
+      <Lens scene="plan" radius={22} spring="rubber" className="h-11 w-[min(92vw,30rem)]">
+        <div className="text-label flex h-full items-center justify-between gap-4 px-5">
+          <Typing text={`Planning searches for ${goals[planGoal % goals.length]}`} />
+          <span className="tabular-nums opacity-70">{timer}</span>
+        </div>
+      </Lens>
+    );
   } else {
     lens = (
       <Lens scene={current ?? "connecting"} radius={22} spring="rubber" className="h-11">
@@ -203,6 +246,9 @@ export function RunPage() {
   }
   if (current === "verify") stageLine = checking ? question(checking) : run.plate ? "Reading the plate" : "Getting the frames ready";
   if (current === "photos") stageLine = "Scoring your photos";
+  if (current === "plan") stageLine = "Choosing what to search for";
+  if (current === "search") stageLine = queries.length ? `Searching the web, ${searchedSoFar} of ${queries.length}` : "Searching the web";
+  if (current === "extract") stageLine = trimmed ? "Reading prices from what the web returned" : "Picking the results that mention a price";
   if (current === "confirm" && sentConfirm) stageLine = "Starting the next step";
 
   const locateStage = current === "locate" ? LOCATE_STAGES.findIndex(([re]) => re.test(step?.progress ?? "")) : -1;
@@ -226,7 +272,8 @@ export function RunPage() {
             the Lens's shape animation measures wrongly inside one (the card came out stretched and clipped). */}
         {waiting && <aside className="mb-8 min-w-0 lg:order-2 lg:mb-0">{lens}</aside>}
         <div>
-        <div className="relative h-[clamp(15rem,48vw,26rem)]">
+        {/* While the web steps run, the car sinks back and dims (Scene 11). */}
+        <div className={`relative transition-all duration-500 ${webStep ? "h-[clamp(10rem,28vw,15rem)] opacity-40" : "h-[clamp(15rem,48vw,26rem)]"}`}>
           <Car3D className="absolute inset-0 h-full w-full" view={view} pins={pins} checking={checking ? spotFor(checking) : undefined}
             secondsPerTurn={live ? 24 : 60} />
         </div>
@@ -255,6 +302,14 @@ export function RunPage() {
           </AnimatePresence>
         </div>
 
+        {/* The web: queries, then their sites, then the prices read from them. */}
+        <div className="mt-6 space-y-4">
+          {current === "extract" && live && trimmed && <Ticker trimmed={trimmed} moving />}
+          {figures && <PriceList figures={figures} trimmed={trimmed} />}
+          {search && !figures && current !== "extract" && <SearchRows search={search} />}
+          {plan && !search && <QueryList queries={queries} done={current === "search" ? searchedSoFar : undefined} />}
+        </div>
+
         {/* The shelf: facts the pipeline has learned (Scene 8). */}
         {verdicts && (
           <div className="mt-6 flex flex-wrap justify-center gap-2">
@@ -271,7 +326,7 @@ export function RunPage() {
           <ol className="mt-16 space-y-3 border-l border-line pl-5">
             {diary.map((k) => (
               <motion.li key={k} {...swap} className="text-body text-ink-2">
-                <span className="text-label mr-2 text-ink">{STEP_NAME[k]}</span>{diaryLine(k, run, moments, verdicts)}
+                <span className="text-label mr-2 text-ink">{STEP_NAME[k]}</span>{diaryLine(k, run, moments, verdicts, extra)}
               </motion.li>
             ))}
           </ol>

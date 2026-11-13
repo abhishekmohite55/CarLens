@@ -59,8 +59,9 @@ export function apply(run: Run, e: RunEvent): Run {
 }
 
 /** One sentence per finished step, in the tester's words (the diary). */
-export function diaryLine(step: string, run: Run, moments?: Moment[], verdicts?: Verdicts): string {
+export function diaryLine(step: string, run: Run, moments?: Moment[], verdicts?: Verdicts, extra?: Record<string, string>): string {
   const s = run.steps[step];
+  if (extra?.[step] && s.state === "done") return extra[step];
   if (s.state === "skipped") return `${STEP_NAME[step]}: skipped.`;
   if (step === "upload") return `Video accepted: ${s.summary ?? ""}.`;
   if (step === "locate") return moments ? `Found ${moments.length} moments in the video.` : "Found the moments in the video.";

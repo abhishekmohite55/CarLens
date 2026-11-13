@@ -81,7 +81,8 @@ function Slot({ runId, slot, label, onChange }: { runId: string; slot: string; l
     const response = await fetch(`/api/runs/${runId}/photos/${slot}`, { method: "POST", body: form }).catch(() => null);
     setState("idle");
     if (response?.ok) {
-      setThumb(URL.createObjectURL(file));
+      // The server's JPEG copy, not the picked file: phones send HEIC, which most browsers cannot show.
+      setThumb(`/api/runs/${runId}/files/05_photos/${slot}.jpg?t=${Date.now()}`);
       onChange(true);
     } else {
       const data = await response?.json().catch(() => ({}));
