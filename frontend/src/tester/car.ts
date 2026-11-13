@@ -71,6 +71,12 @@ export const CAR: Edge[] = build();
 /** Named places on the car where pins sit (Scenes 1 and 5): one per thing the pipeline looks for. */
 export const SPOTS = {
   plate: [-2.0, 0, 0.58],
+  plate_front: [2.0, 0, 0.42],
+  windshield: [0.72, 0, 1.12],
+  mirror_left: [0.92, 0.9, 0.95],
+  mirror_right: [0.92, -0.9, 0.95],
+  bumper_front: [1.98, 0.35, 0.4],
+  bumper_rear: [-2.0, -0.35, 0.4],
   badge: [-1.98, -0.4, 0.86],
   dashboard: [0.55, 0.3, 1.0],
   tyre_front_left: [WHEEL_X, 0.86, WHEEL_Z],
@@ -80,6 +86,7 @@ export const SPOTS = {
   door_left_rear: [-0.75, 0.83, 0.62],
   door_left_front: [0.3, 0.83, 0.62],
   door_right_front: [0.3, -0.83, 0.62],
+  door_right_rear: [-0.75, -0.83, 0.62],
 } satisfies Record<string, Point>;
 
 export type Spot = keyof typeof SPOTS;
@@ -89,6 +96,7 @@ export const VIEWS = {
   front: 0.6, // front three-quarter, the resting view
   rear: Math.PI - 0.55, // rear three-quarter: plate and badge
   left: -1.15, // left side
+  right: 1.15, // right side
 } as const;
 
 const PITCH = 0.3; // the viewer looks down on the car by about 17°

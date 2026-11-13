@@ -10,7 +10,8 @@ const TURNTABLE = 2.35; // radius in metres
 const PIN_DROP_MS = 450;
 const TURN_EASE = 3.2; // how quickly the car turns to a requested view (higher = faster)
 
-export type CarPin = { spot: Spot; solid?: boolean };
+/** solid = confirmed; faded = rejected (drawn small and quiet). */
+export type CarPin = { spot: Spot; solid?: boolean; faded?: boolean };
 
 type Props = {
   /** Seconds per full turn while no view is requested. */
@@ -95,10 +96,10 @@ export function Car3D({ secondsPerTurn = 24, view, pins = [], checking, classNam
           ctx.globalAlpha = t * fade(pd);
         }
         ctx.fillStyle = pin.solid ? ink : paper;
-        ctx.strokeStyle = ink;
+        ctx.strokeStyle = pin.faded ? line : ink;
         ctx.lineWidth = 2;
         ctx.beginPath();
-        ctx.arc(x, y, 6, 0, 2 * Math.PI);
+        ctx.arc(x, y, pin.faded ? 3.5 : 6, 0, 2 * Math.PI);
         ctx.fill();
         ctx.stroke();
       }
