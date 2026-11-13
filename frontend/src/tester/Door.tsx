@@ -225,24 +225,6 @@ export function Waiting() {
   );
 }
 
-/** Home arrives in stage F4; until then an approved person lands here. */
-export function HomeSoon() {
-  const { me, signOut } = useSession();
-  const navigate = useNavigate();
-  return (
-    <Frame>
-      <Lens scene="home" radius={32} className="w-[min(92vw,24rem)]">
-        <div className="space-y-3 p-6 sm:p-8">
-          <h1 className="text-heading">You are in.</h1>
-          <p className="text-body opacity-80">Signed in as {me?.email}. {me?.role === "admin" ? "Admin account." : `${me?.tokens} runs left.`}</p>
-          <p className="text-small opacity-70">Uploading arrives in the next stage.</p>
-          <button onClick={async () => { await signOut(); navigate("/"); }} className={quiet}>Sign out</button>
-        </div>
-      </Lens>
-    </Frame>
-  );
-}
-
 export function NotFound() {
   return (
     <Frame>
