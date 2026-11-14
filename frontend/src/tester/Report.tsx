@@ -67,7 +67,7 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 
 const card = "rounded-panel bg-surface shadow-panel";
 
-export function ReportBody({ report, runId }: { report: Report; runId: string }) {
+export function ReportBody({ report, runId, flash }: { report: Report; runId: string; flash?: string }) {
   const v = report.vehicle;
   const file = (path: string) => `/api/runs/${runId}/files/${path}`;
   const facts: [string, ReactNode][] = [
@@ -107,7 +107,8 @@ export function ReportBody({ report, runId }: { report: Report; runId: string })
         {report.damage.length === 0 ? <p className="text-body text-ink-3">No damage was confirmed in the video.</p> : (
           <div className="grid gap-4 sm:grid-cols-2">
             {report.damage.map((d) => (
-              <article key={d.item_id} className={`${card} overflow-hidden`}>
+              <article key={d.item_id} id={`damage-${d.item_id}`}
+                className={`${card} scroll-mt-24 overflow-hidden transition-shadow duration-500 ${flash === d.item_id ? "ring-2 ring-ink" : ""}`}>
                 {d.frame && <img src={file(d.frame)} alt={`${words(d.part)}, ${words(d.issue)}`} loading="lazy" className="aspect-video w-full object-cover" />}
                 <div className="space-y-1 px-5 py-4">
                   <p className="text-label">{[words(d.part), words(d.issue), d.severity, d.action !== "none" ? d.action : ""].filter(Boolean).join(", ")}</p>
@@ -126,7 +127,6 @@ export function ReportBody({ report, runId }: { report: Report; runId: string })
           <div className="grid grid-cols-2 gap-4">
             {[...report.tyres].sort((a, b) => (a.position ?? "").localeCompare(b.position ?? "")).map((t, i) => (
               <article key={`${t.position}-${i}`} className={`${card} overflow-hidden`}>
-                {t.frame && <img src={file(t.frame)} alt={`${words(t.position)} tyre`} loading="lazy" className="aspect-[4/3] w-full object-cover" />}
                 <div className="space-y-1 px-4 py-3">
                   <p className="text-label">{words(t.position) || "Tyre"}{t.from === "photo" ? " (your photo)" : ""}</p>
                   <p className="text-body tabular-nums">{t.tyre_score != null ? `${t.tyre_score} of 10` : "Score unclear"}{t.tread ? `, ${t.tread}` : ""}</p>
@@ -150,7 +150,7 @@ export function ReportBody({ report, runId }: { report: Report; runId: string })
                   {r.up_to && r.up_to > r.cost && <span className="text-small ml-2 text-ink-3">could be up to {inr(r.up_to)}</span>}
                 </span>
                 <span className="flex w-full flex-wrap gap-3">
-                  {r.note && <span className="text-small text-ink-3">{r.note}</span>}
+                  {r.note && <span className="text-small text-ink-3">{words(r.note).replace("(config)", "(fixed amount)")}</span>}
                   {r.sources.map((s, i) => <SourceLink key={i} link={s} />)}
                 </span>
               </div>

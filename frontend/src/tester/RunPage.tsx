@@ -8,6 +8,7 @@ import { api } from "../shared/api";
 import { Car3D } from "./Car3D";
 import { ConfirmCard, type ConfirmPayload } from "./ConfirmCard";
 import { PriceCard, ReportBody, type Report } from "./Report";
+import { Footer } from "./Footer";
 import { useSession } from "./session";
 import { SPOTS, VIEWS, type Spot } from "./car";
 import { Lens } from "./Lens";
@@ -98,6 +99,22 @@ function Plate({ text }: { text: string }) {
   );
 }
 
+/** Frames (Scene 6): thin slivers fan out like a hand of cards, one lifts as the sharpest; it starts again per moment. */
+function FrameFan({ turn }: { turn: number }) {
+  const angles = [-24, -18, -12, -6, 0, 6, 12, 18, 24];
+  const best = turn % angles.length;
+  return (
+    <div key={turn} className="relative mx-auto mb-4 h-16 w-24" aria-hidden>
+      {angles.map((angle, i) => (
+        <motion.span key={i} className="absolute bottom-0 left-1/2 h-14 w-3 -ml-1.5 rounded-sm border border-line-strong bg-surface"
+          style={{ originY: 1 }} initial={{ rotate: 0, opacity: 0 }}
+          animate={{ rotate: angle, opacity: 1, y: i === best ? -10 : 0, scale: i === best ? 1.15 : 1 }}
+          transition={{ ...springs.rubber, delay: i * 0.02 }} />
+      ))}
+    </div>
+  );
+}
+
 const chip = "text-label rounded-full bg-surface px-4 py-2 shadow-panel";
 
 export function RunPage() {
@@ -120,6 +137,8 @@ export function RunPage() {
     }
   };
   const [moments, setMoments] = useState<Moment[]>();
+  const [unseen, setUnseen] = useState<string[]>(); // sides the video did not show (locate coverage)
+  const [flash, setFlash] = useState<string>(); // damage card picked by tapping its pin
   const [verdicts, setVerdicts] = useState<Verdicts>();
   const s = run.steps;
   const [sentConfirm, setSentConfirm] = useState(false); // confirmed here; the next events are on their way
@@ -127,7 +146,12 @@ export function RunPage() {
   // Moments once locate is done; verdicts once verify is done (read from the run's saved results).
   useEffect(() => {
     if (s.locate.state === "done" && !moments)
-      getJson(`/api/runs/${id}/files/01_locate/response.json`).then((r) => r?.parsed?.items && setMoments(r.parsed.items));
+      getJson(`/api/runs/${id}/files/01_locate/response.json`).then((r) => {
+        if (!r?.parsed?.items) return;
+        setMoments(r.parsed.items);
+        const cov = r.parsed.coverage ?? {};
+        setUnseen(["front", "rear", "left", "right"].filter((side) => cov[side] === false));
+      });
   }, [s.locate.state, id, moments]);
   useEffect(() => {
     if (s.verify.state !== "done" || verdicts) return;
@@ -195,13 +219,27 @@ export function RunPage() {
   extra.report = "Report ready.";
   if (figures) extra.extract = `Kept ${figures.kept.length} prices that match their source; dropped ${figures.rejected.length + figures.outliers.length}, each with a reason.`;
 
+  // Report: tapping a pin on the car jumps to its damage card (F10).
+  const flashMoment = flash ? moments?.find((m) => m.id === flash) : undefined;
+  const pickPin = (index: number) => {
+    const m = moments?.[index];
+    const card = m && document.getElementById(`damage-${m.id}`);
+    if (!m || !card) return;
+    card.scrollIntoView({ behavior: "smooth", block: "center" });
+    setFlash(m.id);
+    setTimeout(() => setFlash(undefined), 1800);
+  };
+
   // The tab says what is happening, because people leave it during a run.
   useEffect(() => {
-    document.title = waiting ? "Waiting for you — CarLens"
+    const lakh = (v: number) => (v / 100000).toFixed(2);
+    document.title = report?.price.status === "ok" ? `₹${lakh(report.price.low)}–${lakh(report.price.high)} lakh — CarLens`
+      : report ? "Report ready — CarLens"
+      : waiting ? "Waiting for you — CarLens"
       : run.ended?.status === "failed" ? `Stopped at ${STEP_NAME[run.ended.failedAt ?? ""] ?? "a step"} — CarLens`
       : current ? `${STEP_NAME[current]} — CarLens` : "CarLens";
     return () => { document.title = "CarLens"; };
-  }, [waiting, run.ended, current]);
+  }, [waiting, run.ended, current, report]);
 
   if (signedOut) return me === null ? <Navigate to={`/sign-in?next=${encodeURIComponent(`/run/${id}`)}`} replace /> : null;
   if (missing)
@@ -308,7 +346,18 @@ export function RunPage() {
 
       {/* The Lens stays pinned while the page scrolls. While confirm waits, the Lens is the card on the right instead. */}
       {!waiting && (
-        <div className={`${report ? "" : "sticky top-0 bg-canvas/85 backdrop-blur-sm"} z-10 flex min-h-20 justify-center px-4 py-4`}>{lens}</div>
+        <div className={`${report ? "" : "sticky top-0 bg-canvas/85 backdrop-blur-sm"} relative z-10 flex min-h-20 justify-center px-4 py-4`}>
+          {lens}
+          {/* Verify: a drop leaves the pill and hangs below it as the loupe; it merges back when the answer comes (Scene 8). */}
+          <AnimatePresence>
+            {current === "verify" && live && (
+              <motion.span key="loupe" aria-hidden className="absolute bottom-0 left-1/2 h-4 w-4 -translate-x-1/2 rounded-full border-2 border-ink"
+                initial={{ y: -22, scale: 0.3, opacity: 0 }} animate={{ y: [6, 12, 6], scale: 1, opacity: 1 }}
+                exit={{ y: -22, scale: 0.3, opacity: 0 }}
+                transition={{ y: { duration: 2.4, repeat: Infinity, ease: "easeInOut" }, default: springs.rubber }} />
+            )}
+          </AnimatePresence>
+        </div>
       )}
       {!online && !run.ended && (
         <p className="text-small text-center text-warn-text">Connection lost. Reconnecting.</p>
@@ -321,11 +370,13 @@ export function RunPage() {
         <div>
         {/* While the web steps run, the car sinks back and dims (Scene 11). */}
         <div className={`relative transition-all duration-500 ${webStep ? "h-[clamp(10rem,28vw,15rem)] opacity-40" : "h-[clamp(15rem,48vw,26rem)]"}`}>
-          <Car3D className="absolute inset-0 h-full w-full" view={view} pins={pins} checking={checking ? spotFor(checking) : undefined}
-            secondsPerTurn={live ? 24 : 60} />
+          <Car3D className="absolute inset-0 h-full w-full" view={view} pins={pins} unseen={unseen}
+            checking={checking ? spotFor(checking) : flashMoment ? spotFor(flashMoment) : undefined}
+            secondsPerTurn={live ? 24 : 60} onPinClick={report ? pickPin : undefined} />
         </div>
 
-        <div className="min-h-24 text-center">
+        <div className={`text-center ${live ? "min-h-24" : ""}`}>
+          {current === "frames" && live && <FrameFan turn={checkIndex} />}
           {current === "locate" && (
             <ol className="mb-4 flex justify-center gap-2" aria-label="Progress of this step">
               {LOCATE_STAGES.map(([, label], i) => (
@@ -362,7 +413,7 @@ export function RunPage() {
           )}
         </div>
 
-        {report && <ReportBody report={report} runId={id} />}
+        {report && <ReportBody report={report} runId={id} flash={flash} />}
 
         {/* The shelf: facts the pipeline has learned (Scene 8). */}
         {verdicts && !report && (
@@ -395,11 +446,11 @@ export function RunPage() {
         {report && (
           <div className="mt-20 flex flex-col items-center gap-3">
             <button onClick={() => navigate("/home")} className="text-label rounded-full bg-ink px-6 py-3.5 text-canvas shadow-lens">New inspection</button>
-            <p className="text-small text-ink-3">Prices are estimates from public listings, not an offer or a certified valuation.</p>
           </div>
         )}
         </div>
       </main>
+      {report && <Footer />}
     </div>
   );
 }

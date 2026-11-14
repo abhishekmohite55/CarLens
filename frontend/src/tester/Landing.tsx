@@ -5,6 +5,7 @@ import { AnimatePresence, motion, useMotionValueEvent, useReducedMotion, useScro
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import { Car3D, type CarPin } from "./Car3D";
+import { Footer } from "./Footer";
 import { VIEWS } from "./car";
 import { Lens } from "./Lens";
 import { springs, swap } from "./motion";
@@ -33,18 +34,9 @@ const CHAPTERS: Chapter[] = [
   { id: "prices", title: "It prices", view: VIEWS.front,
     pins: [{ spot: "plate", solid: true }, { spot: "tyre_rear_left", solid: true }, { spot: "door_left_rear", solid: true }],
     text: "CarLens searches today's new and used prices for your car, keeps only figures it can quote from a source, and works out the range with plain arithmetic." },
-  { id: "hidden", title: "Nothing hidden", view: VIEWS.front,
-    text: "Open any step to see exactly what was sent to the AI and what came back, down to the raw JSON. Every price links to the page it came from." },
   { id: "end", title: "Try it on your own car",
     text: "Request access. Once the owner approves you, you can run your own inspections." },
 ];
-
-const SAMPLE_SENT = `{ "model": "gemini-3.8-flash",
-  "frames": ["L4_damage_75.0s.jpg", "+ 9 more"],
-  "ask": "Real dent, or a reflection?" }`;
-const SAMPLE_RECEIVED = `{ "id": "L4", "confirmed": true,
-  "part": "rear left door", "issue": "dent",
-  "severity": "minor", "action": "repair" }`;
 
 /** Intro (Scene 1, frames 1–5): dot → pill "CarLens" → car draws in → headline → actions. */
 function useIntro() {
@@ -84,19 +76,6 @@ function LensFor({ chapter, phase }: { chapter: Chapter; phase: number }) {
           <p className="text-small opacity-70">Example: Maruti Suzuki Ertiga ZXi 2023, Petrol</p>
           <p className="text-title mt-3"><RollingNumber text="₹10,60,000 to ₹10,71,000" /></p>
           <p className="text-small mt-3 opacity-70">Fair value after repairs, from 4 listings and 5 new-price sources.</p>
-        </div>
-      </Lens>
-    );
-  if (chapter.id === "hidden")
-    return (
-      <Lens scene="panel" radius={32} className="w-[min(92vw,40rem)]">
-        <div className="grid gap-4 p-5 sm:grid-cols-2 sm:p-6">
-          {[["Sent", SAMPLE_SENT], ["Received", SAMPLE_RECEIVED]].map(([label, json]) => (
-            <div key={label}>
-              <p className="text-label opacity-70">{label}</p>
-              <pre className="text-small mt-2 overflow-hidden rounded-input bg-canvas/10 p-3 font-mono whitespace-pre-wrap">{json}</pre>
-            </div>
-          ))}
         </div>
       </Lens>
     );
@@ -193,11 +172,7 @@ export function Landing() {
         listings; with fewer, the report says valuation unavailable instead of guessing. It is a demo, not a certified valuation.
       </Section>
 
-      <footer className="mx-auto max-w-5xl border-t border-line px-4 py-10 sm:px-8">
-        <p className="text-small text-ink-3">
-          CarLens is a demo. Prices are estimates from public listings, not an offer or a certified valuation.
-        </p>
-      </footer>
+      <Footer />
     </div>
   );
 }

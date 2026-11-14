@@ -6,6 +6,7 @@ import { Link, useNavigate } from "react-router";
 import { api } from "../shared/api";
 import { Lens } from "./Lens";
 import { springs } from "./motion";
+import { Footer } from "./Footer";
 import { useSession } from "./session";
 import { ThemeToggle } from "./theme";
 import { ACTIVE, checkFile, durationText, sendVideo, sizeText, type Limits, type RunRow } from "./upload";
@@ -289,6 +290,7 @@ export function Home() {
           </ul>
         </section>
       </main>
+      <Footer />
     </div>
   );
 }
