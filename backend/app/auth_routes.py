@@ -126,6 +126,12 @@ def api_logout(request: Request, response: Response):
     return {"ok": True}
 
 
+@router.get("/api/auth/google-client-id")
+def api_google_client_id():
+    """Public: the tester app's Google button needs it before anyone is signed in (empty = Google not set up)."""
+    return {"client_id": google_client_id()}
+
+
 @router.get("/api/auth/me")
 def api_me(user: SignedIn = Depends(require_user)):
     return _me(user)

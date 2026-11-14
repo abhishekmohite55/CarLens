@@ -163,8 +163,9 @@ def _invoke(run_id: str, graph_input) -> None:
         ev = node_result(run_id, failed)
         error = ((ev or {}).get("data") or {}).get("error") or f"{failed} did not finish"
         append_event(run_id, "pipeline", "run_done", {"status": "failed", "failed_at": failed, "error": error})
-    else:
-        append_event(run_id, "pipeline", "run_done", {"status": "partial"})
+    else:  # complete only when the report is done; partial = ended early (dev.stop_after)
+        status = "complete" if values.get("report_status") == "done" else "partial"
+        append_event(run_id, "pipeline", "run_done", {"status": status})
 
 
 def _start_state(run_id: str, start_at: str) -> dict:

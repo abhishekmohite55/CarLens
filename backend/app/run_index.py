@@ -101,6 +101,12 @@ def latest_node_result(run_id: str, node: str) -> tuple[str | None, str | None]:
     return (row.status, row.error) if row else (None, None)
 
 
+def run_status(run_id: str) -> str | None:
+    """The run's status (uploaded / running / awaiting_confirm / complete / partial / failed), None if no such run."""
+    with require_engine().connect() as conn:
+        return conn.execute(select(Run.status).where(Run.id == run_id)).scalar_one_or_none()
+
+
 def run_owner(run_id: str) -> tuple[bool, int | None]:
     """(run exists, its user id)."""
     with require_engine().connect() as conn:

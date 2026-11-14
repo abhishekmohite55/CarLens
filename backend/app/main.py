@@ -46,7 +46,7 @@ from .nodes.upload import DuplicateUpload, clean_old_pending, drop_pending, proc
 from .db import get_engine
 from .results import FILES as RESULT_FILES, delete_results, load_result
 from .run_index import (RunRefused, close_open_rows, interrupted_nodes, latest_node_result, other_active_run, run_owner,
-                        user_runs)
+                        user_runs, run_status)
 from .runs import append_event, events_path, failed_at, run_dir
 from .settings_store import SettingsError, repin_run
 
@@ -215,6 +215,7 @@ def api_get_run(run_id: str):
 
 
 def _has_locate_event(run_id: str) -> bool:
+    """True once the run got past upload: a locate event, or a run_done (a run ended before it started must not start)."""
     ep = events_path(run_id)
     if not ep.exists():
         return False
@@ -222,11 +223,23 @@ def _has_locate_event(run_id: str) -> bool:
         for line in f:
             try:
                 ev = json.loads(line)
-                if ev.get("node") == "locate":
+                if ev.get("node") == "locate" or ev.get("type") == "run_done":
                     return True
             except json.JSONDecodeError:
                 pass
     return False
+
+
+@app.post("/api/runs/{run_id}/end", dependencies=_RUN)
+def api_end_run(run_id: str):
+    """A video uploaded but never started (tab closed): end it so the user can start a fresh run (owner, 12-14 Nov).
+    The run ends partial; its token is not given back (resume is free instead)."""
+    with _start_lock:
+        if run_status(run_id) != "uploaded" or run_id in _started:
+            return JSONResponse(status_code=409, content={
+                "error": {"code": "already_started", "message": "This run has already started."}})
+        append_event(run_id, "pipeline", "run_done", {"status": "partial", "error": "Ended before it started"})
+    return {"ended": True}
 
 
 @app.get("/api/runs/{run_id}/events", dependencies=_RUN)
