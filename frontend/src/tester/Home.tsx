@@ -24,7 +24,7 @@ const STATUS: Record<string, { word: string; tone: string }> = {
   uploaded: { word: "Not started", tone: "text-warn-text" },
   running: { word: "Running", tone: "text-ink" },
   awaiting_confirm: { word: "Waiting for you", tone: "text-ink font-medium" },
-  complete: { word: "Done", tone: "text-ok-text" },
+  complete: { word: "Completed successfully", tone: "text-ok-text" },
   partial: { word: "Stopped", tone: "text-ink-3" },
   failed: { word: "Stopped", tone: "text-danger-text" },
 };
