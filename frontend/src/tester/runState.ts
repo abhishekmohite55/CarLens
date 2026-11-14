@@ -22,9 +22,10 @@ export type Run = {
   waiting: boolean; // paused at confirm
   confirmPayload?: Record<string, any>; // what the confirm card shows (awaiting_confirm event)
   ended?: { status: string; failedAt?: string; error?: string };
+  resumedAt: string[]; // when a stopped run was resumed (shown in the diary, so the failure stays visible)
 };
 
-export const emptyRun = (): Run => ({ steps: Object.fromEntries(STEPS.map((s) => [s, { state: "waiting" }])), waiting: false });
+export const emptyRun = (): Run => ({ steps: Object.fromEntries(STEPS.map((s) => [s, { state: "waiting" }])), waiting: false, resumedAt: [] });
 
 /** Applies one event. Pure, so a reload rebuilds the same picture from the replayed events. */
 export function apply(run: Run, e: RunEvent): Run {
@@ -33,6 +34,7 @@ export function apply(run: Run, e: RunEvent): Run {
   const d = e.data ?? {};
   const next: Run = { ...run, steps };
   if (e.type === "node_started" && step) {
+    if (run.ended?.status === "failed") next.resumedAt = [...run.resumedAt, e.ts];
     steps[e.node] = { state: "running", startedAt: e.ts };
     Object.assign(next, { current: e.node, note: undefined, ended: undefined, waiting: false });
   } else if (e.type === "node_progress" && step) {

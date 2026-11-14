@@ -79,7 +79,8 @@ export function Home() {
     if (!wrong) setStage({ kind: "picked", file, url: URL.createObjectURL(file) });
   };
   // The preview URL is released when the tile goes away.
-  useEffect(() => () => { if (stage.kind === "picked") URL.revokeObjectURL(stage.url); }, [stage]);
+  const previewUrl = stage.kind === "picked" ? stage.url : null;
+  useEffect(() => () => { if (previewUrl) URL.revokeObjectURL(previewUrl); }, [previewUrl]);
 
   const upload = async (file: File) => {
     setProblem("");
@@ -121,12 +122,26 @@ export function Home() {
 
   let lens;
   if (blocked && active?.status === "uploaded") {
+    // Start a fresh run (owner, 14 Nov): the old run ends partially, its token is not given back.
+    const endIt = async () => {
+      setProblem("");
+      try {
+        await api(`/api/runs/${active.run_id}/end`, { method: "POST" });
+      } catch (e) {
+        setProblem(e instanceof Error ? e.message : "Could not end that run.");
+      }
+      await Promise.all([refresh(), loadRuns()]);
+    };
     lens = (
       <Lens scene="not-started" radius={32} className="w-[min(92vw,26rem)]">
         <div className="space-y-3 p-6">
           <p className="text-heading">You have a video that hasn't started.</p>
           <p className="text-body opacity-80">{active.file}</p>
-          <Link to={`/run/${active.run_id}`} className={`${onCanvas} inline-block`}>Continue</Link>
+          <div className="flex flex-wrap gap-2">
+            <Link to={`/run/${active.run_id}`} className={onCanvas}>Continue</Link>
+            <button onClick={endIt} className={quiet}>Start a fresh run</button>
+          </div>
+          <p className="text-small opacity-70">Starting fresh ends this one. A new video uses 1 run.</p>
         </div>
       </Lens>
     );

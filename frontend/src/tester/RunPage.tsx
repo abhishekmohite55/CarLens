@@ -3,10 +3,12 @@
 // Testers see no Sent / Received (owner, 14 Nov).
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useMemo, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router";
+import { Link, Navigate, useNavigate, useParams } from "react-router";
+import { api } from "../shared/api";
 import { Car3D } from "./Car3D";
 import { ConfirmCard, type ConfirmPayload } from "./ConfirmCard";
 import { PriceCard, ReportBody, type Report } from "./Report";
+import { useSession } from "./session";
 import { SPOTS, VIEWS, type Spot } from "./car";
 import { Lens } from "./Lens";
 import { springs, swap } from "./motion";
@@ -29,6 +31,7 @@ async function getJson(path: string): Promise<any> {
 function useRun(id: string) {
   const [run, setRun] = useState<Run>(emptyRun);
   const [missing, setMissing] = useState(false);
+  const [signedOut, setSignedOut] = useState(false);
   const [online, setOnline] = useState(true);
   useEffect(() => {
     let lastSeq = 0;
@@ -43,11 +46,15 @@ function useRun(id: string) {
     };
     source.onerror = () => {
       setOnline(false);
-      fetch(`/api/runs/${id}`).then((r) => { if (r.status === 404) { setMissing(true); source.close(); } });
+      fetch(`/api/runs/${id}`).then((r) => {
+        if (r.status === 404) { setMissing(true); source.close(); }
+        if (r.status === 401) { setSignedOut(true); source.close(); } // session ended (24 h): sign in, then come back
+      }).catch(() => {}); // server unreachable: the browser keeps retrying the stream
+
     };
     return () => source.close();
   }, [id]);
-  return { run, missing, online };
+  return { run, missing, online, signedOut };
 }
 
 /** Counts up once a second; returns m:ss since `since`. */
@@ -95,7 +102,23 @@ const chip = "text-label rounded-full bg-surface px-4 py-2 shadow-panel";
 
 export function RunPage() {
   const { id = "" } = useParams();
-  const { run, missing, online } = useRun(id);
+  const { run, missing, online, signedOut } = useRun(id);
+  const { me, setMe } = useSession();
+  // The session ended: forget it here too, or the sign-in page would send us straight back (it thinks we are in).
+  useEffect(() => { if (signedOut) setMe(null); }, [signedOut, setMe]);
+  const [resumeProblem, setResumeProblem] = useState("");
+  const [resuming, setResuming] = useState(false);
+  const resume = async () => {
+    setResumeProblem("");
+    setResuming(true);
+    try {
+      await api(`/api/runs/${id}/resume`, { method: "POST" });
+    } catch (e) {
+      setResumeProblem(e instanceof Error ? e.message : "Could not resume. Try again.");
+    } finally {
+      setResuming(false);
+    }
+  };
   const [moments, setMoments] = useState<Moment[]>();
   const [verdicts, setVerdicts] = useState<Verdicts>();
   const s = run.steps;
@@ -180,6 +203,7 @@ export function RunPage() {
     return () => { document.title = "CarLens"; };
   }, [waiting, run.ended, current]);
 
+  if (signedOut) return me === null ? <Navigate to={`/sign-in?next=${encodeURIComponent(`/run/${id}`)}`} replace /> : null;
   if (missing)
     return (
       <div className="flex min-h-svh items-center justify-center bg-canvas px-4 text-ink">
@@ -205,10 +229,16 @@ export function RunPage() {
     const at = run.ended.failedAt ?? "";
     lens = (
       <Lens scene="failed" radius={32} tone="danger" className="w-[min(92vw,28rem)]">
-        <div className="space-y-2 p-6">
-          <p className="text-heading">{STEP_NAME[at] ?? "A step"} stopped.</p>
-          <p className="text-small break-words opacity-90">{run.ended.error ?? s[at]?.error}</p>
-          <p className="text-small opacity-90">Everything found before this step is kept. Resuming arrives in a later stage.</p>
+        <div className="space-y-3 p-6">
+          <p className="text-heading">{at === "admin" ? "The owner stopped this run." : `${STEP_NAME[at] ?? "A step"} stopped.`}</p>
+          {at !== "admin" && <p className="text-small break-words opacity-90">{run.ended.error ?? s[at]?.error}</p>}
+          <button onClick={resume} disabled={resuming}
+            className="text-label rounded-full bg-on-status px-5 py-3 text-danger disabled:opacity-60">
+            {resuming ? "Resuming" : at === "admin" ? "Resume" : `Resume from ${STEP_NAME[at]?.toLowerCase() ?? "this step"}`}
+          </button>
+          <p className="text-small opacity-90">Steps before this one are kept, so resuming is free.</p>
+          {resumeProblem && <p role="alert" className="text-small rounded-input bg-on-status/90 px-3 py-2 text-danger">{resumeProblem}{" "}
+            {/another run|in progress/i.test(resumeProblem) && <Link to="/home" className="underline">Go to your runs</Link>}</p>}
         </div>
       </Lens>
     );
@@ -352,6 +382,11 @@ export function RunPage() {
               <motion.li key={k} {...swap} className="text-body text-ink-2">
                 <span className="text-label mr-2 text-ink">{STEP_NAME[k]}</span>{diaryLine(k, run, moments, verdicts, extra)}
               </motion.li>
+            ))}
+            {run.resumedAt.map((ts) => (
+              <li key={ts} className="text-small text-ink-3">
+                Resumed at {new Date(ts).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })} after the step above stopped.
+              </li>
             ))}
           </ol>
         )}

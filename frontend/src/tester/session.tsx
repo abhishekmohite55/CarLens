@@ -1,6 +1,6 @@
 // Who is signed in, shared by every screen of the tester app (uses the shared useMe hook, like the admin app).
 import { createContext, useContext, type ReactNode } from "react";
-import { Navigate } from "react-router";
+import { Navigate, useLocation } from "react-router";
 import { useMe } from "../shared/useMe";
 
 type Session = ReturnType<typeof useMe>;
@@ -17,10 +17,17 @@ export function homeFor(status: string | undefined) {
   return status === "approved" ? "/home" : "/waiting";
 }
 
+/** Where to go after signing in: back to the page that needed it (?next=/run/…), else Home or the waiting screen. */
+export function afterSignIn(status: string | undefined, search: string) {
+  const next = new URLSearchParams(search).get("next");
+  return status === "approved" && next?.startsWith("/") && !next.startsWith("//") ? next : homeFor(status);
+}
+
 /** Screens for signed-out visitors: a signed-in person is sent on. */
 export function SignedOutOnly({ children }: { children: ReactNode }) {
   const { me } = useSession();
-  if (me) return <Navigate to={homeFor(me.status)} replace />;
+  const { search } = useLocation();
+  if (me) return <Navigate to={afterSignIn(me.status, search)} replace />;
   return children;
 }
 

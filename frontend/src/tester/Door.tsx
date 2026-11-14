@@ -2,12 +2,12 @@
 // Sign in, request access, waiting for approval, refused. The Lens is the card; switching screens morphs it.
 import { motion } from "motion/react";
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
-import { Link, useNavigate } from "react-router";
+import { Link, useLocation, useNavigate } from "react-router";
 import { api, ApiError, type Me } from "../shared/api";
 import { loadGoogle, setGoogleHandler } from "./google";
 import { Lens } from "./Lens";
 import { springs } from "./motion";
-import { homeFor, useSession } from "./session";
+import { afterSignIn, homeFor, useSession } from "./session";
 
 const field = "text-body w-full rounded-input bg-canvas px-4 py-3 text-ink outline-none placeholder:text-ink-3 focus:ring-2 focus:ring-line-strong";
 const primary = "text-label w-full rounded-full bg-canvas px-5 py-3.5 text-ink disabled:opacity-60";
@@ -85,6 +85,7 @@ export function DoorForm({ mode }: { mode: "sign-in" | "request" }) {
   const signIn = mode === "sign-in";
   const { setMe } = useSession();
   const navigate = useNavigate();
+  const { search } = useLocation();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [problem, setProblem] = useState("");
@@ -100,7 +101,7 @@ export function DoorForm({ mode }: { mode: "sign-in" | "request" }) {
     try {
       const me = await api<Me>(signIn ? "/api/auth/login" : "/api/auth/signup", { method: "POST", body: { email, password } });
       setMe(me);
-      navigate(homeFor(me.status));
+      navigate(afterSignIn(me.status, search));
     } catch (e) {
       if (e instanceof ApiError && e.code === "code_required") setProblem("This is the admin account. Sign in on the admin app.");
       else setProblem(e instanceof Error ? e.message : "Something went wrong. Try again.");
@@ -115,6 +116,7 @@ export function DoorForm({ mode }: { mode: "sign-in" | "request" }) {
         <form onSubmit={submit} className="space-y-4 p-6 sm:p-8">
           <h1 className="text-title">{signIn ? "Sign in to CarLens" : "Request access"}</h1>
           {!signIn && <p className="text-body opacity-80">The owner approves each request. You can use CarLens once you are approved.</p>}
+          {signIn && new URLSearchParams(search).get("next") && <p className="text-body opacity-80">You were signed out. Sign in to continue where you were.</p>}
           <Arrive order={0}>
             <label className="text-label block space-y-2">
               <span className="opacity-80">Email</span>

@@ -118,3 +118,24 @@ def test_same_video_again_asks_first(env):
     with db_engine.connect() as conn:
         owner = conn.execute(select(Run.user_id).where(Run.id == r.json()["run_id"])).scalar_one()
     assert owner is not None
+
+
+def test_end_a_run_that_never_started(env):
+    """F9: a video uploaded but never started can be ended (no token back), then a fresh run is allowed."""
+    db_engine, app, shas, _ = env
+    client = _tester(db_engine, app, tokens=2)
+    run1 = client.post("/api/runs", files=VIDEO, headers=ORIGIN).json()["run_id"]
+    other = _tester(db_engine, app, tokens=1)
+    assert other.post(f"/api/runs/{run1}/end", headers=ORIGIN).status_code == 404  # not their run
+
+    assert client.post(f"/api/runs/{run1}/end", headers=ORIGIN).json() == {"ended": True}
+    assert _tokens(client) == 1  # the token is not given back
+    statuses = {r["run_id"]: r["status"] for r in client.get("/api/runs").json()["runs"]}
+    assert statuses[run1] == "partial"
+    r = client.post(f"/api/runs/{run1}/end", headers=ORIGIN)
+    assert r.status_code == 409 and r.json()["error"]["code"] == "already_started"
+
+    shas["sha"] = "d" * 64
+    run2 = client.post("/api/runs", files=VIDEO, headers=ORIGIN).json()["run_id"]  # the slot is free again
+    _finish(db_engine, run2)
+    assert client.post(f"/api/runs/{run2}/end", headers=ORIGIN).status_code == 409  # not "uploaded" any more
