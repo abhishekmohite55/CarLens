@@ -1,6 +1,6 @@
 // Stage F5: the run page, part 1 (docs/frontend/13-storyboard.md, Scenes 5–8): find moments, frames, plate, verify.
 // Everything on screen is driven by the run's real events; animations loop only while a step really runs (rule 2).
-// Testers see no Sent / Received (owner, 14 Nov).
+// Users see no Sent / Received (owner, 14 Nov).
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useMemo, useState } from "react";
 import { Link, Navigate, useNavigate, useParams } from "react-router";

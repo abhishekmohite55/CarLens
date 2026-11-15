@@ -14,7 +14,7 @@ from sqlalchemy import insert, select, update
 ORIGIN = {"Origin": "http://127.0.0.1:8000"}
 
 
-def _user(db_engine, role="tester", status="pending", tokens=0, password="tester password 1"):
+def _user(db_engine, role="user", status="pending", tokens=0, password="user password 1"):
     from app.auth import hash_password
     from app.models import User
     email = f"{role}{uuid4().hex[:10]}@runs.test"
@@ -60,10 +60,10 @@ def test_approve_tokens_password_and_signout(admin, db_engine):
     r = client.post(f"/api/admin/users/{user_id}/password", json={"password": "short"}, headers=ORIGIN)
     assert r.json()["error"]["code"] == "short_password"
     assert client.post(f"/api/admin/users/{user_id}/password", json={"password": "new password 12"}, headers=ORIGIN).status_code == 200
-    tester = TestClient(client.app)
-    assert tester.post("/api/auth/login", json={"email": email, "password": "new password 12"}, headers=ORIGIN).status_code == 200
+    user = TestClient(client.app)
+    assert user.post("/api/auth/login", json={"email": email, "password": "new password 12"}, headers=ORIGIN).status_code == 200
     assert client.post(f"/api/admin/users/{user_id}/signout", headers=ORIGIN).status_code == 200
-    assert tester.get("/api/auth/me").status_code == 401
+    assert user.get("/api/auth/me").status_code == 401
 
     assert _audit(db_engine, admin_id) == ["approve_user", "set_tokens", "set_tokens", "set_tokens", "reset_password", "sign_out_user"]
     actions = [e["action"] for e in client.get("/api/admin/audit").json()["entries"][:6]]

@@ -1,4 +1,4 @@
-// Who is signed in, shared by every screen of the tester app (uses the shared useMe hook, like the admin app).
+// Who is signed in, shared by every screen of the app (uses the shared useMe hook, like the admin app).
 import { createContext, useContext, type ReactNode } from "react";
 import { Navigate, useLocation } from "react-router";
 import { useMe } from "../shared/useMe";

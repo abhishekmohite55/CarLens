@@ -1,4 +1,4 @@
-// Light / dark theme for the tester app. The first value is set before first paint by the script in index.html
+// Light / dark theme for the app. The first value is set before first paint by the script in index.html
 // (saved choice, else the device setting); the choice is kept in this browser only.
 import { useState } from "react";
 

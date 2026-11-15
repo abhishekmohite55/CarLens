@@ -1,5 +1,5 @@
-// The run as the tester sees it, rebuilt from the run's events (GET /api/runs/{id}/events replays them, then streams).
-// No Sent / Received for testers (owner, 14 Nov): only steps, their state and plain sentences.
+// The run as the user sees it, rebuilt from the run's events (GET /api/runs/{id}/events replays them, then streams).
+// No Sent / Received for users (owner, 14 Nov): only steps, their state and plain sentences.
 import type { CarPin } from "./Car3D";
 import type { Spot } from "./car";
 
@@ -60,7 +60,7 @@ export function apply(run: Run, e: RunEvent): Run {
   return next;
 }
 
-/** One sentence per finished step, in the tester's words (the diary). */
+/** One sentence per finished step, in the user's words (the diary). */
 export function diaryLine(step: string, run: Run, moments?: Moment[], verdicts?: Verdicts, extra?: Record<string, string>): string {
   const s = run.steps[step];
   if (extra?.[step] && s.state === "done") return extra[step];

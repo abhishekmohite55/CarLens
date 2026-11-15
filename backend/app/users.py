@@ -64,11 +64,11 @@ def signups_last_hour(ip: str) -> int:
                             .where(SignupAttempt.ip == ip, SignupAttempt.created_at > since)).scalar_one()
 
 
-def create_tester(email: str, ip: str, password_hash: str | None = None, google_sub: str | None = None) -> int:
-    """New pending tester (= an access request) and one sign-up attempt for the address, in one transaction."""
+def create_user(email: str, ip: str, password_hash: str | None = None, google_sub: str | None = None) -> int:
+    """New pending user (= an access request) and one sign-up attempt for the address, in one transaction."""
     with require_engine().begin() as conn:
         user_id = conn.execute(insert(User).values(
-            email=normal_email(email), password_hash=password_hash, google_sub=google_sub, role="tester",
+            email=normal_email(email), password_hash=password_hash, google_sub=google_sub, role="user",
             status="pending", tokens=0).returning(User.id)).scalar_one()
         conn.execute(insert(SignupAttempt).values(ip=ip))
     return user_id

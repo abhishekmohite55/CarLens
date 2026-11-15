@@ -44,7 +44,7 @@ ACTIVE_STATUSES = ("uploaded", "running", "awaiting_confirm")
 
 
 class RunRefused(Exception):
-    """A tester may not start a run now (platform step 5, 05-login.md §7.2)."""
+    """A user may not start a run now (platform step 5, 05-login.md §7.2)."""
 
     def __init__(self, status: int, code: str, message: str):
         super().__init__(message)
@@ -63,7 +63,7 @@ def run_refusal(active_runs: int, tokens: int) -> RunRefused | None:
 def create_run_row(*, sha256: str, original_filename: str, size_bytes: int, duration_sec: float,
                    user_id: int | None = None, spend_token: bool = False) -> str:
     """Insert the runs row under a new random id and return the id. A clash draws a new id.
-    spend_token (testers): in the same transaction, check one run at a time and take 1 token; raises RunRefused."""
+    spend_token (users): in the same transaction, check one run at a time and take 1 token; raises RunRefused."""
     from .settings_store import new_run_pins  # imported here: settings_store imports config and models too
 
     engine = require_engine()

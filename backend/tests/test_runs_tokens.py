@@ -34,15 +34,15 @@ def env(db_engine, tmp_path, monkeypatch):
     return db_engine, app, shas, tmp_path
 
 
-def _tester(db_engine, app, tokens):
+def _user_client(db_engine, app, tokens):
     from app.auth import hash_password
     from app.models import User
     email = f"t{uuid4().hex[:10]}@runs.test"
     with db_engine.begin() as conn:
-        conn.execute(insert(User).values(email=email, password_hash=hash_password("tester password 1"),
-                                         role="tester", status="approved", tokens=tokens))
+        conn.execute(insert(User).values(email=email, password_hash=hash_password("user password 1"),
+                                         role="user", status="approved", tokens=tokens))
     client = TestClient(app)
-    assert client.post("/api/auth/login", json={"email": email, "password": "tester password 1"}, headers=ORIGIN).status_code == 200
+    assert client.post("/api/auth/login", json={"email": email, "password": "user password 1"}, headers=ORIGIN).status_code == 200
     return client
 
 
@@ -58,7 +58,7 @@ def _tokens(client):
 
 def test_one_token_per_run_and_one_run_at_a_time(env):
     db_engine, app, shas, _ = env
-    client = _tester(db_engine, app, tokens=2)
+    client = _user_client(db_engine, app, tokens=2)
     run1 = client.post("/api/runs", files=VIDEO, headers=ORIGIN).json()["run_id"]
     assert _tokens(client) == 1
 
@@ -80,8 +80,8 @@ def test_one_token_per_run_and_one_run_at_a_time(env):
 def test_users_see_only_their_own_runs(env):
     db_engine, app, shas, _ = env
     shas["sha"] = uuid4().hex * 2
-    alice = _tester(db_engine, app, tokens=1)
-    bob = _tester(db_engine, app, tokens=1)
+    alice = _user_client(db_engine, app, tokens=1)
+    bob = _user_client(db_engine, app, tokens=1)
     run_id = alice.post("/api/runs", files=VIDEO, headers=ORIGIN).json()["run_id"]
 
     assert alice.get(f"/api/runs/{run_id}").status_code == 200
@@ -95,7 +95,7 @@ def test_users_see_only_their_own_runs(env):
 def test_same_video_again_asks_first(env):
     db_engine, app, shas, tmp_path = env
     shas["sha"] = uuid4().hex * 2
-    client = _tester(db_engine, app, tokens=3)
+    client = _user_client(db_engine, app, tokens=3)
     run1 = client.post("/api/runs", files=VIDEO, headers=ORIGIN).json()["run_id"]
     _finish(db_engine, run1)
 
@@ -108,7 +108,7 @@ def test_same_video_again_asks_first(env):
     assert not (tmp_path / "pending" / pending).exists()
 
     pending = client.post("/api/runs", files=VIDEO, headers=ORIGIN).json()["pending_id"]
-    other = _tester(db_engine, app, tokens=1)
+    other = _user_client(db_engine, app, tokens=1)
     assert other.post(f"/api/uploads/{pending}/start", headers=ORIGIN).status_code == 404  # not theirs
     r = client.post(f"/api/uploads/{pending}/start", headers=ORIGIN)  # "fresh run"
     assert r.status_code == 200 and r.json()["run_id"] != run1
@@ -123,9 +123,9 @@ def test_same_video_again_asks_first(env):
 def test_end_a_run_that_never_started(env):
     """F9: a video uploaded but never started can be ended (no token back), then a fresh run is allowed."""
     db_engine, app, shas, _ = env
-    client = _tester(db_engine, app, tokens=2)
+    client = _user_client(db_engine, app, tokens=2)
     run1 = client.post("/api/runs", files=VIDEO, headers=ORIGIN).json()["run_id"]
-    other = _tester(db_engine, app, tokens=1)
+    other = _user_client(db_engine, app, tokens=1)
     assert other.post(f"/api/runs/{run1}/end", headers=ORIGIN).status_code == 404  # not their run
 
     assert client.post(f"/api/runs/{run1}/end", headers=ORIGIN).json() == {"ended": True}

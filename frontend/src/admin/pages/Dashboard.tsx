@@ -373,8 +373,8 @@ function Usage({ d }: { d: Dash }) {
   );
 }
 
-function Testers({ tokens }: { tokens: Dash["tokens"] }) {
-  if (tokens.length === 0) return <Empty>No approved testers yet.</Empty>;
+function Users({ tokens }: { tokens: Dash["tokens"] }) {
+  if (tokens.length === 0) return <Empty>No approved users yet.</Empty>;
   return (
     <ul className="space-y-1">
       {tokens.slice(0, 6).map((t) => (
@@ -440,7 +440,7 @@ export function Dashboard() {
             <ModelAnswers models={d.models} theme={theme} />
           </Card>
           <Card title="Usage" className="lg:col-span-3"><Usage d={d} /></Card>
-          <Card title="Testers" className="lg:col-span-4"><Testers tokens={d.tokens} /></Card>
+          <Card title="Users" className="lg:col-span-4"><Users tokens={d.tokens} /></Card>
 
           <Card title="Last errors" className="lg:col-span-12">
             {d.last_errors.length === 0 ? <Empty>No step failed in this period.</Empty> : (

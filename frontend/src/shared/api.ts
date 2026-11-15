@@ -22,4 +22,4 @@ export async function api<T>(path: string, options: { method?: string; body?: un
   return data as T;
 }
 
-export type Me = { email: string; role: "admin" | "tester"; status: "pending" | "approved" | "rejected"; tokens: number };
+export type Me = { email: string; role: "admin" | "user"; status: "pending" | "approved" | "rejected"; tokens: number };

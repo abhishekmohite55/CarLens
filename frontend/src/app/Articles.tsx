@@ -1,5 +1,5 @@
 // F10 articles (owner, 14 Nov): "How CarLens works" kept short, and "Questions". No method details, no providers:
-// testers are not given everything. Open to anyone, signed in or not.
+// users are not given everything. Open to anyone, signed in or not.
 import { motion } from "motion/react";
 import type { ReactNode } from "react";
 import { Link } from "react-router";
@@ -67,7 +67,7 @@ const QUESTIONS = [
 
 export function Questions() {
   return (
-    <Page title="Questions" intro="Short answers to what testers ask most.">
+    <Page title="Questions" intro="Short answers to what people ask most.">
       <div className="divide-y divide-line">
         {QUESTIONS.map(([q, a]) => (
           <details key={q} className="group py-5">
