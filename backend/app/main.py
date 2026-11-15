@@ -74,7 +74,7 @@ _APPROVED = [Depends(require_approved)]
 
 
 def run_access(run_id: str, user: SignedIn = Depends(require_approved)) -> SignedIn:
-    """The admin opens every run; a tester only their own. Someone else's run answers 404, so ids cannot be probed."""
+    """The admin opens every run; a user only their own. Someone else's run answers 404, so ids cannot be probed."""
     if user.role != "admin":
         exists, owner = run_owner(run_id)
         if not exists or owner != user.id:
@@ -150,7 +150,7 @@ def api_config():
 
 @app.post("/api/runs")
 async def api_create_run(video: UploadFile = File(...), user: SignedIn = Depends(require_approved)):
-    """Upload → new run. Testers: 1 token, one run at a time, same video again asks first (05-login.md §7.2, §7.3)."""
+    """Upload → new run. Users: 1 token, one run at a time, same video again asks first (05-login.md §7.2, §7.3)."""
     try:
         return await process_upload(video, user.id, is_admin=user.role == "admin")
     except DuplicateUpload as dup:
@@ -641,7 +641,7 @@ def api_run_file(run_id: str, path: str):
 def inspector(request: Request):
     user = signed_in_user(request)
     if user is None or user.role != "admin":
-        return RedirectResponse("/login", status_code=303, headers=NO_STORE)
+        return RedirectResponse("/admin", status_code=303, headers=NO_STORE)
     return FileResponse(_INSPECTOR, headers=NO_STORE)  # never from the browser cache: a signed-out visit must redirect
 
 

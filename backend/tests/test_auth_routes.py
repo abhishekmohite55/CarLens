@@ -27,7 +27,7 @@ def test_admin_signs_in_with_password_and_code(db_engine):
     from app.main import app
     client = TestClient(app)
 
-    assert client.get("/inspector", follow_redirects=False).headers["location"] == "/login"
+    assert client.get("/inspector", follow_redirects=False).headers["location"] == "/admin"
     assert client.get("/api/auth/me").status_code == 401
 
     r = client.post("/api/auth/login", json={"email": "admin-a@test", "password": "admin password 1"}, headers=ORIGIN)

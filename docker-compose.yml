@@ -54,7 +54,7 @@ services:
       postgres:
         condition: service_healthy
 
-  frontend: # platform step 6.5: nginx serves the admin and tester apps and passes /api to the backend
+  frontend: # platform step 6.5: nginx serves the admin app and the app and passes /api to the backend
     build:
       context: ./frontend
     ports:

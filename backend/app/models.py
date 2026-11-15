@@ -280,7 +280,7 @@ class User(Base):
     email: Mapped[str] = mapped_column(Text, unique=True)  # lowercase, trimmed
     password_hash: Mapped[str | None] = mapped_column(Text)  # argon2; NULL for Google-only users
     google_sub: Mapped[str | None] = mapped_column(Text, unique=True)  # Google's id for the person (stage 5.2)
-    role: Mapped[str] = mapped_column(Text, default="tester")  # admin / tester
+    role: Mapped[str] = mapped_column(Text, default="user")  # admin / user
     status: Mapped[str] = mapped_column(Text, default="pending")  # pending / approved / rejected
     tokens: Mapped[int] = mapped_column(Integer, default=0)  # runs left (1 token = 1 run)
     totp_secret: Mapped[str | None] = mapped_column(Text)  # authenticator setup key, admin only

@@ -1,6 +1,6 @@
 @import "tailwindcss";
 
-/* Admin typefaces (loaded in admin/index.html); the tester app keeps the system font until the frontend chat. */
+/* Admin typefaces (loaded in admin/index.html); the app has its own file, src/app/app.css. */
 @theme {
   --font-display: "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif;
   --font-admin: "Hanken Grotesk", ui-sans-serif, system-ui, sans-serif;

@@ -56,7 +56,7 @@ def list_users(status: str | None = None) -> list[dict[str, Any]]:
              "last_login_at": _iso(r.last_login_at)} for r in rows]
 
 
-def _tester(conn: Connection, user_id: int):
+def _user(conn: Connection, user_id: int):
     """The user row, refused for the admin account (admin rows are not changed from the app)."""
     user = conn.execute(select(User).where(User.id == user_id).with_for_update()).first()
     if user is None:
@@ -69,7 +69,7 @@ def _tester(conn: Connection, user_id: int):
 def approve_user(admin_id: int, user_id: int) -> None:
     tokens = get_config().access.default_tokens
     with require_engine().begin() as conn:
-        _tester(conn, user_id)
+        _user(conn, user_id)
         conn.execute(update(User).where(User.id == user_id).values(
             status="approved", tokens=tokens, approved_at=datetime.now(timezone.utc)))
         _audit(conn, admin_id, "approve_user", f"user {user_id}", {"tokens": tokens})
@@ -77,14 +77,14 @@ def approve_user(admin_id: int, user_id: int) -> None:
 
 def reject_user(admin_id: int, user_id: int) -> None:
     with require_engine().begin() as conn:
-        _tester(conn, user_id)
+        _user(conn, user_id)
         conn.execute(update(User).where(User.id == user_id).values(status="rejected", tokens=0))
         _audit(conn, admin_id, "reject_user", f"user {user_id}")
 
 
 def change_tokens(admin_id: int, user_id: int, set_to: int | None, add: int | None) -> int:
     with require_engine().begin() as conn:
-        user = _tester(conn, user_id)
+        user = _user(conn, user_id)
         tokens = new_tokens(user.tokens, set_to, add)
         conn.execute(update(User).where(User.id == user_id).values(tokens=tokens))
         _audit(conn, admin_id, "set_tokens", f"user {user_id}", {"from": user.tokens, "to": tokens})
@@ -96,7 +96,7 @@ def reset_password(admin_id: int, user_id: int, password: str) -> None:
     if len(password) < MIN_PASSWORD:
         raise AuthError(400, "short_password", f"Use at least {MIN_PASSWORD} characters.")
     with require_engine().begin() as conn:
-        _tester(conn, user_id)
+        _user(conn, user_id)
         conn.execute(update(User).where(User.id == user_id).values(
             password_hash=hash_password(password), failed_logins=0, locked_until=None))
         conn.execute(delete(Session).where(Session.user_id == user_id))
@@ -105,7 +105,7 @@ def reset_password(admin_id: int, user_id: int, password: str) -> None:
 
 def sign_out_user(admin_id: int, user_id: int) -> None:
     with require_engine().begin() as conn:
-        _tester(conn, user_id)
+        _user(conn, user_id)
         conn.execute(delete(Session).where(Session.user_id == user_id))
         _audit(conn, admin_id, "sign_out_user", f"user {user_id}")
 
@@ -113,7 +113,7 @@ def sign_out_user(admin_id: int, user_id: int) -> None:
 def delete_user(admin_id: int, user_id: int) -> None:
     """Only a user without runs (P5): runs keep their owner for the record."""
     with require_engine().begin() as conn:
-        user = _tester(conn, user_id)
+        user = _user(conn, user_id)
         if conn.execute(select(func.count()).select_from(Run).where(Run.user_id == user_id)).scalar_one():
             raise AuthError(409, "has_runs", "This user has runs. Reject or sign out instead.")
         conn.execute(delete(User).where(User.id == user_id))
@@ -250,14 +250,14 @@ def dashboard(days: int = 30) -> dict[str, Any]:
             WHERE n.node = 'search' AND n.status = 'done'
               AND n.started_at >= date_trunc('month', now() AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata'""")).scalar_one()
         access = rows("""
-            SELECT count(*) FILTER (WHERE status = 'pending' AND role = 'tester') AS pending,
-                   count(*) FILTER (WHERE status = 'approved' AND role = 'tester') AS approved,
+            SELECT count(*) FILTER (WHERE status = 'pending' AND role = 'user') AS pending,
+                   count(*) FILTER (WHERE status = 'approved' AND role = 'user') AS approved,
                    count(*) FILTER (WHERE locked_until > now()) AS locked
             FROM users""")[0]
         tokens = rows("""
             SELECT u.email, u.tokens AS tokens_left, count(r.id) AS runs
             FROM users u LEFT JOIN runs r ON r.user_id = u.id
-            WHERE u.role = 'tester' AND u.status = 'approved'
+            WHERE u.role = 'user' AND u.status = 'approved'
             GROUP BY u.id ORDER BY runs DESC, u.email LIMIT 50""")
         prices = rows("""
             SELECT coalesce(p.status, 'none') AS status, count(*) AS n FROM prices p JOIN runs r ON r.id = p.run_id

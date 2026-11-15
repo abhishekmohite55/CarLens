@@ -86,9 +86,9 @@ cd backend
 python -m pytest -q
 ```
 
-## Frontend (tester app + admin app)
+## Frontend (app + admin app)
 
-`frontend/` is one React + Vite + TypeScript + Tailwind project with two apps: the tester app at `/` (built in the frontend chat) and the admin app at `/admin/`. Needs Node.js 24 (the image and CI use 24.20.0). The backend must be running on port 8000 (container or venv).
+`frontend/` is one React + Vite + TypeScript + Tailwind project with two apps: the app at `/` (built in the frontend chat) and the admin app at `/admin/`. Needs Node.js 24 (the image and CI use 24.20.0). The backend must be running on port 8000 (container or venv).
 
 ```
 cd frontend

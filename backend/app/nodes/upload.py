@@ -101,7 +101,7 @@ async def receive_upload(video: UploadFile) -> Received:
 
 
 def start_run(rec: Received, user_id: int | None, spend_token: bool) -> str:
-    """runs row (token taken for testers), then the run folder, the video, meta.json and the upload events.
+    """runs row (token taken for users), then the run folder, the video, meta.json and the upload events.
     Raises RunRefused (the file is left where it is; the caller cleans up)."""
     # runs row first: the primary key guarantees the random id is unique; then the folder
     run_id = create_run_row(sha256=rec.sha256, original_filename=rec.name, size_bytes=rec.size,
@@ -132,7 +132,7 @@ def start_run(rec: Received, user_id: int | None, spend_token: bool) -> str:
 
 
 async def process_upload(video: UploadFile, user_id: int, is_admin: bool) -> dict:
-    """Upload → new run. Testers: same video again raises DuplicateUpload; one run at a time and 1 token (RunRefused).
+    """Upload → new run. Users: same video again raises DuplicateUpload; one run at a time and 1 token (RunRefused).
     The admin has no limits (dev re-runs)."""
     clean_old_pending()
     rec = await receive_upload(video)

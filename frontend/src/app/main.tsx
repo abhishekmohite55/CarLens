@@ -9,7 +9,7 @@ import { Home } from "./Home";
 import { Landing } from "./Landing";
 import { RunPage } from "./RunPage";
 import { homeFor, NeedStatus, SessionProvider, SignedOutOnly, useSession } from "./session";
-import "./tester.css";
+import "./app.css";
 
 /** The landing page is for visitors; someone already signed in goes straight on. */
 function Start({ children }: { children: ReactNode }) {
@@ -18,7 +18,7 @@ function Start({ children }: { children: ReactNode }) {
   return children;
 }
 
-// Tester app (docs/frontend/12-frontend-plan.md, storyboard 13-storyboard.md): F1–F10.
+// The app (docs/frontend/12-frontend-plan.md, storyboard 13-storyboard.md): F1–F10.
 // reducedMotion="user": with the device's reduced-motion setting, shapes change without moving.
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

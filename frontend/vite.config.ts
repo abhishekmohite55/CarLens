@@ -1,5 +1,5 @@
 // CarLens frontend (platform step 6, docs/platform/06-admin.md §7): one project, two apps.
-//   /        tester app (index.html)       built in the frontend chat
+//   /        app (index.html)              built in the frontend chat
 //   /admin/  admin app  (admin/index.html) built in step 6
 // In development, /api goes to the backend on :8000 (container or venv), so pages and API share one address
 // and the sign-in cookie works as it will behind nginx.
@@ -29,12 +29,12 @@ export default defineConfig({
     host: "127.0.0.1",
     port: 5173,
     strictPort: true,
-    proxy: { "/api": "http://127.0.0.1:8000" },
+    proxy: { "/api": "http://127.0.0.1:8000", "^/(inspector|docs|openapi\\.json)$": "http://127.0.0.1:8000" },
   },
   build: {
     rollupOptions: {
       input: {
-        tester: resolve(import.meta.dirname, "index.html"),
+        app: resolve(import.meta.dirname, "index.html"),
         admin: resolve(import.meta.dirname, "admin/index.html"),
       },
     },

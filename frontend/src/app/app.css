@@ -1,4 +1,4 @@
-/* Tester app look (docs/frontend/13-storyboard.md, Part 1). The admin app keeps its own file, src/index.css. */
+/* App look (docs/frontend/13-storyboard.md, Part 1). The admin app keeps its own file, src/index.css. */
 @import "tailwindcss";
 
 @font-face {

@@ -1,23 +1,20 @@
-"""Sign-in routes and the plain /login page (platform step 5, docs/platform/05-login.md §6, §7.1).
-5.1: admin sign-in (password + authenticator code). 5.2: tester sign-up (password) and Google sign-in.
+"""Sign-in routes (platform step 5, docs/platform/05-login.md §6, §7.1).
+5.1: admin sign-in (password + authenticator code). 5.2: user sign-up (password) and Google sign-in.
 """
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, Request, Response
-from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
-from .auth import NO_STORE, AuthError, SignedIn, check_origin, code_matches, end_session, google_client_id, \
+from .auth import AuthError, SignedIn, check_origin, code_matches, end_session, google_client_id, \
     hash_password, password_matches, require_user, start_session, verify_google_token
 from .config import get_config
-from .users import MIN_PASSWORD, create_tester, find_google_user, find_user, is_locked, link_google, \
+from .users import MIN_PASSWORD, create_user, find_google_user, find_user, is_locked, link_google, \
     looks_like_email, record_failed_login, record_login, signup_allowed, signups_last_hour
 
 router = APIRouter()
-_LOGIN_PAGE = Path(__file__).parent / "login.html"
 _WRONG = "Wrong email, password or code."
 
 
@@ -50,13 +47,6 @@ def _check_signup_limit(ip: str) -> None:
         raise AuthError(429, "signup_limit", "Too many new accounts from this network. Try again in an hour.")
 
 
-@router.get("/login")
-def login_page():
-    # The Google button needs the client ID; it is public (Google shows it in every sign-in page).
-    html = _LOGIN_PAGE.read_text(encoding="utf-8").replace("__GOOGLE_CLIENT_ID__", google_client_id())
-    return HTMLResponse(html, headers=NO_STORE)
-
-
 @router.post("/api/auth/login", dependencies=[Depends(check_origin)])
 def api_login(body: LoginBody, response: Response):
     cfg = get_config().auth
@@ -80,7 +70,7 @@ def api_login(body: LoginBody, response: Response):
 
 @router.post("/api/auth/signup", dependencies=[Depends(check_origin)])
 def api_signup(body: SignupBody, request: Request, response: Response):
-    """Sign-up = access request: a pending tester, signed in at once so the page can show the status."""
+    """Sign-up = access request: a pending user, signed in at once so the page can show the status."""
     if not looks_like_email(body.email):
         raise AuthError(400, "bad_email", "Enter a valid email address.")
     if len(body.password) < MIN_PASSWORD:
@@ -89,7 +79,7 @@ def api_signup(body: SignupBody, request: Request, response: Response):
         raise AuthError(409, "email_taken", "This email already has an account. Sign in instead.")
     ip = _client_ip(request)
     _check_signup_limit(ip)
-    user_id = create_tester(body.email, ip, password_hash=hash_password(body.password))
+    user_id = create_user(body.email, ip, password_hash=hash_password(body.password))
     start_session(response, user_id)
     return _me(find_user(body.email))
 
@@ -111,7 +101,7 @@ def api_google(body: GoogleBody, request: Request, response: Response):
     if user is None:
         ip = _client_ip(request)
         _check_signup_limit(ip)
-        create_tester(email, ip, google_sub=sub)
+        create_user(email, ip, google_sub=sub)
     elif user.google_sub is None:
         link_google(user.id, sub)  # same email signed up with a password before: one account
     user = find_google_user(sub)
@@ -128,7 +118,7 @@ def api_logout(request: Request, response: Response):
 
 @router.get("/api/auth/google-client-id")
 def api_google_client_id():
-    """Public: the tester app's Google button needs it before anyone is signed in (empty = Google not set up)."""
+    """Public: the app's Google button needs it before anyone is signed in (empty = Google not set up)."""
     return {"client_id": google_client_id()}
 
 
