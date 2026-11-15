@@ -7,13 +7,14 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse, StreamingResponse
 from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 
 from .auth import NO_STORE, AuthError, SignedIn, require_admin, require_approved, signed_in_user
 from .admin_routes import router as admin_router
@@ -49,6 +50,7 @@ from .run_index import (RunRefused, close_open_rows, interrupted_nodes, latest_n
                         user_runs, run_status)
 from .runs import append_event, events_path, failed_at, run_dir
 from .settings_store import SettingsError, repin_run
+from .storage import fetch_run, push_run
 
 # run_ids that have started or are starting the graph
 _started: set[str] = set()
@@ -135,6 +137,13 @@ _NODES = [
 ]
 
 
+def _local_run(run_id: str, with_video: bool = False) -> Path:
+    """The run folder on this server; brought back from S3 first when it was pruned (step 8.1).
+    with_video: also the video (resume and admin re-runs may start at locate or frames)."""
+    fetch_run(run_id, with_video=with_video)
+    return run_dir(run_id)
+
+
 @app.get("/api/config", dependencies=_APPROVED)
 def api_config():
     cfg = get_config()
@@ -149,10 +158,13 @@ def api_config():
 
 
 @app.post("/api/runs")
-async def api_create_run(video: UploadFile = File(...), user: SignedIn = Depends(require_approved)):
+async def api_create_run(background: BackgroundTasks, video: UploadFile = File(...),
+                         user: SignedIn = Depends(require_approved)):
     """Upload → new run. Users: 1 token, one run at a time, same video again asks first (05-login.md §7.2, §7.3)."""
     try:
-        return await process_upload(video, user.id, is_admin=user.role == "admin")
+        out = await process_upload(video, user.id, is_admin=user.role == "admin")
+        background.add_task(push_run, out["run_id"])  # the video to S3 (step 8.1)
+        return out
     except DuplicateUpload as dup:
         return JSONResponse(status_code=409, content={
             "error": {"code": "same_video", "message": "You uploaded this video before. Open the old run, or start a fresh run (1 token)."},
@@ -166,9 +178,11 @@ def api_list_runs(user: SignedIn = Depends(require_approved)):
 
 
 @app.post("/api/uploads/{pending_id}/start")
-def api_start_pending(pending_id: str, user: SignedIn = Depends(require_approved)):
+def api_start_pending(pending_id: str, background: BackgroundTasks, user: SignedIn = Depends(require_approved)):
     """Same video again → "fresh run": the kept upload becomes a new run (1 token)."""
-    return start_pending(pending_id, user.id)
+    out = start_pending(pending_id, user.id)
+    background.add_task(push_run, out["run_id"])  # the video to S3 (step 8.1)
+    return out
 
 
 @app.delete("/api/uploads/{pending_id}")
@@ -180,7 +194,7 @@ def api_drop_pending(pending_id: str, user: SignedIn = Depends(require_approved)
 
 @app.get("/api/runs/{run_id}", dependencies=_RUN)
 def api_get_run(run_id: str):
-    rd = run_dir(run_id)
+    rd = _local_run(run_id)
     if not rd.exists():
         raise HTTPException(404, detail=f"Run '{run_id}' not found.")
 
@@ -244,7 +258,7 @@ def api_end_run(run_id: str):
 
 @app.get("/api/runs/{run_id}/events", dependencies=_RUN)
 async def api_run_events(run_id: str):
-    rd = run_dir(run_id)
+    rd = await run_in_threadpool(_local_run, run_id)
     if not rd.exists():
         raise HTTPException(404, detail=f"Run '{run_id}' not found.")
 
@@ -275,6 +289,7 @@ def _single_step(run_id: str, node: str, step) -> None:
                 append_event(run_id, "pipeline", "run_done", {"status": "failed", "failed_at": node, "error": error})
             else:
                 append_event(run_id, "pipeline", "run_done", {"status": "partial", "stopped_after": node})
+        push_run(run_id)  # S3 copy (step 8.1)
 
 
 # What a node clears before it runs again (resume). Locate keeps video_small.mp4, photos keep the uploaded jpgs.
@@ -301,7 +316,7 @@ def _clear_node(rd: Path, node: str) -> None:
 @app.post("/api/runs/{run_id}/locate", status_code=202, dependencies=_ADMIN)
 def api_run_locate(run_id: str):
     """Dev (used by /inspector): re-run only locate; reuses 01_locate/video_small.mp4 when the shrink already finished."""
-    rd = run_dir(run_id)
+    rd = _local_run(run_id, with_video=True)
     if not rd.exists():
         raise HTTPException(404, detail=f"Run '{run_id}' not found.")
     if not locate_try_claim(run_id):
@@ -316,7 +331,7 @@ def api_run_locate(run_id: str):
 @app.post("/api/runs/{run_id}/resume", status_code=202)
 def api_resume(run_id: str, user: SignedIn = Depends(run_access)):
     """Start the pipeline again at the node the run stopped at, then carry on to the end. Free (no token)."""
-    rd = run_dir(run_id)
+    rd = _local_run(run_id, with_video=True)
     if not rd.exists():
         raise HTTPException(404, detail=f"Run '{run_id}' not found.")
     if user.role != "admin" and other_active_run(user.id, run_id):
@@ -346,7 +361,7 @@ def api_resume(run_id: str, user: SignedIn = Depends(run_access)):
 
 @app.post("/api/runs/{run_id}/frames", status_code=202, dependencies=_ADMIN)
 def api_run_frames(run_id: str):
-    rd = run_dir(run_id)
+    rd = _local_run(run_id, with_video=True)
     if not rd.exists():
         raise HTTPException(404, detail=f"Run '{run_id}' not found.")
 
@@ -366,7 +381,7 @@ def api_run_frames(run_id: str):
 
 @app.post("/api/runs/{run_id}/verify", status_code=202, dependencies=_ADMIN)
 def api_run_verify(run_id: str):
-    rd = run_dir(run_id)
+    rd = _local_run(run_id, with_video=True)
     if not rd.exists():
         raise HTTPException(404, detail=f"Run '{run_id}' not found.")
 
@@ -410,7 +425,7 @@ _confirm_lock = threading.Lock()
 @app.post("/api/runs/{run_id}/confirm/start", dependencies=_RUN)
 def api_confirm_start(run_id: str):
     """Dev (used by /inspector): show the confirm step on a run whose graph already ended after verify."""
-    rd = run_dir(run_id)
+    rd = _local_run(run_id)
     if not rd.exists():
         raise HTTPException(404, detail=f"Run '{run_id}' not found.")
     if not load_verify_answer(run_id):
@@ -431,7 +446,7 @@ def api_confirm_start(run_id: str):
 
 @app.post("/api/runs/{run_id}/confirm", dependencies=_RUN)
 def api_confirm(run_id: str, answer: ConfirmAnswer):
-    rd = run_dir(run_id)
+    rd = _local_run(run_id)
     if not rd.exists():
         raise HTTPException(404, detail=f"Run '{run_id}' not found.")
     with _confirm_lock:
@@ -460,7 +475,7 @@ def api_confirm(run_id: str, answer: ConfirmAnswer):
 
 def _photo_guard(run_id: str, slot: str):
     """Photos can change only while confirm waits; the odometer slot only when the video read no km."""
-    rd = run_dir(run_id)
+    rd = _local_run(run_id)
     if not rd.exists():
         raise HTTPException(404, detail=f"Run '{run_id}' not found.")
     if slot not in SLOTS:
@@ -502,7 +517,7 @@ def api_delete_photo(run_id: str, slot: str):
 @app.post("/api/runs/{run_id}/plan", status_code=202, dependencies=_ADMIN)
 def api_run_plan(run_id: str):
     """Dev (used by /inspector): re-run only the plan node on a confirmed run; deletes its old results."""
-    rd = run_dir(run_id)
+    rd = _local_run(run_id, with_video=True)
     if not rd.exists():
         raise HTTPException(404, detail=f"Run '{run_id}' not found.")
     if load_record(run_id) is None:
@@ -521,7 +536,7 @@ def api_run_plan(run_id: str):
 @app.post("/api/runs/{run_id}/search", status_code=202, dependencies=_ADMIN)
 def api_run_search(run_id: str):
     """Dev (used by /inspector): re-run only the search node on a run with plan queries; deletes its old results."""
-    rd = run_dir(run_id)
+    rd = _local_run(run_id, with_video=True)
     if not rd.exists():
         raise HTTPException(404, detail=f"Run '{run_id}' not found.")
     if load_result(run_id, "06_plan/queries.json") is None:
@@ -540,7 +555,7 @@ def api_run_search(run_id: str):
 @app.post("/api/runs/{run_id}/extract", status_code=202, dependencies=_ADMIN)
 def api_run_extract(run_id: str):
     """Dev (used by /inspector): re-run only the extract node on a run with search results; deletes its old results."""
-    rd = run_dir(run_id)
+    rd = _local_run(run_id, with_video=True)
     if not rd.exists():
         raise HTTPException(404, detail=f"Run '{run_id}' not found.")
     if load_result(run_id, "07_search/results.json") is None:
@@ -559,7 +574,7 @@ def api_run_extract(run_id: str):
 @app.post("/api/runs/{run_id}/pricing", status_code=202, dependencies=_ADMIN)
 def api_run_pricing(run_id: str):
     """Dev (used by /inspector): re-run only the pricing node on a run with extract figures; deletes its old price."""
-    rd = run_dir(run_id)
+    rd = _local_run(run_id, with_video=True)
     if not rd.exists():
         raise HTTPException(404, detail=f"Run '{run_id}' not found.")
     if load_result(run_id, "08_extract/figures.json") is None:
@@ -578,7 +593,7 @@ def api_run_pricing(run_id: str):
 @app.post("/api/runs/{run_id}/report", status_code=202, dependencies=_ADMIN)
 def api_run_report(run_id: str):
     """Dev (used by /inspector): rebuild only the report from the saved node results (no AI call)."""
-    rd = run_dir(run_id)
+    rd = _local_run(run_id, with_video=True)
     if not rd.exists():
         raise HTTPException(404, detail=f"Run '{run_id}' not found.")
     if load_record(run_id) is None:
@@ -609,7 +624,7 @@ def api_cities(state: str = ""):
 
 @app.get("/api/runs/{run_id}/files/{path:path}", dependencies=_RUN)
 def api_run_file(run_id: str, path: str):
-    rd = run_dir(run_id)
+    rd = _local_run(run_id)
     if not rd.exists():
         raise HTTPException(404, detail=f"Run '{run_id}' not found.")
 

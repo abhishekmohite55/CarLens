@@ -10,7 +10,7 @@ from typing import Optional
 
 import yaml
 from dotenv import load_dotenv
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent  # F:\CarLens
 
@@ -144,6 +144,11 @@ class AccessConfig(BaseModel):
     default_tokens: int = 5  # given when the owner approves a request
 
 
+class StorageConfig(BaseModel):
+    """Run files on S3 (platform step 8.1); used only when the env var S3_BUCKET is set."""
+    local_keep_days: int = Field(7, ge=1)  # finished runs untouched this long lose their server copy (S3 keeps it)
+
+
 class AppConfig(BaseModel):
     upload: UploadConfig
     models: ModelsConfig
@@ -159,6 +164,7 @@ class AppConfig(BaseModel):
     dev: DevConfig = DevConfig()
     auth: AuthConfig = AuthConfig()
     access: AccessConfig = AccessConfig()
+    storage: StorageConfig = StorageConfig()
 
 
 # --- which config a caller gets (platform step 6.3, docs/platform/06-admin.md §6.1) ---

@@ -13,7 +13,7 @@ type Loaded = Version & { options: { stop_after: string[]; providers: string[] }
 type VersionRow = { id: number; saved_at: string; saved_by: string | null; note: string | null };
 type Problem = { field: string; message: string };
 
-const SECTIONS = ["upload", "models", "locate_video", "frames", "confirm", "photos", "plan", "search", "extract", "pricing", "dev", "auth", "access", "paths"];
+const SECTIONS = ["upload", "models", "locate_video", "frames", "confirm", "photos", "plan", "search", "extract", "pricing", "dev", "auth", "access", "storage", "paths"];
 const READ_ONLY = ["paths"]; // moving run folders under a live app would lose runs
 const LEVELS = ["", "minimal", "low", "medium", "high"];
 // Fields with a fixed set of values ("" = empty = default)
@@ -32,6 +32,7 @@ const HINTS: Record<string, string> = {
   "models.locate": "Video call (Google SDK). The fallback model is tried on a 503 / 500 / 504 / 429.",
   "upload.max_duration_sec": "Longest video accepted, in seconds.",
   "access.default_tokens": "Runs given when you approve a request.",
+  "storage.local_keep_days": "On the server with S3: finished runs untouched this long keep only the S3 copy.",
 };
 
 const input = "rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-sm text-neutral-100";

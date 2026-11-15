@@ -24,6 +24,7 @@ from .nodes.extract import run_extract
 from .nodes.pricing import run_pricing
 from .nodes.report import run_report
 from .runs import TERMINAL, append_event, node_result, read_events
+from .storage import push_run
 
 _checkpointer: PostgresSaver | None = None
 
@@ -70,7 +71,10 @@ def _step(node: str, fn):
     """Run one node; its status is its own done/failed/skipped event (no event = did not finish = failed)."""
     def run(state: GraphState) -> GraphState:
         before = max((e.get("seq", 0) for e in read_events(state["run_id"])), default=0)
-        fn(state["run_id"])
+        try:
+            fn(state["run_id"])
+        finally:
+            push_run(state["run_id"])  # S3 copy after every node (step 8.1)
         ev = node_result(state["run_id"], node, before)
         return {**state, f"{node}_status": TERMINAL[ev["type"]] if ev else "failed"}
     return run
@@ -80,8 +84,10 @@ def _confirm_node(state: GraphState) -> GraphState:
     payload = start_confirm(state["run_id"])
     if payload is None:
         return {**state, "confirm_status": "skipped"}
+    push_run(state["run_id"])  # the confirm payload and events, before the pause (step 8.1)
     answer = interrupt(payload)  # pauses here; POST /confirm resumes with the user's answer
     finish_confirm(state["run_id"], payload, answer)
+    push_run(state["run_id"])
     return {**state, "confirm_status": "done"}
 
 
@@ -148,6 +154,13 @@ def is_paused(run_id: str) -> bool:
 
 
 def _invoke(run_id: str, graph_input) -> None:
+    try:
+        _invoke_graph(run_id, graph_input)
+    finally:
+        push_run(run_id)  # the run_done event (step 8.1)
+
+
+def _invoke_graph(run_id: str, graph_input) -> None:
     config = {"configurable": {"thread_id": run_id}}
     try:
         get_graph().invoke(graph_input, config=config)
