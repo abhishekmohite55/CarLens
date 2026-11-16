@@ -16,6 +16,7 @@ from sqlalchemy.engine import Connection
 from .auth import AuthError, hash_password
 from .config import get_config
 from .db import require_engine
+from .storage import delete_run_files
 from .models import AuditLog, Base, NodeRun, Run, RunEvent, Session, User
 from .users import MIN_PASSWORD
 
@@ -194,6 +195,7 @@ def delete_run(admin_id: int, run_id: str, run_folder, forget_checkpoint) -> Non
                {"file": run.original_filename, "status": run.status, "user_id": run.user_id})
     forget_checkpoint(run_id)
     shutil.rmtree(run_folder, ignore_errors=True)
+    delete_run_files(run_id)  # S3 copy (step 8.1)
 
 
 # --- audit log ---

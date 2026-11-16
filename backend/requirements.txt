@@ -6,6 +6,7 @@ pydantic==2.14.2
 PyYAML==6.0.3
 python-dotenv==1.2.4
 opencv-python-headless==5.0.0.93
+boto3==1.44.3
 google-genai==2.34.0
 tavily-python==0.8.5
 langfuse==5.1.0

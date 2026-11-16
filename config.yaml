@@ -128,6 +128,9 @@ auth: # platform step 5 sign-in (docs/platform/05-login.md)
 access: # access requests (platform step 6)
   default_tokens: 5 # runs given when the owner approves a request
 
+storage: # run files on S3 (platform step 8.1); used only when S3_BUCKET is set in .env
+  local_keep_days: 7 # finished runs untouched this long lose their server copy; opened again = fetched from S3
+
 paths:
   runs_dir: runs
   prompts_dir: prompts
