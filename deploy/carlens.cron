@@ -1,0 +1,7 @@
+# Nightly jobs (platform stage 8.2). Installed as /etc/cron.d/carlens (runbook). Server clock = UTC.
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# 20:30 UTC = 02:00 IST: database backup to S3
+30 20 * * * root bash /opt/carlens/repo/deploy/backup.sh >> /var/log/carlens-backup.log 2>&1
+# 21:30 UTC = 03:00 IST: delete the server copy of finished runs older than storage.local_keep_days (S3 keeps them)
+30 21 * * * root docker compose -f /opt/carlens/repo/deploy/docker-compose.prod.yml exec -T backend python -m app.storage prune >> /var/log/carlens-prune.log 2>&1

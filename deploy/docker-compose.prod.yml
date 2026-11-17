@@ -1,0 +1,53 @@
+# Production on the EC2 server (platform stage 8.2, docs/platform/08-2-production-files.md).
+# Started by deploy.sh, never by hand on the laptop. Values in ${...} come from deploy/.env, which deploy.sh writes
+# from Parameter Store (/carlens/prod/*) plus TAG (the git commit of the images).
+# Visitor → CloudFront → caddy (:443, checks X-Origin-Secret) → frontend (nginx) → backend (/api, admin tools).
+name: carlens
+
+x-logs: &logs # docker logs kept small: 3 files × 10 MB per container
+  driver: json-file
+  options: { max-size: "10m", max-file: "3" }
+
+services:
+  caddy:
+    image: caddy:2.11.7
+    restart: unless-stopped
+    ports: # the only published ports: 80 for Let's Encrypt's check (+ redirect), 443 for CloudFront
+      - "80:80"
+      - "443:443"
+    environment:
+      ORIGIN_HOST: ${ORIGIN_HOST:?ORIGIN_HOST missing in deploy/.env}
+      ORIGIN_SECRET: ${ORIGIN_SECRET:?ORIGIN_SECRET missing in deploy/.env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data # the certificate: kept across restarts, so Let's Encrypt is not asked again
+      - caddy_config:/config
+    mem_limit: 128m
+    logging: *logs
+    depends_on:
+      - frontend
+
+  frontend: # same image as the laptop's frontend container (nginx + built app and admin)
+    image: ${ECR_REGISTRY:?ECR_REGISTRY missing in deploy/.env}/carlens-app:${TAG:?TAG missing in deploy/.env}
+    restart: unless-stopped
+    mem_limit: 64m
+    logging: *logs
+    depends_on:
+      - backend
+
+  backend:
+    image: ${ECR_REGISTRY}/carlens-backend:${TAG}
+    restart: unless-stopped
+    env_file:
+      - path: .env # secrets as environment variables (written by deploy.sh)
+        required: false # only so the laptop check works without it; TAG above fails first when it is missing
+    volumes:
+      - runs:/carlens/runs # working folder; S3 keeps every run (stage 8.1)
+    # memory check 17 Nov 2026: ~600 MiB peak per run; the cap stops only the backend if a run runs away
+    mem_limit: 1400m
+    logging: *logs
+
+volumes:
+  runs:
+  caddy_data:
+  caddy_config:

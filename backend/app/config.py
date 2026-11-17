@@ -137,6 +137,7 @@ class AuthConfig(BaseModel):
     max_signups_per_hour: int = 5
     cookie_secure: bool = False  # true on AWS (https only)
     allowed_origins: list[str] = ["http://127.0.0.1:8000", "http://localhost:8000", "http://localhost:5173"]
+    client_ip_header: str = ""  # step 8.2: "X-Viewer-IP" on AWS (set by a CloudFront Function); empty = direct address
 
 
 class AccessConfig(BaseModel):

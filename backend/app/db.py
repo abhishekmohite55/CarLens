@@ -30,7 +30,9 @@ def get_engine() -> Engine | None:
         if _engine is None:
             url = database_url()
             if url:
-                _engine = create_engine(url, pool_pre_ping=True, connect_args={"connect_timeout": 3})
+                # at most 8 connections (step 8.2): the Supabase session pooler allows ~15, LangGraph uses 3
+                _engine = create_engine(url, pool_pre_ping=True, pool_size=4, max_overflow=4,
+                                        connect_args={"connect_timeout": 3})
         return _engine
 
 

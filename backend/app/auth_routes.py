@@ -37,9 +37,18 @@ def _me(user) -> dict:
     return {"email": user.email, "role": user.role, "status": user.status, "tokens": user.tokens}
 
 
+def client_ip(header_value: str | None, peer: str | None) -> str:
+    """The visitor's address: the header's value when one is configured and sent, else the direct peer."""
+    if header_value and header_value.strip():
+        return header_value.split(",")[0].strip()
+    return peer or "unknown"
+
+
 def _client_ip(request: Request) -> str:
-    # Behind AWS's load balancer the real address comes from a header; decided in step 8 (05-login.md §10).
-    return request.client.host if request.client else "unknown"
+    # On AWS, CloudFront → Caddy → nginx hide the visitor; a CloudFront Function puts the address in a header,
+    # named by auth.client_ip_header (step 8.2). Trusted because Caddy only accepts requests from CloudFront.
+    name = get_config().auth.client_ip_header
+    return client_ip(request.headers.get(name) if name else None, request.client.host if request.client else None)
 
 
 def _check_signup_limit(ip: str) -> None:

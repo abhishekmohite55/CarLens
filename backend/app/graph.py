@@ -38,9 +38,12 @@ def _get_checkpointer() -> PostgresSaver:
             raise RuntimeError("DATABASE_URL is not set in .env")
         u = make_url(url)  # parsed like the rest of the backend (SQLAlchemy), so the password is read the same way
         # connect_timeout: a host that does not answer (e.g. "localhost" → IPv6 ::1 on Windows) fails in 10 s, not minutes
+        # sslmode kept from the URL (step 8.2): Supabase is reached with ?sslmode=require
+        ssl = {"sslmode": u.query["sslmode"]} if u.query.get("sslmode") else {}
         conninfo = make_conninfo(host=u.host, port=u.port, dbname=u.database, user=u.username, password=u.password,
-                                 connect_timeout=10)
-        pool = ConnectionPool(conninfo=conninfo, max_size=10, open=True,
+                                 connect_timeout=10, **ssl)
+        # small pool (step 8.2): the Supabase session pooler allows ~15 connections for everything (db.py pool too)
+        pool = ConnectionPool(conninfo=conninfo, min_size=1, max_size=3, open=True,
                               kwargs={"autocommit": True, "prepare_threshold": 0, "row_factory": dict_row})
         saver = PostgresSaver(pool)
         saver.setup()  # kept only after setup worked, so a failed setup is retried (and its error shown) next time

@@ -32,6 +32,7 @@ const HINTS: Record<string, string> = {
   "models.locate": "Video call (Google SDK). The fallback model is tried on a 503 / 500 / 504 / 429.",
   "upload.max_duration_sec": "Longest video accepted, in seconds.",
   "access.default_tokens": "Runs given when you approve a request.",
+  "auth.client_ip_header": "Empty on the laptop. On AWS: X-Viewer-IP (the visitor's address, from CloudFront).",
   "storage.local_keep_days": "On the server with S3: finished runs untouched this long keep only the S3 copy.",
 };
 

@@ -1,0 +1,18 @@
+# Caddy on the server (platform stage 8.2). Gets and renews a free Let's Encrypt certificate for the DuckDNS name
+# by itself; only requests from CloudFront (they carry the secret header) reach the app.
+{$ORIGIN_HOST} {
+	@cloudfront header X-Origin-Secret {$ORIGIN_SECRET}
+
+	handle @cloudfront {
+		request_body {
+			max_size 600MB # videos up to upload.max_size_mb (500) + room
+		}
+		reverse_proxy frontend:80 {
+			flush_interval -1 # live run events (SSE) are passed on at once
+		}
+	}
+
+	handle {
+		respond "Forbidden" 403
+	}
+}
