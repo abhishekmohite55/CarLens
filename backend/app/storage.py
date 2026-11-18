@@ -79,9 +79,14 @@ def _remote(run_id: str) -> dict[str, dict]:
     return out
 
 
+def _is_temp(rel: str) -> bool:
+    """A file still being written (video_small.part.mp4, fetch's *.part): never copied either way."""
+    return ".part" in rel.rsplit("/", 1)[-1]
+
+
 def _local(folder: Path) -> dict[str, os.stat_result]:
-    return {p.relative_to(folder).as_posix(): p.stat()
-            for p in folder.rglob("*") if p.is_file() and not p.is_symlink()}
+    return {rel: p.stat() for p in folder.rglob("*")
+            if p.is_file() and not p.is_symlink() and not _is_temp(rel := p.relative_to(folder).as_posix())}
 
 
 def _changed(run_id: str, rel: str, st: os.stat_result, remote: dict | None) -> bool:
@@ -123,7 +128,7 @@ def fetch_run(run_id: str, with_video: bool = False) -> None:
         try:
             for rel, obj in _remote(run_id).items():
                 target = folder / rel
-                if target.exists() or (_is_video(rel) and not with_video):
+                if target.exists() or _is_temp(rel) or (_is_video(rel) and not with_video):
                     continue
                 target.parent.mkdir(parents=True, exist_ok=True)
                 tmp = target.with_name(target.name + ".part")
