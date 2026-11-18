@@ -189,3 +189,12 @@ def test_prune_keeps_new_unfinished_and_unsynced_runs(s3):
     _age(new, 8)
     assert storage.prune_local(keep_days=7) == []
     assert new.exists()
+
+
+def test_temp_files_are_not_pushed(s3):
+    d = _make_run(s3.runs)
+    (d / "01_locate").mkdir()
+    (d / "01_locate" / "video_small.part.mp4").write_bytes(b"half")
+    storage.push_run(RUN)
+    assert f"runs/{RUN}/01_locate/video_small.part.mp4" not in s3.uploads
+    assert f"runs/{RUN}/video.mp4" in s3.uploads
