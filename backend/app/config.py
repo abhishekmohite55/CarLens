@@ -145,6 +145,12 @@ class AccessConfig(BaseModel):
     default_tokens: int = 5  # given when the owner approves a request
 
 
+class MaintenanceConfig(BaseModel):
+    """Maintenance mode during a deploy (platform step 9, docs/platform/09-cd.md §5a)."""
+    confirm_grace_min: int = Field(5, ge=0)  # runs waiting at confirm may still be confirmed this long
+    max_wait_min: int = Field(30, ge=1)  # the deploy waits at most this long for working runs
+
+
 class StorageConfig(BaseModel):
     """Run files on S3 (platform step 8.1); used only when the env var S3_BUCKET is set."""
     local_keep_days: int = Field(7, ge=1)  # finished runs untouched this long lose their server copy (S3 keeps it)
@@ -166,6 +172,7 @@ class AppConfig(BaseModel):
     auth: AuthConfig = AuthConfig()
     access: AccessConfig = AccessConfig()
     storage: StorageConfig = StorageConfig()
+    maintenance: MaintenanceConfig = MaintenanceConfig()
 
 
 # --- which config a caller gets (platform step 6.3, docs/platform/06-admin.md §6.1) ---

@@ -64,7 +64,12 @@ export function Home() {
 
   const loadRuns = useCallback(async () => setRuns((await api<{ runs: RunRow[] }>("/api/runs")).runs), []);
   useEffect(() => {
-    api<{ upload: Limits }>("/api/config").then((c) => setLimits(c.upload)).catch(() => setProblem("Could not load the upload limits."));
+    api<{ upload: Limits; maintenance?: boolean }>("/api/config")
+      .then((c) => {
+        setLimits(c.upload);
+        if (c.maintenance) setProblem("CarLens is being updated. Try again in a few minutes."); // step 9 deploy
+      })
+      .catch(() => setProblem("Could not load the upload limits."));
     loadRuns().catch(() => setRuns([]));
   }, [loadRuns]);
 

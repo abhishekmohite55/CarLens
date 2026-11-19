@@ -335,3 +335,13 @@ class PromptVersion(Base):
     created_by: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="SET NULL"))
     note: Mapped[str | None] = mapped_column(Text)
     text: Mapped[str] = mapped_column(Text)
+
+
+# --- Deploys (platform step 9, docs/platform/09-cd.md §5a) ---
+
+class AppState(Base):
+    __tablename__ = "app_state"  # one row (id 1)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    maintenance: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    maintenance_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    maintenance_by: Mapped[str | None] = mapped_column(Text)
