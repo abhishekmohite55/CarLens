@@ -7,6 +7,7 @@ name: CI
 on:
   pull_request:
     branches: [main]
+  workflow_call: # step 9: the Deploy workflow runs the same checks first (docs/platform/09-cd.md, Q3)
 
 jobs:
   lint:

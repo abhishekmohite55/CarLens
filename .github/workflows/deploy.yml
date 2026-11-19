@@ -1,0 +1,92 @@
+# CD (platform step 9, docs/platform/09-cd.md): after every merge into main, run the CI checks, build both images,
+# push them to ECR and release them on carlens-server (maintenance mode, wait, deploy.sh, maintenance off).
+# Rollback: Actions → Deploy → Run workflow → tag = an older 7-character commit (no checks, no build).
+# AWS access: GitHub OIDC → role carlens-deploy-role; no AWS keys are stored in GitHub.
+# Repository variables (Settings → Secrets and variables → Actions → Variables):
+#   AWS_ROLE_ARN, AWS_REGION, ECR_REGISTRY, INSTANCE_ID
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Version to deploy (7-character commit, already in ECR). Empty = build this commit."
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  id-token: write # OIDC token for AWS
+
+concurrency: # one deploy at a time; a newer merge waits for the running one
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  checks:
+    if: github.event_name == 'push' || inputs.tag == ''
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    needs: checks
+    # runs after green checks, or without checks for a rollback to an existing tag
+    if: ${{ !cancelled() && (needs.checks.result == 'success' || needs.checks.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      ECR: ${{ vars.ECR_REGISTRY }}
+      INSTANCE_ID: ${{ vars.INSTANCE_ID }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Version
+        env:
+          INPUT_TAG: ${{ inputs.tag }} # through the environment, never pasted into the script (no shell injection)
+        run: |
+          if [ -n "$INPUT_TAG" ]; then
+            if ! [[ "$INPUT_TAG" =~ ^[0-9a-f]{7}$ ]]; then echo "tag must be 7 hex characters, got '$INPUT_TAG'" >&2; exit 1; fi
+            echo "TAG=$INPUT_TAG" >> "$GITHUB_ENV"; echo "BUILD=no" >> "$GITHUB_ENV"
+          else
+            echo "TAG=${GITHUB_SHA::7}" >> "$GITHUB_ENV"; echo "BUILD=yes" >> "$GITHUB_ENV"
+          fi
+
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Build and push images
+        if: env.BUILD == 'yes'
+        run: |
+          aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$ECR"
+          docker build -t "$ECR/carlens-backend:$TAG" --build-arg GIT_COMMIT="$TAG" -f backend/Dockerfile .
+          docker build -t "$ECR/carlens-app:$TAG" frontend
+          docker push "$ECR/carlens-backend:$TAG"
+          docker push "$ECR/carlens-app:$TAG"
+
+      - name: Check the images exist
+        run: |
+          aws ecr describe-images --region "$AWS_REGION" --repository-name carlens-backend --image-ids imageTag="$TAG" >/dev/null
+          aws ecr describe-images --region "$AWS_REGION" --repository-name carlens-app --image-ids imageTag="$TAG" >/dev/null
+
+      - name: Release on the server
+        run: |
+          cmd_id=$(aws ssm send-command --region "$AWS_REGION" --instance-ids "$INSTANCE_ID" \
+            --document-name AWS-RunShellScript --timeout-seconds 3300 \
+            --comment "CarLens deploy $TAG" \
+            --parameters "commands=[\"git -C /opt/carlens/repo pull --ff-only\",\"bash /opt/carlens/repo/deploy/release.sh $TAG\"],executionTimeout=[\"3300\"]" \
+            --query Command.CommandId --output text)
+          echo "Run Command id: $cmd_id"
+          status=Pending
+          while [ "$status" = Pending ] || [ "$status" = InProgress ] || [ "$status" = Delayed ]; do
+            sleep 15
+            status=$(aws ssm get-command-invocation --region "$AWS_REGION" --command-id "$cmd_id" \
+              --instance-id "$INSTANCE_ID" --query Status --output text 2>/dev/null || echo Pending)
+            echo "$(date -u +%H:%M:%S) $status"
+          done
+          aws ssm get-command-invocation --region "$AWS_REGION" --command-id "$cmd_id" --instance-id "$INSTANCE_ID" \
+            --query "[StandardOutputContent, StandardErrorContent]" --output text
+          [ "$status" = Success ]
