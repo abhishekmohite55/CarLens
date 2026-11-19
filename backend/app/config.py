@@ -150,6 +150,7 @@ class MaintenanceConfig(BaseModel):
     confirm_grace_min: int = Field(5, ge=0)  # runs waiting at confirm may still be confirmed this long
     max_wait_min: int = Field(30, ge=1)  # the deploy waits at most this long for working runs
     stale_confirm_min: int = Field(15, ge=1)  # a run at confirm longer than this does not hold a deploy back
+    auto_off_min: int = Field(60, ge=5)  # step 9.3 safety net: maintenance on longer than this counts as off
 
 
 class StorageConfig(BaseModel):

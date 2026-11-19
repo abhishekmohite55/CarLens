@@ -133,6 +133,7 @@ maintenance: # during a deploy (platform step 9): no new uploads / fresh runs / 
   confirm_grace_min: 5 # runs waiting at confirm may still be confirmed this long; after that the deploy goes on
   max_wait_min: 30 # the deploy waits at most this long for working runs, then deploys anyway (Resume is free)
   stale_confirm_min: 15 # a run waiting at confirm longer than this never holds a deploy back
+  auto_off_min: 60 # safety net: maintenance on longer than this counts as off (a failed deploy never keeps the app closed)
 
 storage: # run files on S3 (platform step 8.1); used only when S3_BUCKET is set in .env
   local_keep_days: 7 # finished runs untouched this long lose their server copy; opened again = fetched from S3

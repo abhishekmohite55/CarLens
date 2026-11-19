@@ -136,6 +136,42 @@ def _file_config_data() -> dict:
         return config_mod.AppConfig(**yaml.safe_load(f)).model_dump()
 
 
+def fill_defaults(data: dict, defaults: dict, depth: int = 2) -> tuple[dict, list[str]]:
+    """data with every section / field of defaults it lacks added (two levels: sections and their fields; values the
+    owner set are never changed). Returns (new data, names added such as "maintenance" or "auth.client_ip_header")."""
+    out, added = dict(data), []
+    for key, value in defaults.items():
+        if key not in out:
+            out[key] = value
+            added.append(key)
+        elif depth > 1 and isinstance(value, dict) and isinstance(out[key], dict):
+            out[key], sub = fill_defaults(out[key], value, depth - 1)
+            added += [f"{key}.{name}" for name in sub]
+    return out, added
+
+
+def add_missing_settings(nodes: list[str]) -> str | None:
+    """Startup (step 9.3): settings this code knows but the active config version lacks are saved as a new version,
+    with their config.yaml values. Returns a note, or None when nothing was missing."""
+    active = active_config()
+    if active is None:
+        return None
+    data, added = fill_defaults(active[1], _file_config_data())
+    if not added:
+        return None
+    checked, problems = check_config(data, nodes)
+    if problems:
+        raise SettingsError(problems)
+    checked = {**data, **checked}  # sections an older code version does not know are kept, not dropped
+    note = f"auto: added {', '.join(added)} (defaults)"
+    with require_engine().begin() as conn:
+        version_id = conn.execute(insert(ConfigVersion).values(data=checked, created_by=None, note=note)
+                                  .returning(ConfigVersion.id)).scalar_one()
+        conn.execute(insert(AuditLog).values(admin_id=None, action="auto_config", target=f"config version {version_id}",
+                                             details={"added": added}))
+    return note
+
+
 def _prompts_dir():
     return config_mod.PROJECT_ROOT / config_mod.file_config().paths.prompts_dir
 

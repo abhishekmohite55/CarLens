@@ -51,6 +51,7 @@ from .run_index import (RunRefused, close_open_rows, interrupted_nodes, latest_n
 from .runs import append_event, events_path, failed_at, run_dir
 from .settings_store import SettingsError, repin_run
 from .storage import fetch_run, push_run
+from .health import check as health_check
 from .maintenance import refuse_late_confirm, refuse_new_work, state as maintenance_state
 
 # run_ids that have started or are starting the graph
@@ -145,6 +146,12 @@ def _local_run(run_id: str, with_video: bool = False) -> Path:
     with_video: also the video (resume and admin re-runs may start at locate or frames)."""
     fetch_run(run_id, with_video=with_video)
     return run_dir(run_id)
+
+
+@app.get("/api/health")
+def api_health():
+    """Step 9.3: public, no details: {"status": "ok" | "degraded", "version"}. The deploy waits for "ok"."""
+    return health_check()
 
 
 @app.get("/api/config", dependencies=_APPROVED)

@@ -219,60 +219,69 @@ TAVILY_FREE_CREDITS = 1000  # Tavily free plan per month (basic search = 1 credi
 def dashboard(days: int = 30) -> dict[str, Any]:
     """Numbers for the admin dashboard over the last `days` days (status counts and access: now)."""
     days = max(1, min(days, 365))
-    with require_engine().connect() as conn:
-        def rows(sql: str, **params) -> list[dict]:
-            return [dict(r._mapping) for r in conn.execute(text(sql), {"days": days, **params})]
+    problems: list[dict[str, str]] = []  # step 9.3: a part that fails is reported, the rest still loads
 
-        runs_per_day = rows("""
-            SELECT (created_at AT TIME ZONE 'Asia/Kolkata')::date::text AS day, status, count(*) AS n
-            FROM runs WHERE created_at > now() - make_interval(days => :days)
-            GROUP BY 1, 2 ORDER BY 1""")
-        steps = rows("""
-            SELECT node,
-                   count(*) FILTER (WHERE status = 'done') AS done,
-                   count(*) FILTER (WHERE status = 'failed') AS failed,
-                   round(avg(extract(epoch FROM finished_at - started_at)) FILTER (WHERE status = 'done')::numeric, 1) AS avg_sec,
-                   round(max(extract(epoch FROM finished_at - started_at)) FILTER (WHERE status = 'done')::numeric, 1) AS max_sec
-            FROM node_runs WHERE started_at > now() - make_interval(days => :days) AND node NOT IN ('upload', 'confirm')
-            GROUP BY node""")
-        last_errors = rows("""
-            SELECT node, run_id, error, finished_at::text AS at FROM node_runs
-            WHERE status = 'failed' AND started_at > now() - make_interval(days => :days)
-            ORDER BY finished_at DESC NULLS LAST LIMIT 10""")
-        models = rows("""
-            SELECT node, data->'answered_by'->>'model' AS model,
-                   count(*) AS answers,
-                   count(*) FILTER (WHERE jsonb_array_length(coalesce(data->'attempts', '[]')) > 1) AS after_fallback
-            FROM node_results
-            WHERE name = 'response.json' AND node = ANY(:nodes) AND saved_at > now() - make_interval(days => :days)
-            GROUP BY 1, 2 ORDER BY 1, 3 DESC""", nodes=list(AI_NODES))
-        tavily = conn.execute(text("""
-            SELECT coalesce(sum((SELECT count(*) FROM plan_queries q WHERE q.run_id = n.run_id)), 0)
-            FROM node_runs n
-            WHERE n.node = 'search' AND n.status = 'done'
-              AND n.started_at >= date_trunc('month', now() AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata'""")).scalar_one()
-        access = rows("""
-            SELECT count(*) FILTER (WHERE status = 'pending' AND role = 'user') AS pending,
-                   count(*) FILTER (WHERE status = 'approved' AND role = 'user') AS approved,
-                   count(*) FILTER (WHERE locked_until > now()) AS locked
-            FROM users""")[0]
-        tokens = rows("""
-            SELECT u.email, u.tokens AS tokens_left, count(r.id) AS runs
-            FROM users u LEFT JOIN runs r ON r.user_id = u.id
-            WHERE u.role = 'user' AND u.status = 'approved'
-            GROUP BY u.id ORDER BY runs DESC, u.email LIMIT 50""")
-        prices = rows("""
-            SELECT coalesce(p.status, 'none') AS status, count(*) AS n FROM prices p JOIN runs r ON r.id = p.run_id
-            WHERE r.created_at > now() - make_interval(days => :days) GROUP BY 1""")
-        now_runs = rows("""
-            SELECT r.id AS run_id, r.status, r.original_filename AS file, u.email AS user, r.updated_at::text AS since
-            FROM runs r LEFT JOIN users u ON u.id = r.user_id
-            WHERE r.status IN ('uploaded', 'running', 'awaiting_confirm') ORDER BY r.updated_at DESC LIMIT 50""")
+    def rows(part: str, sql: str, **params) -> list[dict]:
+        try:
+            with require_engine().connect() as conn:
+                return [dict(r._mapping) for r in conn.execute(text(sql), {"days": days, **params})]
+        except Exception as exc:  # noqa: BLE001
+            problems.append({"part": part, "error": str(exc).splitlines()[0][:300]})
+            return []
+
+    runs_per_day = rows("runs_per_day", """
+        SELECT (created_at AT TIME ZONE 'Asia/Kolkata')::date::text AS day, status, count(*) AS n
+        FROM runs WHERE created_at > now() - make_interval(days => :days)
+        GROUP BY 1, 2 ORDER BY 1""")
+    steps = rows("steps", """
+        SELECT node,
+               count(*) FILTER (WHERE status = 'done') AS done,
+               count(*) FILTER (WHERE status = 'failed') AS failed,
+               round(avg(extract(epoch FROM finished_at - started_at)) FILTER (WHERE status = 'done')::numeric, 1) AS avg_sec,
+               round(max(extract(epoch FROM finished_at - started_at)) FILTER (WHERE status = 'done')::numeric, 1) AS max_sec
+        FROM node_runs WHERE started_at > now() - make_interval(days => :days) AND node NOT IN ('upload', 'confirm')
+        GROUP BY node""")
+    last_errors = rows("last_errors", """
+        SELECT node, run_id, error, finished_at::text AS at FROM node_runs
+        WHERE status = 'failed' AND started_at > now() - make_interval(days => :days)
+        ORDER BY finished_at DESC NULLS LAST LIMIT 10""")
+    models = rows("models", """
+        SELECT node, data->'answered_by'->>'model' AS model,
+               count(*) AS answers,
+               count(*) FILTER (WHERE jsonb_array_length(coalesce(data->'attempts', '[]')) > 1) AS after_fallback
+        FROM node_results
+        WHERE name = 'response.json' AND node = ANY(:nodes) AND saved_at > now() - make_interval(days => :days)
+        GROUP BY 1, 2 ORDER BY 1, 3 DESC""", nodes=list(AI_NODES))
+    tavily_rows = rows("tavily", """
+        SELECT coalesce(sum((SELECT count(*) FROM plan_queries q WHERE q.run_id = n.run_id)), 0)
+        FROM node_runs n
+        WHERE n.node = 'search' AND n.status = 'done'
+          AND n.started_at >= date_trunc('month', now() AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata'""")
+    tavily = next(iter(tavily_rows[0].values()), 0) if tavily_rows else 0
+    access_rows = rows("access", """
+        SELECT count(*) FILTER (WHERE status = 'pending' AND role = 'user') AS pending,
+               count(*) FILTER (WHERE status = 'approved' AND role = 'user') AS approved,
+               count(*) FILTER (WHERE locked_until > now()) AS locked
+        FROM users""")
+    access = access_rows[0] if access_rows else {"pending": 0, "approved": 0, "locked": 0}
+    tokens = rows("tokens", """
+        SELECT u.email, u.tokens AS tokens_left, count(r.id) AS runs
+        FROM users u LEFT JOIN runs r ON r.user_id = u.id
+        WHERE u.role = 'user' AND u.status = 'approved'
+        GROUP BY u.id ORDER BY runs DESC, u.email LIMIT 50""")
+    prices = rows("prices", """
+        SELECT coalesce(p.status, 'none') AS status, count(*) AS n FROM prices p JOIN runs r ON r.id = p.run_id
+        WHERE r.created_at > now() - make_interval(days => :days) GROUP BY 1""")
+    now_runs = rows("now_runs", """
+        SELECT r.id AS run_id, r.status, r.original_filename AS file, u.email AS user, r.updated_at::text AS since
+        FROM runs r LEFT JOIN users u ON u.id = r.user_id
+        WHERE r.status IN ('uploaded', 'running', 'awaiting_confirm') ORDER BY r.updated_at DESC LIMIT 50""")
     langfuse = os.environ.get("LANGFUSE_HOST", "").strip() or None
     return {"days": days, "runs_per_day": runs_per_day, "steps": steps, "last_errors": last_errors, "models": models,
             "tavily": {"queries_this_month": int(tavily), "free_credits": TAVILY_FREE_CREDITS,
                        "note": "approximate: search runs this month x their plan queries (1 credit each, basic)"},
-            "access": access, "tokens": tokens, "prices": prices, "in_progress": now_runs, "langfuse_url": langfuse}
+            "access": access, "tokens": tokens, "prices": prices, "in_progress": now_runs, "langfuse_url": langfuse,
+            "problems": problems}
 
 
 # --- table browser (stage 6.4, 06-admin.md §6.7): read-only, allow-listed tables, secrets masked ---

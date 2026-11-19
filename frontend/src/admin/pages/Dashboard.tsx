@@ -16,6 +16,7 @@ type Dash = {
   last_errors: { node: string; run_id: string; error: string | null; at: string | null }[];
   models: { node: string; model: string | null; answers: number; after_fallback: number }[];
   tavily: { queries_this_month: number; free_credits: number; note: string };
+  problems?: { part: string; error: string }[]; // step 9.3: parts that could not load (the rest still shows)
   access: { pending: number; approved: number; locked: number };
   tokens: { email: string; tokens_left: number; runs: number }[];
   prices: { status: string; n: number }[];
@@ -418,6 +419,11 @@ export function Dashboard() {
         </div>
       </header>
 
+      {d?.problems && d.problems.length > 0 && (
+        <p className="mb-4 rounded-2xl bg-card px-4 py-3 text-sm text-bad shadow-card">
+          Some numbers could not load: {d.problems.map((p) => `${p.part} (${p.error})`).join("; ")}
+        </p>
+      )}
       {!d ? <p className="text-sm text-ink-3">{error || "Loading…"}</p> : (
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
           <Card title="Pipeline" className="lg:col-span-8" aside={<span className="text-xs text-ink-3">attempts per step, last {d.days} days</span>}>
