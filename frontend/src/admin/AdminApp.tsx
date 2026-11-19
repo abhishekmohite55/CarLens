@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { NavLink, Navigate, Route, Routes, useLocation } from "react-router";
+import { api } from "../shared/api";
 import { SignIn } from "../shared/SignIn";
 import { useMe } from "../shared/useMe";
 import { Audit } from "./pages/Audit";
@@ -23,9 +24,12 @@ const SECTIONS: { path: string; label: string; stage: string; page?: () => React
 ];
 
 export function AdminApp() {
-  const { me, setMe, signOut } = useMe();
+  const { me, setMe, signOut, refresh, problem } = useMe();
 
-  if (me === undefined) return <div className="min-h-screen bg-page" />;
+  if (me === undefined && problem) return <Unreachable problem={problem} onRetry={refresh} />;
+  if (me === undefined) {
+    return <div className="flex min-h-screen items-center justify-center bg-page font-admin text-sm text-ink-3">Connecting to CarLens…</div>;
+  }
   if (me === null) return <SignIn title="CarLens admin" onSignedIn={setMe} />;
   if (me.role !== "admin") {
     return (
@@ -55,6 +59,7 @@ export function AdminApp() {
         </div>
       </header>
       <main className="mx-auto max-w-[1440px] px-4 pb-10 pt-3 sm:px-6">
+        <HealthBanner />
         <Routes>
           <Route index element={<Navigate to="dashboard" replace />} />
           {SECTIONS.map((s) => (
@@ -117,6 +122,67 @@ function NavCapsule() {
         </div>
       </div>
     </nav>
+  );
+}
+
+/** Step 9.3: signing in needs the database. When the backend cannot answer, say why (public /api/health) instead of a
+ * blank page; retries every 15 s. */
+function Unreachable({ problem, onRetry }: { problem: string; onRetry: () => void }) {
+  const [health, setHealth] = useState<{ status: string; version: string } | null>(null);
+  useEffect(() => {
+    const ask = () => api<{ status: string; version: string }>("/api/health").then(setHealth).catch(() => setHealth(null));
+    ask();
+    const timer = setInterval(() => { ask(); onRetry(); }, 15_000);
+    return () => clearInterval(timer);
+  }, [onRetry]);
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-page p-6 font-admin text-ink">
+      <section role="alert" className="max-w-lg rounded-2xl bg-card p-6 shadow-card">
+        <h1 className="font-display text-2xl">CarLens admin can't sign you in right now</h1>
+        <p className="mt-3 text-sm text-ink-2">
+          {health === null ? "The backend does not answer: it may be restarting or stopped."
+            : health.status === "degraded" ? "The backend is running but degraded: most likely its database is not reachable. Signing in needs the database."
+            : "The backend answered with an error."}
+        </p>
+        <p className="mt-2 text-xs text-ink-3">Details: {problem}{health ? ` · health ${health.status}, version ${health.version}` : ""}</p>
+        <button onClick={onRetry} className="mt-4 rounded-full bg-ink px-4 py-1.5 text-sm text-page focus:outline-none focus-visible:ring-2 focus-visible:ring-accent">Try again</button>
+        <p className="mt-2 text-xs text-ink-3">Tries again by itself every 15 seconds.</p>
+      </section>
+    </div>
+  );
+}
+
+type Health = { status: "ok" | "degraded"; version: string; problems: { level: "error" | "warning"; message: string }[] };
+
+/** Step 9.3: what the admin must know (database newer than the code, failed migration, maintenance left on, S3).
+ * Asked on load and every minute; shown on every admin page. Says nothing when all is well. */
+function HealthBanner() {
+  const [health, setHealth] = useState<Health | null>(null);
+  const [unreachable, setUnreachable] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    const ask = () => api<Health>("/api/admin/health")
+      .then((h) => { if (alive) { setHealth(h); setUnreachable(false); } })
+      .catch(() => { if (alive) setUnreachable(true); });
+    ask();
+    const timer = setInterval(ask, 60_000);
+    return () => { alive = false; clearInterval(timer); };
+  }, []);
+
+  const problems = unreachable
+    ? [{ level: "error" as const, message: "The backend did not answer the health check. It may be restarting." }]
+    : health?.problems ?? [];
+  if (problems.length === 0) return null;
+  const isError = problems.some((p) => p.level === "error");
+  return (
+    <section role={isError ? "alert" : "status"}
+      className={`mb-4 rounded-2xl px-4 py-3 text-sm shadow-card ${isError ? "bg-bad text-page" : "bg-card text-ink"}`}>
+      <p className="font-medium">{isError ? "CarLens is degraded: new runs are refused" : "Needs your attention"}
+        {health?.version ? <span className="ml-2 font-normal opacity-75">version {health.version}</span> : null}</p>
+      <ul className="mt-1 list-disc space-y-0.5 pl-5">
+        {problems.map((p, i) => <li key={i}>{p.message}</li>)}
+      </ul>
+    </section>
   );
 }
 

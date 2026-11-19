@@ -44,16 +44,28 @@ def ready_to_restart(running: int, at_confirm: int, since: datetime | None, now:
 
 # --- database ---
 
+def expired(since: datetime | None, now: datetime, auto_off_min: int) -> bool:
+    """Safety net (step 9.3): maintenance switched on longer ago than auto_off_min counts as off."""
+    return since is not None and now - since >= timedelta(minutes=auto_off_min)
+
+
 def state() -> dict:
-    """{"on", "since", "by"}; off when there is no database or no row yet."""
+    """{"on", "since", "by", "expired"}; off when there is no database, no row yet, or it is older than auto_off_min.
+    Never raises: a database problem is health's to report, not a reason to refuse every request."""
+    off = {"on": False, "since": None, "by": None, "expired": False}
     engine = get_engine()
     if engine is None:
-        return {"on": False, "since": None, "by": None}
-    with engine.connect() as conn:
-        row = conn.execute(select(AppState).where(AppState.id == 1)).first()
-    if row is None:
-        return {"on": False, "since": None, "by": None}
-    return {"on": row.maintenance, "since": row.maintenance_since, "by": row.maintenance_by}
+        return off
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(select(AppState).where(AppState.id == 1)).first()
+    except Exception:  # noqa: BLE001  e.g. table missing (database older than this code), database down
+        return off
+    if row is None or not row.maintenance:
+        return off
+    if expired(row.maintenance_since, datetime.now(timezone.utc), get_config().maintenance.auto_off_min):
+        return {**off, "since": row.maintenance_since, "by": row.maintenance_by, "expired": True}
+    return {"on": True, "since": row.maintenance_since, "by": row.maintenance_by, "expired": False}
 
 
 def set_maintenance(on: bool, by: str) -> None:
@@ -79,10 +91,17 @@ def counts(stale_confirm_min: int | None = None) -> dict:
 
 # --- used by the routes ---
 
+UNAVAILABLE = "CarLens is temporarily unavailable. Try again later."
+
+
 def refuse_new_work() -> None:
-    """Route dependency: no new upload / fresh run / Resume / re-run while maintenance is on."""
+    """Route dependency: no new upload / fresh run / Resume / re-run while maintenance is on, or while the backend
+    started degraded (step 9.3: migration failed, database not reachable)."""
     if state()["on"]:
         raise RunRefused(503, "maintenance", MESSAGE)
+    from .health import is_degraded  # imported here: health imports this module
+    if is_degraded():
+        raise RunRefused(503, "unavailable", UNAVAILABLE)
 
 
 def refuse_late_confirm() -> None:

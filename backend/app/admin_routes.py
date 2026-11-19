@@ -6,7 +6,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 
-from . import admin_data, settings_store
+from . import admin_data, health, settings_store
 from .auth import SignedIn, require_admin
 from .graph import ORDER, forget_run
 from .runs import run_dir
@@ -166,6 +166,12 @@ def import_prompt(name: str, admin: SignedIn = Depends(require_admin)):
 
 
 # --- dashboard and tables (stage 6.4) ---
+
+@router.get("/health")
+def admin_health(admin: SignedIn = Depends(require_admin)):
+    """Step 9.3: every problem in plain words (red banner in the admin app)."""
+    return health.check(detail=True)
+
 
 @router.get("/dashboard")
 def dashboard(days: int = 30, admin: SignedIn = Depends(require_admin)):

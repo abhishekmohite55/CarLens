@@ -35,6 +35,7 @@ const HINTS: Record<string, string> = {
   "auth.client_ip_header": "Empty on the laptop. On AWS: X-Viewer-IP (the visitor's address, from CloudFront).",
   "maintenance.confirm_grace_min": "During a deploy, runs waiting at confirm may still be confirmed this many minutes.",
   "maintenance.stale_confirm_min": "A run waiting at confirm longer than this many minutes never holds a deploy back.",
+  "maintenance.auto_off_min": "Safety net: maintenance switched on longer ago than this counts as off.",
   "maintenance.max_wait_min": "A deploy waits at most this many minutes for working runs, then deploys anyway.",
   "storage.local_keep_days": "On the server with S3: finished runs untouched this long keep only the S3 copy.",
 };
