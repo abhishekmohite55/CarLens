@@ -51,6 +51,7 @@ from .run_index import (RunRefused, close_open_rows, interrupted_nodes, latest_n
 from .runs import append_event, events_path, failed_at, run_dir
 from .settings_store import SettingsError, repin_run
 from .storage import fetch_run, push_run
+from .maintenance import refuse_late_confirm, refuse_new_work, state as maintenance_state
 
 # run_ids that have started or are starting the graph
 _started: set[str] = set()
@@ -85,6 +86,8 @@ def run_access(run_id: str, user: SignedIn = Depends(require_approved)) -> Signe
 
 
 _RUN = [Depends(run_access)]
+_NEW_WORK = [Depends(refuse_new_work)]  # step 9: refused while maintenance is on (deploy)
+_ADMIN_WORK = _ADMIN + _NEW_WORK
 
 
 @app.exception_handler(SettingsError)
@@ -154,10 +157,11 @@ def api_config():
             "max_duration_sec": cfg.upload.max_duration_sec,
         },
         "nodes": _NODES,
+        "maintenance": maintenance_state()["on"],  # step 9: the app shows "being updated" and keeps uploads closed
     }
 
 
-@app.post("/api/runs")
+@app.post("/api/runs", dependencies=_NEW_WORK)
 async def api_create_run(background: BackgroundTasks, video: UploadFile = File(...),
                          user: SignedIn = Depends(require_approved)):
     """Upload → new run. Users: 1 token, one run at a time, same video again asks first (05-login.md §7.2, §7.3)."""
@@ -177,7 +181,7 @@ def api_list_runs(user: SignedIn = Depends(require_approved)):
     return {"runs": user_runs(None if user.role == "admin" else user.id)}
 
 
-@app.post("/api/uploads/{pending_id}/start")
+@app.post("/api/uploads/{pending_id}/start", dependencies=_NEW_WORK)
 def api_start_pending(pending_id: str, background: BackgroundTasks, user: SignedIn = Depends(require_approved)):
     """Same video again → "fresh run": the kept upload becomes a new run (1 token)."""
     out = start_pending(pending_id, user.id)
@@ -263,7 +267,8 @@ async def api_run_events(run_id: str):
         raise HTTPException(404, detail=f"Run '{run_id}' not found.")
 
     with _start_lock:
-        if run_id not in _started and not _has_locate_event(run_id):
+        # a run uploaded just before maintenance waits; it starts when the page is opened after the update
+        if run_id not in _started and not _has_locate_event(run_id) and not maintenance_state()["on"]:
             _started.add(run_id)
             t = threading.Thread(target=run_graph, args=(run_id,), daemon=True)
             t.start()
@@ -313,7 +318,7 @@ def _clear_node(rd: Path, node: str) -> None:
             p.unlink(missing_ok=True)
 
 
-@app.post("/api/runs/{run_id}/locate", status_code=202, dependencies=_ADMIN)
+@app.post("/api/runs/{run_id}/locate", status_code=202, dependencies=_ADMIN_WORK)
 def api_run_locate(run_id: str):
     """Dev (used by /inspector): re-run only locate; reuses 01_locate/video_small.mp4 when the shrink already finished."""
     rd = _local_run(run_id, with_video=True)
@@ -328,7 +333,7 @@ def api_run_locate(run_id: str):
     return {"started": True}
 
 
-@app.post("/api/runs/{run_id}/resume", status_code=202)
+@app.post("/api/runs/{run_id}/resume", status_code=202, dependencies=_NEW_WORK)
 def api_resume(run_id: str, user: SignedIn = Depends(run_access)):
     """Start the pipeline again at the node the run stopped at, then carry on to the end. Free (no token)."""
     rd = _local_run(run_id, with_video=True)
@@ -359,7 +364,7 @@ def api_resume(run_id: str, user: SignedIn = Depends(run_access)):
     return {"resuming_from": node}
 
 
-@app.post("/api/runs/{run_id}/frames", status_code=202, dependencies=_ADMIN)
+@app.post("/api/runs/{run_id}/frames", status_code=202, dependencies=_ADMIN_WORK)
 def api_run_frames(run_id: str):
     rd = _local_run(run_id, with_video=True)
     if not rd.exists():
@@ -379,7 +384,7 @@ def api_run_frames(run_id: str):
     return {"started": True}
 
 
-@app.post("/api/runs/{run_id}/verify", status_code=202, dependencies=_ADMIN)
+@app.post("/api/runs/{run_id}/verify", status_code=202, dependencies=_ADMIN_WORK)
 def api_run_verify(run_id: str):
     rd = _local_run(run_id, with_video=True)
     if not rd.exists():
@@ -422,7 +427,7 @@ _confirming: set[str] = set()
 _confirm_lock = threading.Lock()
 
 
-@app.post("/api/runs/{run_id}/confirm/start", dependencies=_RUN)
+@app.post("/api/runs/{run_id}/confirm/start", dependencies=_RUN + _NEW_WORK)
 def api_confirm_start(run_id: str):
     """Dev (used by /inspector): show the confirm step on a run whose graph already ended after verify."""
     rd = _local_run(run_id)
@@ -444,7 +449,7 @@ def api_confirm_start(run_id: str):
     return {"started": True}
 
 
-@app.post("/api/runs/{run_id}/confirm", dependencies=_RUN)
+@app.post("/api/runs/{run_id}/confirm", dependencies=_RUN + [Depends(refuse_late_confirm)])
 def api_confirm(run_id: str, answer: ConfirmAnswer):
     rd = _local_run(run_id)
     if not rd.exists():
@@ -514,7 +519,7 @@ def api_delete_photo(run_id: str, slot: str):
     return {"deleted": True}
 
 
-@app.post("/api/runs/{run_id}/plan", status_code=202, dependencies=_ADMIN)
+@app.post("/api/runs/{run_id}/plan", status_code=202, dependencies=_ADMIN_WORK)
 def api_run_plan(run_id: str):
     """Dev (used by /inspector): re-run only the plan node on a confirmed run; deletes its old results."""
     rd = _local_run(run_id, with_video=True)
@@ -533,7 +538,7 @@ def api_run_plan(run_id: str):
     return {"started": True}
 
 
-@app.post("/api/runs/{run_id}/search", status_code=202, dependencies=_ADMIN)
+@app.post("/api/runs/{run_id}/search", status_code=202, dependencies=_ADMIN_WORK)
 def api_run_search(run_id: str):
     """Dev (used by /inspector): re-run only the search node on a run with plan queries; deletes its old results."""
     rd = _local_run(run_id, with_video=True)
@@ -552,7 +557,7 @@ def api_run_search(run_id: str):
     return {"started": True}
 
 
-@app.post("/api/runs/{run_id}/extract", status_code=202, dependencies=_ADMIN)
+@app.post("/api/runs/{run_id}/extract", status_code=202, dependencies=_ADMIN_WORK)
 def api_run_extract(run_id: str):
     """Dev (used by /inspector): re-run only the extract node on a run with search results; deletes its old results."""
     rd = _local_run(run_id, with_video=True)
@@ -571,7 +576,7 @@ def api_run_extract(run_id: str):
     return {"started": True}
 
 
-@app.post("/api/runs/{run_id}/pricing", status_code=202, dependencies=_ADMIN)
+@app.post("/api/runs/{run_id}/pricing", status_code=202, dependencies=_ADMIN_WORK)
 def api_run_pricing(run_id: str):
     """Dev (used by /inspector): re-run only the pricing node on a run with extract figures; deletes its old price."""
     rd = _local_run(run_id, with_video=True)
@@ -590,7 +595,7 @@ def api_run_pricing(run_id: str):
     return {"started": True}
 
 
-@app.post("/api/runs/{run_id}/report", status_code=202, dependencies=_ADMIN)
+@app.post("/api/runs/{run_id}/report", status_code=202, dependencies=_ADMIN_WORK)
 def api_run_report(run_id: str):
     """Dev (used by /inspector): rebuild only the report from the saved node results (no AI call)."""
     rd = _local_run(run_id, with_video=True)

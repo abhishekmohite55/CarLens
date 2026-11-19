@@ -13,7 +13,7 @@ type Loaded = Version & { options: { stop_after: string[]; providers: string[] }
 type VersionRow = { id: number; saved_at: string; saved_by: string | null; note: string | null };
 type Problem = { field: string; message: string };
 
-const SECTIONS = ["upload", "models", "locate_video", "frames", "confirm", "photos", "plan", "search", "extract", "pricing", "dev", "auth", "access", "storage", "paths"];
+const SECTIONS = ["upload", "models", "locate_video", "frames", "confirm", "photos", "plan", "search", "extract", "pricing", "dev", "auth", "access", "storage", "maintenance", "paths"];
 const READ_ONLY = ["paths"]; // moving run folders under a live app would lose runs
 const LEVELS = ["", "minimal", "low", "medium", "high"];
 // Fields with a fixed set of values ("" = empty = default)
@@ -33,6 +33,8 @@ const HINTS: Record<string, string> = {
   "upload.max_duration_sec": "Longest video accepted, in seconds.",
   "access.default_tokens": "Runs given when you approve a request.",
   "auth.client_ip_header": "Empty on the laptop. On AWS: X-Viewer-IP (the visitor's address, from CloudFront).",
+  "maintenance.confirm_grace_min": "During a deploy, runs waiting at confirm may still be confirmed this many minutes.",
+  "maintenance.max_wait_min": "A deploy waits at most this many minutes for working runs, then deploys anyway.",
   "storage.local_keep_days": "On the server with S3: finished runs untouched this long keep only the S3 copy.",
 };
 
