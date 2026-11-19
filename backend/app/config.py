@@ -149,6 +149,7 @@ class MaintenanceConfig(BaseModel):
     """Maintenance mode during a deploy (platform step 9, docs/platform/09-cd.md §5a)."""
     confirm_grace_min: int = Field(5, ge=0)  # runs waiting at confirm may still be confirmed this long
     max_wait_min: int = Field(30, ge=1)  # the deploy waits at most this long for working runs
+    stale_confirm_min: int = Field(15, ge=1)  # a run at confirm longer than this does not hold a deploy back
 
 
 class StorageConfig(BaseModel):

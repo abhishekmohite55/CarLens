@@ -66,11 +66,15 @@ def set_maintenance(on: bool, by: str) -> None:
                                              target="app", details={"by": by}))
 
 
-def counts() -> dict:
+def counts(stale_confirm_min: int | None = None) -> dict:
+    """Working runs, and runs that reached confirm recently (older ones are left for after the update)."""
+    stale = stale_confirm_min if stale_confirm_min is not None else get_config().maintenance.stale_confirm_min
+    recent = datetime.now(timezone.utc) - timedelta(minutes=stale)
     with require_engine().connect() as conn:
-        rows = dict(conn.execute(select(Run.status, func.count()).where(Run.status.in_(("running", "awaiting_confirm")))
-                                 .group_by(Run.status)).all())
-    return {"running": rows.get("running", 0), "at_confirm": rows.get("awaiting_confirm", 0)}
+        running = conn.execute(select(func.count()).where(Run.status == "running")).scalar_one()
+        at_confirm = conn.execute(select(func.count()).where(Run.status == "awaiting_confirm",
+                                                             Run.updated_at >= recent)).scalar_one()
+    return {"running": running, "at_confirm": at_confirm}
 
 
 # --- used by the routes ---
@@ -91,11 +95,12 @@ def refuse_late_confirm() -> None:
 # --- command line (deploy) ---
 
 def wait() -> None:
-    """Return when no run is working (runs at confirm count only during the grace time), or after max_wait_min."""
+    """Return when no run is working (runs that reached confirm in the last stale_confirm_min count only during the
+    grace time), or after max_wait_min."""
     started = time.monotonic()
     while True:
         cfg = get_config().maintenance
-        c, s = counts(), state()
+        c, s = counts(cfg.stale_confirm_min), state()
         now = datetime.now(timezone.utc)
         if ready_to_restart(c["running"], c["at_confirm"], s["since"] or now, now, cfg.confirm_grace_min):
             print(f"ready: {c['running']} working, {c['at_confirm']} at confirm (they can confirm after the update)")
