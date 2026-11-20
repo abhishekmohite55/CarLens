@@ -105,7 +105,8 @@ def start_run(rec: Received, user_id: int | None, spend_token: bool) -> str:
     Raises RunRefused (the file is left where it is; the caller cleans up)."""
     # runs row first: the primary key guarantees the random id is unique; then the folder
     run_id = create_run_row(sha256=rec.sha256, original_filename=rec.name, size_bytes=rec.size,
-                            duration_sec=rec.duration_sec, user_id=user_id, spend_token=spend_token)
+                            duration_sec=rec.duration_sec, user_id=user_id, spend_token=spend_token,
+                            max_active_runs=get_config().access.max_active_runs if spend_token else None)
     run_path = create_run(run_id)
     dest = run_path / f"video.{rec.ext}"
     shutil.move(str(rec.path), str(dest))

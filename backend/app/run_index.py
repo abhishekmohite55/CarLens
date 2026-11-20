@@ -59,6 +59,29 @@ class RunRefused(Exception):
         self.status, self.code, self.message = status, code, message
 
 
+BUSY_STATUSES = ("uploaded", "running")  # hardening A7: these use the server; awaiting_confirm does not
+
+
+def busy(busy_count: int, max_active_runs: int | None) -> bool:
+    """Hardening A7: the server already runs as many runs as it may (None = no limit)."""
+    return max_active_runs is not None and busy_count >= max_active_runs
+
+
+def busy_refusal() -> RunRefused:
+    return RunRefused(503, "busy", "CarLens is busy right now. Try again in a few minutes.")
+
+
+def resume_allowed(failures: int, free_resumes: int) -> bool:
+    """Hardening A7: a user may resume while the run has failed at most free_resumes times."""
+    return failures <= free_resumes
+
+
+def busy_runs() -> int:
+    """Runs uploaded or working right now, all users."""
+    with require_engine().connect() as conn:
+        return conn.execute(select(func.count()).select_from(Run).where(Run.status.in_(BUSY_STATUSES))).scalar_one()
+
+
 def run_refusal(active_runs: int, tokens: int) -> RunRefused | None:
     """One run at a time, and a token for each new run."""
     if active_runs > 0:
@@ -69,9 +92,10 @@ def run_refusal(active_runs: int, tokens: int) -> RunRefused | None:
 
 
 def create_run_row(*, sha256: str, original_filename: str, size_bytes: int, duration_sec: float,
-                   user_id: int | None = None, spend_token: bool = False) -> str:
+                   user_id: int | None = None, spend_token: bool = False, max_active_runs: int | None = None) -> str:
     """Insert the runs row under a new random id and return the id. A clash draws a new id.
-    spend_token (users): in the same transaction, check one run at a time and take 1 token; raises RunRefused."""
+    spend_token (users): in the same transaction, check one run at a time, the server's run limit
+    (max_active_runs, hardening A7) and take 1 token; raises RunRefused."""
     from .settings_store import new_run_pins  # imported here: settings_store imports config and models too
 
     engine = require_engine()
@@ -88,6 +112,10 @@ def create_run_row(*, sha256: str, original_filename: str, size_bytes: int, dura
                     refused = run_refusal(active, tokens)
                     if refused:
                         raise refused
+                    all_busy = conn.execute(select(func.count()).select_from(Run).where(
+                        Run.status.in_(BUSY_STATUSES))).scalar_one()
+                    if busy(all_busy, max_active_runs):
+                        raise busy_refusal()
                     conn.execute(update(User).where(User.id == user_id).values(tokens=User.tokens - 1))
                 conn.execute(insert(Run).values(
                     id=run_id, video_sha256=sha256, original_filename=original_filename,

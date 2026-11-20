@@ -138,3 +138,49 @@ def test_ask_chain_applies_normalise_and_records_repairs():
     assert result["answered_by"] == {"provider": "openrouter", "model": "m"}
     assert result["parsed"] == {"findings": [{"item_id": "L1", "confirmed": True}]}
     assert result["attempts"][0]["repairs"] == ["wrapped"]
+
+
+def test_late_answer_never_lands_in_the_next_attempt():  # hardening A3
+    import threading
+    from app.llm import chat as chat_mod
+    release = threading.Event()
+    # threads left sleeping by earlier tests (the "hang" test) are still counted; they only ever go down
+    before = chat_mod.calls_in_flight()
+
+    def fake_make(provider, model, temp, timeout, thinking, reasoning_effort=None):
+        m = MagicMock()
+        if model == "slow":
+            def late(msgs, config=None):
+                release.wait(5)
+                raise RuntimeError("provider timeout, long after ask_chain gave up")  # old code: landed in "fast"
+            m.invoke = late
+        else:
+            def answer(msgs, config=None):
+                release.set()  # the slow one answers while this attempt runs
+                time.sleep(0.2)
+                return _msg(VALID)
+            m.invoke = answer
+        return m
+
+    with patch("app.llm.chat.make_chat_model", fake_make):
+        result = ask_chain([_entry("slow"), _entry("fast")], lambda e: [], temperature=0.2, timeout_sec=1,
+                           thinking_level=None, validate=lambda p: None, emit=lambda m: None, callbacks=[],
+                           max_in_flight=1000)
+    assert result["answered_by"]["model"] == "fast"
+    assert result["parsed"] == VALID
+    time.sleep(0.3)
+    assert chat_mod.calls_in_flight() <= before  # both calls released, the late one too
+
+
+def test_cap_on_calls_in_flight():  # hardening A3
+    from app.llm import chat as chat_mod
+    # pretend 1,000 calls are running (a sleeping thread from another test may still release one: stays far above)
+    with patch.object(chat_mod, "_in_flight", 1000):
+        assert not chat_mod.claim_call(1000)
+        assert chat_mod.claim_call(None)  # no cap: always counted
+        chat_mod.release_call()
+        with patch("app.llm.chat.make_chat_model") as make:
+            result = ask_chain([_entry("a")], lambda e: [], temperature=0.2, timeout_sec=5, thinking_level=None,
+                               validate=lambda p: None, emit=lambda m: None, callbacks=[], max_in_flight=5)
+        make.assert_not_called()
+        assert result["answered_by"] is None and "not started" in result["attempts"][0]["error"]

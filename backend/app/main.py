@@ -20,7 +20,7 @@ from .auth import NO_STORE, AuthError, SignedIn, require_admin, require_approved
 from .admin_routes import router as admin_router
 from .auth_routes import router as auth_router
 from .config import get_config
-from .events import sse_stream
+from .events import open_streams, sse_stream
 from .graph import is_paused, resume_from, resume_graph, run_graph
 from .nodes.locate import run_locate
 from .nodes.locate import try_claim as locate_try_claim
@@ -46,9 +46,9 @@ from .llm.tracing import _get_client as _warmup_tracing
 from .nodes.upload import DuplicateUpload, clean_old_pending, drop_pending, process_upload, start_pending
 from .db import get_engine
 from .results import FILES as RESULT_FILES, delete_results, load_result
-from .run_index import (RunRefused, is_run_id, close_open_rows, interrupted_nodes, latest_node_result, other_active_run, run_owner,
+from .run_index import (RunRefused, busy, busy_refusal, busy_runs, is_run_id, resume_allowed, close_open_rows, interrupted_nodes, latest_node_result, other_active_run, run_owner,
                         user_runs, run_status)
-from .runs import append_event, events_path, failed_at, run_dir
+from .runs import append_event, events_path, failed_at, failure_count, run_dir
 from .settings_store import SettingsError, repin_run
 from .storage import fetch_run, push_run
 from .health import check as health_check
@@ -270,11 +270,22 @@ def api_end_run(run_id: str):
     return {"ended": True}
 
 
+def resume_point(after: int, last_event_id: str | None) -> int:
+    """Hardening A7: the last seq the page already has (?after= or the browser's Last-Event-ID), never negative."""
+    try:
+        header = int(last_event_id) if last_event_id else 0
+    except ValueError:
+        header = 0
+    return max(0, after, header)
+
+
 @app.get("/api/runs/{run_id}/events", dependencies=_RUN)
-async def api_run_events(run_id: str):
+async def api_run_events(run_id: str, request: Request, after: int = 0):
     rd = await run_in_threadpool(_local_run, run_id)
     if not rd.exists():
         raise HTTPException(404, detail=f"Run '{run_id}' not found.")
+    if open_streams() >= get_config().access.max_event_streams:  # hardening A7
+        raise busy_refusal()
 
     with _start_lock:
         # a run uploaded just before maintenance waits; it starts when the page is opened after the update
@@ -284,7 +295,7 @@ async def api_run_events(run_id: str):
             t.start()
 
     return StreamingResponse(
-        sse_stream(run_id),
+        sse_stream(run_id, resume_point(after, request.headers.get("last-event-id"))),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
@@ -356,6 +367,12 @@ def api_resume(run_id: str, user: SignedIn = Depends(run_access)):
         return JSONResponse(status_code=409, content={
             "error": {"code": "not_failed", "message": "Nothing to resume: the last run did not stop on a failure."}
         })
+    if user.role != "admin":  # hardening A7: Resume stays free, but not endless, and waits when the server is full
+        access = get_config().access
+        if not resume_allowed(failure_count(run_id), access.free_resumes_per_run):
+            raise RunRefused(409, "resume_limit", "This run stopped too many times. Start a fresh run.")
+        if busy(busy_runs(), access.max_active_runs):
+            raise busy_refusal()
     with _resume_lock:
         if run_id in _resuming or is_paused(run_id):
             return JSONResponse(status_code=409, content={
@@ -437,9 +454,10 @@ _confirming: set[str] = set()
 _confirm_lock = threading.Lock()
 
 
-@app.post("/api/runs/{run_id}/confirm/start", dependencies=_RUN + _NEW_WORK)
+@app.post("/api/runs/{run_id}/confirm/start", dependencies=_ADMIN_WORK)
 def api_confirm_start(run_id: str):
-    """Dev (used by /inspector): show the confirm step on a run whose graph already ended after verify."""
+    """Dev (used by /inspector): show the confirm step on a run whose graph already ended after verify.
+    Admin only (hardening A1): it clears confirm and photos, and the confirm that follows reruns paid steps."""
     rd = _local_run(run_id)
     if not rd.exists():
         raise HTTPException(404, detail=f"Run '{run_id}' not found.")
@@ -460,7 +478,7 @@ def api_confirm_start(run_id: str):
 
 
 @app.post("/api/runs/{run_id}/confirm", dependencies=_RUN + [Depends(refuse_late_confirm)])
-def api_confirm(run_id: str, answer: ConfirmAnswer):
+def api_confirm(run_id: str, answer: ConfirmAnswer, user: SignedIn = Depends(run_access)):
     rd = _local_run(run_id)
     if not rd.exists():
         raise HTTPException(404, detail=f"Run '{run_id}' not found.")
@@ -474,10 +492,15 @@ def api_confirm(run_id: str, answer: ConfirmAnswer):
             return JSONResponse(status_code=409, content={
                 "error": {"code": "already_confirmed", "message": "This run is already confirmed."}
             })
+        paused = is_paused(run_id)
+        if not paused and user.role != "admin":  # hardening A1: only the admin's dev path confirms a run not paused
+            return JSONResponse(status_code=409, content={
+                "error": {"code": "not_waiting", "message": "This run is not waiting for confirm."}
+            })
         _confirming.add(run_id)
     data = answer.model_dump()
     try:
-        if is_paused(run_id):
+        if paused:
             threading.Thread(target=resume_graph, args=(run_id, data), daemon=True).start()
         else:  # dev path: run started with "Start confirm", no graph waiting
             finish_confirm(run_id, payload, data)

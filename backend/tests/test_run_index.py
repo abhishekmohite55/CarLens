@@ -75,3 +75,13 @@ def test_rerun_adds_a_new_node_row(db_engine):
     with db_engine.connect() as conn:
         rows = conn.execute(select(NodeRun.summary).where(NodeRun.run_id == run_id).order_by(NodeRun.id)).scalars().all()
     assert rows == ["try 0", "try 1"]
+
+
+def test_busy_and_resume_rules():  # hardening A7
+    assert not run_index.busy(1, 2)
+    assert run_index.busy(2, 2)
+    assert not run_index.busy(99, None)
+    assert run_index.busy_refusal().status == 503
+    assert run_index.resume_allowed(1, 2) and run_index.resume_allowed(2, 2)
+    assert not run_index.resume_allowed(3, 2)
+    assert not run_index.resume_allowed(1, 0)

@@ -55,6 +55,7 @@ class ModelsConfig(BaseModel):
     locate_thinking_level: Optional[str] = None
     photos_chain: list[ModelEntry] = []  # empty = use verify_chain
     photos_timeout_per_model_sec: int = 180
+    max_calls_in_flight: int = Field(6, ge=1)  # hardening A3: model calls still running (also timed-out ones) at most
 
 
 class LocateVideoConfig(BaseModel):
@@ -143,6 +144,9 @@ class AuthConfig(BaseModel):
 class AccessConfig(BaseModel):
     """Access requests (platform step 5/6)."""
     default_tokens: int = 5  # given when the owner approves a request
+    free_resumes_per_run: int = Field(2, ge=0)  # hardening A7: a user may resume while failures <= this
+    max_active_runs: int = Field(2, ge=1)  # hardening A7: runs uploaded or working at once (all users)
+    max_event_streams: int = Field(50, ge=1)  # hardening A7: live run pages open at once (all users)
 
 
 class MaintenanceConfig(BaseModel):

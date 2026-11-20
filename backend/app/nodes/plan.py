@@ -69,7 +69,8 @@ def make_plan(confirm: dict, findings: list[dict], emit, callbacks: list, metada
     answer = ask_chain(cfg.models.plan_chain,
                        lambda entry: [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)],
                        temperature=cfg.models.temperature, timeout_sec=cfg.models.plan_timeout_per_model_sec,
-                       thinking_level=None, validate=_validate, emit=emit, callbacks=callbacks, metadata=metadata)
+                       thinking_level=None, validate=_validate, emit=emit, callbacks=callbacks, metadata=metadata,
+                       max_in_flight=cfg.models.max_calls_in_flight)
     response = {"received_at": _now(), **answer}
     if answer["parsed"] is None:
         queries["problems"].append("every plan model failed")

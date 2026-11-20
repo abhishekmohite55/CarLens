@@ -2,7 +2,7 @@
 // Everything on screen is driven by the run's real events; animations loop only while a step really runs (rule 2).
 // Users see no Sent / Received (owner, 14 Nov).
 import { AnimatePresence, motion } from "motion/react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, Navigate, useNavigate, useParams } from "react-router";
 import { api } from "../shared/api";
 import { Car3D } from "./Car3D";
@@ -33,22 +33,29 @@ async function getJson(path: string): Promise<any> {
   }
 }
 
-/** Rebuilds the run from its events and keeps following them. */
+/** Rebuilds the run from its events and keeps following them. The stream ends when the run ends (hardening A7):
+ * the page closes it on run_done, and reopen() (after Resume) asks only for events after the last one it has. */
 function useRun(id: string) {
   const [run, setRun] = useState<Run>(emptyRun);
   const [missing, setMissing] = useState(false);
   const [signedOut, setSignedOut] = useState(false);
   const [online, setOnline] = useState(true);
+  const lastSeq = useRef(0);
+  const [stream, setStream] = useState(0);
   useEffect(() => {
-    let lastSeq = 0;
+    lastSeq.current = 0;
     setRun(emptyRun());
-    const source = new EventSource(`/api/runs/${id}/events`);
+  }, [id]);
+  useEffect(() => {
+    const after = lastSeq.current;
+    const source = new EventSource(`/api/runs/${id}/events${after ? `?after=${after}` : ""}`);
     source.onopen = () => setOnline(true);
     source.onmessage = (m) => {
       const e: RunEvent = JSON.parse(m.data);
-      if (e.seq <= lastSeq) return; // a reconnect replays the history: skip what we already have
-      lastSeq = e.seq;
+      if (e.seq <= lastSeq.current) return; // already have it
+      lastSeq.current = e.seq;
       setRun((r) => apply(r, e));
+      if (e.node === "pipeline" && e.type === "run_done") source.close(); // finished: stop asking
     };
     source.onerror = () => {
       setOnline(false);
@@ -59,8 +66,8 @@ function useRun(id: string) {
 
     };
     return () => source.close();
-  }, [id]);
-  return { run, missing, online, signedOut };
+  }, [id, stream]);
+  return { run, missing, online, signedOut, reopen: () => setStream((n) => n + 1) };
 }
 
 /** Counts up once a second; returns m:ss since `since`. */
@@ -124,7 +131,7 @@ const chip = "text-label rounded-full bg-surface px-4 py-2 shadow-panel";
 
 export function RunPage() {
   const { id = "" } = useParams();
-  const { run, missing, online, signedOut } = useRun(id);
+  const { run, missing, online, signedOut, reopen } = useRun(id);
   const { me, setMe } = useSession();
   // The session ended: forget it here too, or the sign-in page would send us straight back (it thinks we are in).
   useEffect(() => { if (signedOut) setMe(null); }, [signedOut, setMe]);
@@ -135,6 +142,7 @@ export function RunPage() {
     setResuming(true);
     try {
       await api(`/api/runs/${id}/resume`, { method: "POST" });
+      reopen(); // the stream closed at run_done: follow the resumed run
     } catch (e) {
       setResumeProblem(e instanceof Error ? e.message : "Could not resume. Try again.");
     } finally {

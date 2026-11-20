@@ -107,7 +107,8 @@ def _run_photos_inner(run_id: str) -> None:
                        validate=validate_answer,
                        emit=lambda msg: append_event(run_id, "photos", "node_progress", {"message": msg}),
                        callbacks=langchain_callbacks(run_id, "photos"),
-                       metadata={"langfuse_session_id": run_id, "langfuse_trace_name": "photos"})
+                       metadata={"langfuse_session_id": run_id, "langfuse_trace_name": "photos"},
+                       max_in_flight=cfg.models.max_calls_in_flight)
     save_result(run_id, "05_photos/response.json", {"received_at": _now(), **answer})
     files.append("05_photos/response.json")
     if answer["parsed"] is None:  # plan and extract then use verify + confirm as they are

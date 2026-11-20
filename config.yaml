@@ -43,6 +43,7 @@ models: # fill model names before each stage
   verify_thinking_level: low # Gemini entries only; empty = model default; or minimal | low | medium | high
   verify_timeout_per_model_sec: 180
   locate_thinking_level: low # empty = model default; or minimal | low | medium | high
+  max_calls_in_flight: 6 # model calls still running at once, also ones past their timeout; more are refused (hardening A3)
 
 locate_video: # copy sent to Gemini locate; frames always use the original
   shrink: true
@@ -128,6 +129,9 @@ auth: # platform step 5 sign-in (docs/platform/05-login.md)
 
 access: # access requests (platform step 6)
   default_tokens: 5 # runs given when the owner approves a request
+  free_resumes_per_run: 2 # a user may press Resume while the run has failed at most this many times (admin: no limit)
+  max_active_runs: 2 # runs uploaded or working at once, all users; more uploads / fresh runs / resumes wait (admin: never refused)
+  max_event_streams: 50 # live run pages open at once, all users; more get "busy"
 
 maintenance: # during a deploy (platform step 9): no new uploads / fresh runs / resumes
   confirm_grace_min: 5 # runs waiting at confirm may still be confirmed this long; after that the deploy goes on

@@ -30,6 +30,15 @@ def env(db_engine, tmp_path, monkeypatch):
         return upload_mod.Received(p, "car.mp4", "mp4", 1, shas["sha"], 60.0)
 
     monkeypatch.setattr(upload_mod, "receive_upload", fake_receive)
+
+    # hardening A7: runs from other tests stay "uploaded" in carlens_test; the server-wide run limit is not tested here
+    real_config = upload_mod.get_config
+
+    def config_without_run_limit():
+        cfg = real_config().model_copy(deep=True)
+        cfg.access.max_active_runs = 1_000_000
+        return cfg
+    monkeypatch.setattr(upload_mod, "get_config", config_without_run_limit)
     from app.main import app
     return db_engine, app, shas, tmp_path
 
@@ -139,3 +148,37 @@ def test_end_a_run_that_never_started(env):
     run2 = client.post("/api/runs", files=VIDEO, headers=ORIGIN).json()["run_id"]  # the slot is free again
     _finish(db_engine, run2)
     assert client.post(f"/api/runs/{run2}/end", headers=ORIGIN).status_code == 409  # not "uploaded" any more
+
+
+def test_user_cannot_restart_confirm(env, monkeypatch):  # hardening A1
+    db_engine, app, shas, _ = env
+    shas["sha"] = uuid4().hex * 2
+    client = _user_client(db_engine, app, tokens=1)
+    run_id = client.post("/api/runs", files=VIDEO, headers=ORIGIN).json()["run_id"]
+    _finish(db_engine, run_id)
+    assert client.post(f"/api/runs/{run_id}/confirm/start", headers=ORIGIN).status_code == 403
+
+    import app.main as main_mod
+    started = []
+    monkeypatch.setattr(main_mod, "load_payload", lambda rid: {"odometer_found": False})
+    monkeypatch.setattr(main_mod, "load_record", lambda rid: None)
+    monkeypatch.setattr(main_mod, "is_paused", lambda rid: False)  # a payload but no graph waiting: the dev path
+    monkeypatch.setattr(main_mod, "finish_confirm", lambda *a, **k: started.append("confirm"))
+    monkeypatch.setattr(main_mod, "resume_from", lambda *a, **k: started.append("resume"))
+    r = client.post(f"/api/runs/{run_id}/confirm", json={"car": {"make": "Maruti", "model": "Swift"}}, headers=ORIGIN)
+    assert r.status_code == 409 and r.json()["error"]["code"] == "not_waiting"
+    assert started == []  # no paid step started
+
+
+def test_resume_stops_after_the_free_resumes(env):  # hardening A7 (default free_resumes_per_run: 2)
+    db_engine, app, shas, _ = env
+    shas["sha"] = uuid4().hex * 2
+    client = _user_client(db_engine, app, tokens=1)
+    run_id = client.post("/api/runs", files=VIDEO, headers=ORIGIN).json()["run_id"]
+    _finish(db_engine, run_id)
+    from app.runs import append_event
+    for _ in range(3):
+        append_event(run_id, "pipeline", "run_done", {"status": "failed", "failed_at": "plan", "error": "test"})
+    _finish(db_engine, run_id)
+    r = client.post(f"/api/runs/{run_id}/resume", headers=ORIGIN)
+    assert r.status_code == 409 and r.json()["error"]["code"] == "resume_limit"

@@ -33,3 +33,16 @@ def test_next_seq_starts_at_1_for_new_run(tmp_path, monkeypatch):
     runs_mod._seq.pop(run_id, None)
 
     assert runs_mod.next_seq(run_id) == 1
+
+
+def test_count_failures_counts_only_failed_run_done():  # hardening A7
+    from app.runs import count_failures
+    events = [
+        {"node": "pipeline", "type": "run_done", "data": {"status": "failed", "failed_at": "plan"}},
+        {"node": "plan", "type": "node_failed", "data": {}},
+        {"node": "pipeline", "type": "run_done", "data": {"status": "partial"}},
+        {"node": "pipeline", "type": "run_done", "data": {"status": "failed", "failed_at": "search"}},
+        {"node": "pipeline", "type": "run_done"},
+    ]
+    assert count_failures(events) == 2
+    assert count_failures([]) == 0
