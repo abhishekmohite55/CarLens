@@ -324,7 +324,7 @@ def start_pending(pending_id: str, user_id: int) -> dict:
         try:
             claimed.rename(d)
         except OSError:
-            log.exception("could not put back kept upload %s", pending_id)
+            log.exception("could not put back a kept upload")  # no request value in the log (Sonar S5145)
         raise
     shutil.rmtree(claimed, ignore_errors=True)
     return {"run_id": run_id}
