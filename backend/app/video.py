@@ -21,8 +21,9 @@ def safe_media_path(path: Path) -> Path:
     return full
 
 
-def shrink_video(src: Path, dst: Path, *, height: int, fps: int, crf: int) -> Path:
-    """Copy src to dst at reduced height/fps/crf, no audio. Returns dst."""
+def shrink_video(src: Path, dst: Path, *, height: int, fps: int, crf: int, timeout_sec: int | None = None) -> Path:
+    """Copy src to dst at reduced height/fps/crf, no audio. Returns dst.
+    timeout_sec (hardening A4): ffmpeg is stopped after this long and RuntimeError raised."""
     src_arg, dst_arg = safe_media_path(src), safe_media_path(dst)
     cmd = [
         ffmpeg_exe(), "-v", "error", "-y", "-i", str(src_arg),
@@ -31,7 +32,9 @@ def shrink_video(src: Path, dst: Path, *, height: int, fps: int, crf: int) -> Pa
         str(dst_arg),
     ]
     try:
-        subprocess.run(cmd, check=True, capture_output=True, text=True)
+        subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=timeout_sec)
+    except subprocess.TimeoutExpired as exc:  # subprocess.run kills ffmpeg before raising
+        raise RuntimeError(f"took longer than {timeout_sec} s") from exc
     except FileNotFoundError:
         raise RuntimeError("ffmpeg not found")
     except subprocess.CalledProcessError as exc:

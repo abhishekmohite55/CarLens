@@ -18,6 +18,8 @@ type Dash = {
   tavily: { queries_this_month: number; free_credits: number; note: string };
   problems?: { part: string; error: string }[]; // step 9.3: parts that could not load (the rest still shows)
   access: { pending: number; approved: number; locked: number };
+  flagged?: { user_id: number; email: string; n: number; same_video: number; refused: number }[];
+  flag_window_min?: number;
   tokens: { email: string; tokens_left: number; runs: number }[];
   prices: { status: string; n: number }[];
   in_progress: { run_id: string; status: string; file: string | null; user: string | null; since: string }[];
@@ -262,6 +264,18 @@ function NeedsYou({ d }: { d: Dash }) {
           <span className={`font-display text-xl tabular-nums ${r.n ? "text-ink" : "text-ink-3"}`}>{r.n}</span>
         </Link>
       ))}
+      {(d.flagged ?? []).map((f) => (
+        // Hardening A2: repeated same-video or refused uploads (owner, 20 Nov): the admin decides what to do.
+        <Link key={f.user_id} to="/users"
+          className="flex items-center justify-between gap-3 rounded-2xl bg-bad/15 px-4 py-2.5 transition-colors hover:bg-bad/25 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent">
+          <span className="min-w-0 flex-1 text-sm text-ink-2">
+            <span className="block font-medium text-ink">Repeated uploads</span>
+            <span className="block truncate" title={f.email}>{f.email}</span>
+            <span className="block text-xs text-ink-3">{f.same_video} same video · {f.refused} refused · last {d.flag_window_min ?? 60} min</span>
+          </span>
+          <span className="font-display text-xl tabular-nums text-ink">{f.n}</span>
+        </Link>
+      ))}
       <p className="px-1 pt-1 text-xs text-ink-3">
         {d.in_progress.length === 0 ? "Nothing is running." : `${d.in_progress.length} run${d.in_progress.length === 1 ? "" : "s"} in progress: ${d.in_progress.slice(0, 2).map((r) => r.user ?? r.file ?? r.run_id).join(", ")}${d.in_progress.length > 2 ? "…" : ""}`}
       </p>
@@ -436,7 +450,7 @@ export function Dashboard() {
           <Card title="Runs per day" className="lg:col-span-4">
             <RunsPerDay data={d.runs_per_day} theme={theme} />
           </Card>
-          <div className="grid gap-4 lg:col-span-4">
+          <div className="grid min-w-0 grid-cols-1 gap-4 lg:col-span-4">
             <Card title="By weekday"><Weekdays data={d.runs_per_day} days={d.days} /></Card>
             <Card title="Needs you"><NeedsYou d={d} /></Card>
           </div>

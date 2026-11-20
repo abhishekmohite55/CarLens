@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from . import admin_data, health, settings_store
 from .auth import SignedIn, require_admin
+from .config import get_config
 from .graph import ORDER, forget_run
 from .run_index import is_run_id
 from .runs import run_dir
@@ -183,7 +184,8 @@ def admin_health(admin: SignedIn = Depends(require_admin)):
 
 @router.get("/dashboard")
 def dashboard(days: int = 30, admin: SignedIn = Depends(require_admin)):
-    return admin_data.dashboard(days)
+    up = get_config().upload
+    return admin_data.dashboard(days, up.repeat_window_min, up.repeat_warn_count)
 
 
 @router.get("/tables")

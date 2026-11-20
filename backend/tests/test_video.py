@@ -57,3 +57,12 @@ def test_shrink_video_passes_absolute_paths(tmp_path, monkeypatch):  # hardening
     cmd = mock_run.call_args[0][0]
     assert cmd[cmd.index("-i") + 1] == str((tmp_path / "in.mp4").resolve())
     assert cmd[-1] == str((tmp_path / "out.mp4").resolve())
+
+
+def test_shrink_video_timeout_raises(tmp_path):  # hardening A4
+    import subprocess
+    with patch("app.video.ffmpeg_exe", return_value="ffmpeg"), \
+         patch("subprocess.run", side_effect=subprocess.TimeoutExpired("ffmpeg", 5)) as run:
+        with pytest.raises(RuntimeError, match="longer than 5 s"):
+            shrink_video(tmp_path / "in.mp4", tmp_path / "out.mp4", height=480, fps=5, crf=30, timeout_sec=5)
+    assert run.call_args.kwargs["timeout"] == 5

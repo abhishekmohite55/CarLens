@@ -2,7 +2,10 @@ upload:
   allowed_types: [mp4, mov, webm]
   max_size_mb: 500
   max_duration_sec: 300
-  pending_minutes: 30 # same video uploaded again: the file waits this long while the user chooses old run / fresh run
+  pending_minutes: 30 # same video uploaded again: the user's choice waits this long (the earlier run's video is reused, no copy kept)
+  max_parallel: 2 # uploads received and checked at once (users); one more gets "busy"
+  repeat_warn_count: 3 # same-video or refused uploads by one user that show them under "Needs you" in admin
+  repeat_window_min: 60 # ... counted over this many minutes
 
 models: # fill model names before each stage
   locate:
@@ -50,6 +53,7 @@ locate_video: # copy sent to Gemini locate; frames always use the original
   height: 1080
   fps: 5
   crf: 23
+  shrink_timeout_sec: 600 # shrink taking longer: ffmpeg stopped, locate fails with a clear message (the original is never sent)
 
 frames:
   window_sec: 1.5 # ± around each locate timestamp (all items, odometer too)
@@ -67,6 +71,8 @@ photos: # extra photos at confirm (Stage 6): 4 optional tyre slots + 1 odometer 
   allowed_types: [jpg, jpeg, png, webp, heic] # heic: iPhone photos, decoded with pillow-heif
   max_size_mb: 10
   km_min_confidence: 0.8 # photo km replaces the confirmed km only at this confidence or higher (owner, 5 Nov)
+  max_pixels: 50000000 # larger photos (megapixels x 1,000,000) are refused before they are opened
+  max_parallel: 2 # photos decoded at once; more wait their turn
 
 plan:
   queries_per_part: 4 # LLM queries per damaged part and per tyre marked "replace"

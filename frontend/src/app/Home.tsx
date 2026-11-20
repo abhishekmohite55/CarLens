@@ -90,6 +90,14 @@ export function Home() {
 
   const upload = async (file: File) => {
     setProblem("");
+    if (!isAdmin) {
+      // Hardening A2: ask first. A refusal in the middle of an upload may only show as a network error.
+      const config = await api<{ busy?: boolean; maintenance?: boolean }>("/api/config").catch(() => null);
+      if (config?.busy) {
+        setProblem("CarLens is busy right now. Try again in a few minutes.");
+        return;
+      }
+    }
     setStage({ kind: "uploading", file, sent: 0 });
     const answer = await sendVideo(file, (sent) => setStage({ kind: "uploading", file, sent }));
     if (answer.kind === "run") {

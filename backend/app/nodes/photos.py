@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import io
 import logging
+import threading
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -28,15 +30,65 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+PHOTO_FORMATS = {"JPEG", "PNG", "WEBP", "HEIF"}  # what Pillow calls the formats in photos.allowed_types
+
+_decode_cond = threading.Condition()
+_decoding = 0
+
+
+@contextmanager
+def decode_slot(max_parallel: int):
+    """Hardening A4: at most max_parallel photos decoded at once; the others wait their turn."""
+    global _decoding
+    with _decode_cond:
+        while _decoding >= max_parallel:
+            _decode_cond.wait()
+        _decoding += 1
+    try:
+        yield
+    finally:
+        with _decode_cond:
+            _decoding -= 1
+            _decode_cond.notify()
+
+
+def size_problem(image_format: str | None, width: int, height: int, max_pixels: int) -> str | None:
+    """Hardening A4: a photo's header (format, pixels) checked before anything decodes it."""
+    if image_format not in PHOTO_FORMATS:
+        return "Only JPEG, PNG, WEBP or HEIC photos are accepted."
+    if width * height > max_pixels:
+        return (f"Photo is too large ({width * height / 1e6:.0f} megapixels). "
+                f"The limit is {max_pixels / 1e6:.0f} megapixels.")
+    return None
+
+
+def header_problem(data: bytes, max_pixels: int) -> str | None:
+    """Read only the image header (Pillow opens lazily); a problem text, or None when the photo may be decoded."""
+    try:
+        from PIL import Image
+        from pillow_heif import register_heif_opener
+        register_heif_opener()
+        with Image.open(io.BytesIO(data)) as im:
+            image_format, (width, height) = im.format, im.size
+    except Exception:  # noqa: BLE001  unreadable, or bigger than Pillow's own bomb limit
+        return "This file could not be read as an image."
+    return size_problem(image_format, width, height, max_pixels)
+
+
 def save_photo(folder: Path, slot: str, filename: str, data: bytes) -> str | None:
-    """Check type, size and that it decodes; save as <slot>.jpg (frames size and quality). Returns a problem or None."""
+    """Check type, size, header (format, pixels) and that it decodes; save as <slot>.jpg (frames size and quality).
+    Returns a problem or None. Runs in a worker thread (photo route), at most photos.max_parallel decoding at once."""
     p, f = get_config().photos, get_config().frames
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
     if ext not in p.allowed_types:
         return f"Only {', '.join(p.allowed_types)} photos are accepted."
     if len(data) > p.max_size_mb * 1024 * 1024:
         return f"Photo is over {p.max_size_mb} MB."
-    img = _decode_heic(data) if ext == "heic" else cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+    problem = header_problem(data, p.max_pixels)
+    if problem:
+        return problem
+    with decode_slot(p.max_parallel):
+        img = _decode_heic(data) if ext == "heic" else cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
     if img is None:
         return "This file could not be read as an image."
     folder.mkdir(parents=True, exist_ok=True)

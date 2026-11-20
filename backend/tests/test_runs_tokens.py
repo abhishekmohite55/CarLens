@@ -19,12 +19,14 @@ def env(db_engine, tmp_path, monkeypatch):
     import app.nodes.upload as upload_mod
     import app.runs as runs_mod
     import app.main as main_mod
-    for mod in (runs_mod, main_mod):  # main.py imported run_dir by name
+    import app.storage as storage_mod
+    for mod in (runs_mod, main_mod, upload_mod, storage_mod):  # these modules imported run_dir by name
         monkeypatch.setattr(mod, "run_dir", lambda rid: tmp_path / "runs" / rid)
     monkeypatch.setattr(upload_mod, "_pending_root", lambda: tmp_path / "pending")
     shas = {"sha": "a" * 64}
 
     async def fake_receive(video):
+        shas["received"] = shas.get("received", 0) + 1
         p = tmp_path / f"{uuid4().hex}.mp4"
         p.write_bytes(b"x")
         return upload_mod.Received(p, "car.mp4", "mp4", 1, shas["sha"], 60.0)
@@ -39,6 +41,7 @@ def env(db_engine, tmp_path, monkeypatch):
         cfg.access.max_active_runs = 1_000_000
         return cfg
     monkeypatch.setattr(upload_mod, "get_config", config_without_run_limit)
+    monkeypatch.setattr(main_mod, "get_config", config_without_run_limit)  # upload admission (hardening A2)
     from app.main import app
     return db_engine, app, shas, tmp_path
 
@@ -182,3 +185,42 @@ def test_resume_stops_after_the_free_resumes(env):  # hardening A7 (default free
     _finish(db_engine, run_id)
     r = client.post(f"/api/runs/{run_id}/resume", headers=ORIGIN)
     assert r.status_code == 409 and r.json()["error"]["code"] == "resume_limit"
+
+
+def _audit_count(db_engine, action):
+    from app.models import AuditLog
+    from sqlalchemy import func
+    with db_engine.connect() as conn:
+        return conn.execute(select(func.count()).select_from(AuditLog).where(AuditLog.action == action)).scalar_one()
+
+
+def test_refused_upload_is_not_read_and_is_flagged(env):  # hardening A2
+    db_engine, app, shas, _ = env
+    client = _user_client(db_engine, app, tokens=0)
+    before_reads, before_rows = shas.get("received", 0), _audit_count(db_engine, "upload_refused")
+    r = client.post("/api/runs", files=VIDEO, headers=ORIGIN)
+    assert r.status_code == 403 and r.json()["error"]["code"] == "no_tokens"
+    assert shas.get("received", 0) == before_reads  # refused before the video was read
+    assert _audit_count(db_engine, "upload_refused") == before_rows + 1
+
+
+def test_same_video_again_keeps_no_copy(env):  # hardening A2 (owner, 20 Nov)
+    db_engine, app, shas, tmp_path = env
+    shas["sha"] = uuid4().hex * 2
+    client = _user_client(db_engine, app, tokens=3)
+    run1 = client.post("/api/runs", files=VIDEO, headers=ORIGIN).json()["run_id"]
+    _finish(db_engine, run1)
+    before = _audit_count(db_engine, "upload_same_video")
+
+    first = client.post("/api/runs", files=VIDEO, headers=ORIGIN).json()["pending_id"]
+    again = client.post("/api/runs", files=VIDEO, headers=ORIGIN).json()["pending_id"]
+    assert again == first  # same note, timer refreshed
+    kept = tmp_path / "pending" / first
+    assert (kept / "pending.json").exists() and not list(kept.glob("video.*"))  # no second copy stored
+    assert _audit_count(db_engine, "upload_same_video") == before + 2
+
+    r = client.post(f"/api/uploads/{first}/start", headers=ORIGIN)  # fresh run copies the earlier video
+    assert r.status_code == 200
+    new_run = r.json()["run_id"]
+    assert list((tmp_path / "runs" / new_run).glob("video.*"))
+    assert list((tmp_path / "runs" / run1).glob("video.*"))  # the earlier run keeps its own

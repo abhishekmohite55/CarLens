@@ -85,3 +85,10 @@ def test_busy_and_resume_rules():  # hardening A7
     assert run_index.resume_allowed(1, 2) and run_index.resume_allowed(2, 2)
     assert not run_index.resume_allowed(3, 2)
     assert not run_index.resume_allowed(1, 0)
+
+
+def test_upload_refusal_uses_the_run_rules():  # hardening A2
+    assert run_index.upload_refusal(0, 1, 0, 2) is None
+    assert run_index.upload_refusal(1, 5, 0, 2).code == "run_in_progress"
+    assert run_index.upload_refusal(0, 0, 0, 2).code == "no_tokens"
+    assert run_index.upload_refusal(0, 1, 2, 2).code == "busy"

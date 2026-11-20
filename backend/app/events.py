@@ -10,7 +10,10 @@ import asyncio
 import json
 import threading
 import time
+from pathlib import Path
 from typing import AsyncGenerator
+
+from starlette.concurrency import run_in_threadpool
 
 from .runs import events_path
 
@@ -57,6 +60,14 @@ def lines_after(lines: list[str], after: int) -> tuple[list[tuple[int, str]], bo
     return out, ended
 
 
+def read_from(path: Path, pos: int) -> tuple[bytes, int]:
+    """The file's bytes from pos on, and the position after them (S8: called in a worker thread)."""
+    with open(path, "rb") as f:
+        f.seek(pos)
+        data = f.read()
+        return data, f.tell()
+
+
 def sse_message(seq: int, line: str) -> str:
     return f"id: {seq}\ndata: {line}\n\n" if seq else f"data: {line}\n\n"
 
@@ -71,9 +82,7 @@ async def sse_stream(run_id: str, after: int = 0) -> AsyncGenerator[str, None]:
         last_pos = 0
         ended = False
         if evpath.exists():
-            with open(evpath, "rb") as f:
-                content = f.read()
-                last_pos = f.tell()
+            content, last_pos = await run_in_threadpool(read_from, evpath, 0)
             fresh, ended = lines_after(content.decode("utf-8").splitlines(), after)
             for seq, line in fresh:
                 yield sse_message(seq, line)
@@ -100,9 +109,7 @@ async def sse_stream(run_id: str, after: int = 0) -> AsyncGenerator[str, None]:
                 continue
 
             if size > last_pos:
-                with open(evpath, "rb") as f:
-                    f.seek(last_pos)
-                    chunk = f.read()
+                chunk, _ = await run_in_threadpool(read_from, evpath, last_pos)
 
                 # Only consume up to the last complete line (ends with \n),
                 # so a half-written line is neither sent nor permanently skipped.

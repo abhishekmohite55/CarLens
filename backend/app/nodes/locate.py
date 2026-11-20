@@ -141,7 +141,8 @@ def _run_locate_inner(run_id: str) -> None:
     out_dir = rd / "01_locate"
     out_dir.mkdir(exist_ok=True)
 
-    # Shrink video if configured; fall back to original on error
+    # Shrink video if configured. Hardening A4 (owner, 20 Nov): a failed or too slow shrink stops locate with a clear
+    # message; the original (up to 500 MB) is never sent instead, so no Gemini call is paid for a doomed upload.
     lv = cfg.locate_video
     send_path = video_path
     shrink_settings: dict | None = None
@@ -155,13 +156,17 @@ def _run_locate_inner(run_id: str) -> None:
             else:
                 emit_fn_tmp("Shrinking video")
                 tmp_path = out_dir / "video_small.part.mp4"
-                shrink_video(video_path, tmp_path, height=lv.height, fps=lv.fps, crf=lv.crf)
+                shrink_video(video_path, tmp_path, height=lv.height, fps=lv.fps, crf=lv.crf,
+                             timeout_sec=lv.shrink_timeout_sec)
                 tmp_path.replace(small_path)
             send_path = small_path
             shrink_settings = {"height": lv.height, "fps": lv.fps, "crf": lv.crf}
         except Exception as exc:
-            log.warning("shrink failed for %s: %s — sending original", run_id, exc)
-            emit_fn_tmp("Shrink failed, sending original video")
+            log.warning("shrink failed for %s: %s", run_id, exc)
+            append_event(run_id, "locate", "node_failed", {
+                "error": "The video could not be prepared. Try again, or upload a shorter or lower-resolution video.",
+                "detail": f"shrink failed: {exc}"[:300]})
+            return
 
     sent_file = send_path.relative_to(rd).as_posix()
     sent_mb = round(send_path.stat().st_size / 1e6, 1)

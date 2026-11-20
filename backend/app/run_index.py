@@ -4,6 +4,7 @@ Only this module writes `runs` and `node_runs`.
 """
 from __future__ import annotations
 
+import logging
 import os
 import re
 import secrets
@@ -16,7 +17,9 @@ from sqlalchemy.exc import IntegrityError
 
 from .config import PROJECT_ROOT
 from .db import require_engine
-from .models import NodeRun, Run, User
+from .models import AuditLog, NodeRun, Run, User
+
+log = logging.getLogger(__name__)
 
 TERMINAL = {"node_done": "done", "node_failed": "failed", "node_skipped": "skipped"}
 
@@ -89,6 +92,39 @@ def run_refusal(active_runs: int, tokens: int) -> RunRefused | None:
     if tokens <= 0:
         return RunRefused(403, "no_tokens", "You have no runs left. Ask the owner for more.")
     return None
+
+
+def upload_refusal(active_runs: int, tokens: int, busy_count: int, max_active_runs: int | None) -> RunRefused | None:
+    """Hardening A2: the same rules as a new run, checked before an upload's body is read."""
+    refused = run_refusal(active_runs, tokens)
+    if refused:
+        return refused
+    return busy_refusal() if busy(busy_count, max_active_runs) else None
+
+
+def admission_refusal(user_id: int, max_active_runs: int | None) -> RunRefused | None:
+    """Hardening A2: may this user upload now? Read only; create_run_row repeats the check atomically."""
+    with require_engine().connect() as conn:
+        tokens = conn.execute(select(User.tokens).where(User.id == user_id)).scalar_one_or_none() or 0
+        active = conn.execute(select(func.count()).select_from(Run).where(
+            Run.user_id == user_id, Run.status.in_(ACTIVE_STATUSES))).scalar_one()
+        busy_count = conn.execute(select(func.count()).select_from(Run).where(
+            Run.status.in_(BUSY_STATUSES))).scalar_one()
+    return upload_refusal(active, tokens, busy_count, max_active_runs)
+
+
+UPLOAD_FLAGS = ("upload_same_video", "upload_refused")  # audit actions that flag a user on the dashboard
+FLAGGED_REFUSALS = ("no_tokens", "run_in_progress")  # refusals a normal user never meets (Home blocks them)
+
+
+def log_upload_event(user_id: int, action: str, details: dict) -> None:
+    """Hardening A2: a same-video or refused upload, in the audit log (no admin: the user did it). Never raises."""
+    try:
+        with require_engine().begin() as conn:
+            conn.execute(insert(AuditLog).values(admin_id=None, action=action, target=f"user {user_id}",
+                                                 details={"user_id": user_id, **details}))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("upload audit row not written: %s", exc)
 
 
 def create_run_row(*, sha256: str, original_filename: str, size_bytes: int, duration_sec: float,

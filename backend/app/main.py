@@ -15,6 +15,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
+from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from .auth import NO_STORE, AuthError, SignedIn, require_admin, require_approved, signed_in_user
 from .admin_routes import router as admin_router
@@ -43,10 +44,12 @@ from .nodes.report import run_report
 from .nodes.report import try_claim as report_try_claim
 from .nodes.verify import try_claim as verify_try_claim
 from .llm.tracing import _get_client as _warmup_tracing
-from .nodes.upload import DuplicateUpload, clean_old_pending, drop_pending, process_upload, start_pending
+from .nodes.upload import (DuplicateUpload, body_too_large, claim_upload_slot, clean_old_pending, drop_pending,
+                           process_upload, release_upload_slot, start_pending)
 from .db import get_engine
 from .results import FILES as RESULT_FILES, delete_results, load_result
-from .run_index import (RunRefused, busy, busy_refusal, busy_runs, is_run_id, resume_allowed, close_open_rows, interrupted_nodes, latest_node_result, other_active_run, run_owner,
+from .run_index import (FLAGGED_REFUSALS, RunRefused, admission_refusal, busy, busy_refusal, busy_runs, is_run_id,
+                        log_upload_event, resume_allowed, close_open_rows, interrupted_nodes, latest_node_result, other_active_run, run_owner,
                         user_runs, run_status)
 from .runs import append_event, events_path, failed_at, failure_count, run_dir
 from .settings_store import SettingsError, repin_run
@@ -168,21 +171,62 @@ def api_config():
         },
         "nodes": _NODES,
         "maintenance": maintenance_state()["on"],  # step 9: the app shows "being updated" and keeps uploads closed
+        "busy": _server_busy(cfg.access.max_active_runs),  # hardening A2: Home says "busy" before an upload starts
     }
 
 
-@app.post("/api/runs", dependencies=_NEW_WORK)
-async def api_create_run(background: BackgroundTasks, video: UploadFile = File(...),
-                         user: SignedIn = Depends(require_approved)):
-    """Upload → new run. Users: 1 token, one run at a time, same video again asks first (05-login.md §7.2, §7.3)."""
+def _server_busy(max_active_runs: int) -> bool:
     try:
-        out = await process_upload(video, user.id, is_admin=user.role == "admin")
+        return busy(busy_runs(), max_active_runs)
+    except Exception:  # noqa: BLE001  no database: the upload itself will say what is wrong
+        return False
+
+
+@app.post("/api/runs", dependencies=_NEW_WORK)
+async def api_create_run(request: Request, background: BackgroundTasks, user: SignedIn = Depends(require_approved)):
+    """Upload → new run. Users: 1 token, one run at a time, same video again asks first (05-login.md §7.2, §7.3).
+    Hardening A2: no `video: UploadFile` parameter (FastAPI would read the whole body before any check). Admission
+    first (size, tokens, run in progress, server busy, uploads at once), then the form is read."""
+    cfg = get_config()
+    is_admin = user.role == "admin"
+    if body_too_large(request.headers.get("content-length"), cfg.upload.max_size_mb):
+        return JSONResponse(status_code=413, content={"error": {"code": "too_large", "message":
+                            f"This file exceeds {cfg.upload.max_size_mb} MB. The limit is {cfg.upload.max_size_mb} MB."}})
+    if not is_admin:
+        refused = await run_in_threadpool(admission_refusal, user.id, cfg.access.max_active_runs)
+        if refused:
+            await _log_refusal(user.id, refused)
+            raise refused
+        if not claim_upload_slot(cfg.upload.max_parallel):
+            raise busy_refusal()
+    form = None
+    try:
+        form = await request.form(max_files=1, max_fields=1)
+        video = form.get("video")
+        if not isinstance(video, StarletteUploadFile):
+            return JSONResponse(status_code=400, content={"error": {"code": "no_video", "message": "No video was sent."}})
+        out = await process_upload(video, user.id, is_admin=is_admin)
         background.add_task(push_run, out["run_id"])  # the video to S3 (step 8.1)
         return out
     except DuplicateUpload as dup:
         return JSONResponse(status_code=409, content={
             "error": {"code": "same_video", "message": "You uploaded this video before. Open the old run, or start a fresh run (1 token)."},
             "duplicate_of": dup.duplicate_of, "pending_id": dup.pending_id})
+    except RunRefused as refused:  # the atomic check in create_run_row (a race the admission did not see)
+        if not is_admin:
+            await _log_refusal(user.id, refused)
+        raise
+    finally:
+        if form is not None:
+            await form.close()
+        if not is_admin:
+            release_upload_slot()
+
+
+async def _log_refusal(user_id: int, refused: RunRefused) -> None:
+    """Hardening A2: refusals a normal user never meets (Home blocks them) are counted for the dashboard."""
+    if refused.code in FLAGGED_REFUSALS:
+        await run_in_threadpool(log_upload_event, user_id, "upload_refused", {"code": refused.code})
 
 
 @app.get("/api/runs")
@@ -533,11 +577,11 @@ def _photo_guard(run_id: str, slot: str):
 @app.post("/api/runs/{run_id}/photos/{slot}", dependencies=_RUN)
 async def api_upload_photo(run_id: str, slot: str, photo: UploadFile = File(...)):
     """Stage 6: one extra photo per slot (front_left, front_right, rear_left, rear_right, odometer); replaces the old one."""
-    rd, err = _photo_guard(run_id, slot)
+    rd, err = await run_in_threadpool(_photo_guard, run_id, slot)  # S8: database and files off the event loop
     if err:
         return err
     data = await photo.read(get_config().photos.max_size_mb * 1024 * 1024 + 1)
-    problem = save_photo(rd / "05_photos", slot, photo.filename or "", data)
+    problem = await run_in_threadpool(save_photo, rd / "05_photos", slot, photo.filename or "", data)  # hardening A4
     if problem:
         return JSONResponse(status_code=422, content={"error": {"code": "bad_photo", "message": problem}})
     return {"saved": f"05_photos/{slot}.jpg"}
