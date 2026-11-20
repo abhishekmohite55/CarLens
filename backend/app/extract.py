@@ -87,14 +87,18 @@ def render_trimmed(car: str, trimmed: dict) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
-_AMOUNT_RE = re.compile(r"(\d[\d,]*(?:\.\d+)?)\s*(lakhs?|lacs?|lac|l\b|k\b|crores?|cr\b)?", re.I)
+_AMOUNT_RE = re.compile(r"(\d[\d,]*(?:\.\d+)?)\s*(lakhs?|lacs?|l\b|k\b|crores?|cr\b)?", re.I)
+_CURRENCY_RE = re.compile(r"₹|\brs\b|\binr\b", re.I)
 _UNIT = {"lakh": 100_000, "lakhs": 100_000, "lac": 100_000, "lacs": 100_000, "l": 100_000, "k": 1_000,
          "crore": 10_000_000, "crores": 10_000_000, "cr": 10_000_000}
 
 
 def parse_inr(text: str) -> int | None:
     """'₹4.50 lakh' → 450000, '₹ 4,95,000' → 495000, 'Rs. 1,995' → 1995, '₹28k' → 28000. None if no number."""
-    matches = list(_AMOUNT_RE.finditer(text or ""))
+    text = text or ""
+    # Hardening S11: read the amount after ₹ / Rs / INR, so "2018 Swift ₹4.25 Lakh" is not read as 2018 lakh.
+    sign = _CURRENCY_RE.search(text)
+    matches = list(_AMOUNT_RE.finditer(text, sign.end() if sign else 0)) or list(_AMOUNT_RE.finditer(text))
     if not matches:
         return None
     # "₹ 6.99 - 11.16 Lakh": the first number takes the unit written later in the same text

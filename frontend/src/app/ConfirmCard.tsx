@@ -59,10 +59,15 @@ function Chips({ options, value, onPick }: { options: any[]; value: any; onPick:
   );
 }
 
-/** A photo slot: pick, see the thumbnail, replace or remove. Uploads as soon as it is picked (CNF-11). */
-function Slot({ runId, slot, label, onChange }: { runId: string; slot: string; label: string; onChange: (has: boolean) => void }) {
+/** A photo slot: pick, see the thumbnail, replace or remove. Uploads as soon as it is picked (CNF-11).
+ * Hardening U2: one upload or removal at a time per slot, reported to the card so Confirm waits for it. */
+function Slot({ runId, slot, label, onChange, onWorking }: {
+  runId: string; slot: string; label: string; onChange: (has: boolean) => void; onWorking: (working: boolean) => void;
+}) {
   const [thumb, setThumb] = useState<string | null>(null);
-  const [state, setState] = useState<"idle" | "uploading">("idle");
+  const [state, setState] = useState<"idle" | "uploading" | "removing">("idle");
+  const working = state !== "idle";
+  useEffect(() => { onWorking(working); }, [working]); // eslint-disable-line react-hooks/exhaustive-deps
   const [problem, setProblem] = useState("");
   const picker = useRef<HTMLInputElement>(null);
 
@@ -75,7 +80,7 @@ function Slot({ runId, slot, label, onChange }: { runId: string; slot: string; l
   }, [runId, slot]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const upload = async (file?: File) => {
-    if (!file) return;
+    if (!file || working) return;
     setProblem("");
     setState("uploading");
     const form = new FormData();
@@ -92,20 +97,32 @@ function Slot({ runId, slot, label, onChange }: { runId: string; slot: string; l
     }
   };
   const remove = async () => {
-    await api(`/api/runs/${runId}/photos/${slot}`, { method: "DELETE" }).catch(() => {});
-    setThumb(null);
-    onChange(false);
+    if (working) return;
+    setProblem("");
+    setState("removing");
+    try {
+      await api(`/api/runs/${runId}/photos/${slot}`, { method: "DELETE" });
+      // The thumbnail goes only when the server has really deleted the photo.
+      setThumb(null);
+      onChange(false);
+    } catch {
+      setProblem("Could not remove. Try again.");
+    } finally {
+      setState("idle");
+    }
   };
 
   return (
     <div className="space-y-1.5">
-      <button type="button" onClick={() => picker.current?.click()} aria-label={`${label} photo`}
+      <button type="button" onClick={() => picker.current?.click()} aria-label={`${label} photo`} disabled={working}
         className="relative grid aspect-square w-full place-items-center overflow-hidden rounded-full border-2 border-dashed border-canvas/40 hover:border-canvas/70">
-        {thumb ? <img src={thumb} alt="" className="absolute inset-0 h-full w-full object-cover" />
+        {thumb ? <img src={thumb} alt="" className={`absolute inset-0 h-full w-full object-cover ${working ? "opacity-50" : ""}`} />
           : <span className="text-small opacity-80">{state === "uploading" ? "Uploading" : "Add photo"}</span>}
+        {thumb && working && <span className="text-small relative rounded-full bg-ink/70 px-2 py-0.5 text-canvas">
+          {state === "uploading" ? "Uploading" : "Removing"}</span>}
       </button>
       <p className="text-small text-center opacity-80">{label}</p>
-      {thumb && <button type="button" onClick={remove} className="text-small block w-full text-center underline opacity-70">Remove</button>}
+      {thumb && <button type="button" onClick={remove} disabled={working} className="text-small block w-full text-center underline opacity-70">Remove</button>}
       {problem && <p className="text-small rounded-input bg-danger-soft px-2 py-1 text-center text-danger-text">{problem}</p>}
       <input ref={picker} type="file" accept="image/*" hidden onChange={(e) => { void upload(e.target.files?.[0]); e.target.value = ""; }} />
     </div>
@@ -123,6 +140,9 @@ export function ConfirmCard({ runId, payload, onConfirmed }: { runId: string; pa
   const [form, setForm] = useState(start);
   const [open, setOpen] = useState(payload.expand);
   const [photos, setPhotos] = useState<Record<string, boolean>>({});
+  const [photoWork, setPhotoWork] = useState<Record<string, boolean>>({});
+  const photoBusy = Object.values(photoWork).some(Boolean);
+  const working = (slot: string) => (w: boolean) => setPhotoWork((p) => ({ ...p, [slot]: w }));
   const [hideTyres, setHideTyres] = useState(false);
   const [hideOdo, setHideOdo] = useState(false);
   const [cities, setCities] = useState<{ city: string; state: string }[]>([]);
@@ -147,6 +167,7 @@ export function ConfirmCard({ runId, payload, onConfirmed }: { runId: string; pa
   const tyrePhotos = SLOTS.some(([slot]) => photos[slot]);
 
   const confirm = async () => {
+    if (photoBusy) return;
     setBusy(true);
     setProblem("");
     const skipped: string[] = [];
@@ -258,12 +279,14 @@ export function ConfirmCard({ runId, payload, onConfirmed }: { runId: string; pa
         {/* Laid out like the car: front pair above the rear pair. */}
         <div className="mt-3 grid grid-cols-2 gap-x-10 gap-y-3 px-4 sm:grid-cols-4 sm:gap-x-4 sm:px-0">
           {SLOTS.map(([slot, label]) => (
-            <Slot key={slot} runId={runId} slot={slot} label={label} onChange={(has) => setPhotos((p) => ({ ...p, [slot]: has }))} />
+            <Slot key={slot} runId={runId} slot={slot} label={label} onChange={(has) => setPhotos((p) => ({ ...p, [slot]: has }))}
+              onWorking={working(slot)} />
           ))}
         </div>
         {!payload.odometer_found && (
           <div className="mx-auto mt-4 w-28">
-            <Slot runId={runId} slot="odometer" label="Odometer" onChange={(has) => setPhotos((p) => ({ ...p, odometer: has }))} />
+            <Slot runId={runId} slot="odometer" label="Odometer" onChange={(has) => setPhotos((p) => ({ ...p, odometer: has }))}
+              onWorking={working("odometer")} />
           </div>
         )}
       </div>
@@ -271,8 +294,8 @@ export function ConfirmCard({ runId, payload, onConfirmed }: { runId: string; pa
       {problem && <p role="alert" className="text-body rounded-input bg-danger-soft px-4 py-3 text-danger-text">{problem}</p>}
       {!ready && <p className="text-small inline-block rounded-full bg-warn-soft px-3 py-1 text-warn-text">Add make and model to continue.</p>}
       <div className="flex flex-wrap gap-2">
-        <motion.button layout transition={springs.rubber} type="button" onClick={confirm} disabled={!ready || busy} className={primary}>
-          {busy ? "Confirming" : "Confirm details"}
+        <motion.button layout transition={springs.rubber} type="button" onClick={confirm} disabled={!ready || busy || photoBusy} className={primary}>
+          {busy ? "Confirming" : photoBusy ? "Waiting for photo upload…" : "Confirm details"}
         </motion.button>
         {!open && <button type="button" onClick={() => setOpen(true)} className={quiet}>Edit details</button>}
       </div>

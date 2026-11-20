@@ -3,7 +3,6 @@ from __future__ import annotations
 import base64
 import json
 import logging
-import re
 import threading
 import time
 from pathlib import Path
@@ -71,10 +70,19 @@ def image_blocks(user_prompt: str, frames: list[dict], folder: Path,
     return content
 
 
+def strip_fences(text: str) -> str:
+    """'```json {...} ```' -> '{...}'. Plain string checks, so odd model output can never make it slow (hardening S9)."""
+    text = text.strip()
+    if len(text) < 6 or not (text.startswith("```") and text.endswith("```")):
+        return text
+    body = text[3:-3]
+    if body.startswith("json"):
+        body = body[4:]
+    return body.strip()
+
+
 def parse_json(raw: str) -> dict:
-    text = raw.strip()
-    m = re.match(r"^```(?:json)?\s*(.*?)\s*```$", text, re.DOTALL)
-    return json.loads(m.group(1) if m else text)
+    return json.loads(strip_fences(raw))
 
 
 def own_settings(entry, chain_timeout: int, chain_temperature: float) -> tuple[int, float]:

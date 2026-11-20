@@ -7,6 +7,8 @@ from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+import pytest
+
 from app.llm.chat import ask_chain, parse_json
 
 VALID = {
@@ -40,6 +42,20 @@ def test_parse_json_fenced():
 
 def test_parse_json_fence_no_lang():
     assert parse_json('```\n{"a": 1}\n```') == {"a": 1}
+
+
+def test_parse_json_fence_same_line_and_spaces():
+    assert parse_json('  ```json {"a": 1} ```  ') == {"a": 1}
+    assert parse_json('```json\n\n  {"a": [1, 2]}  \n\n```') == {"a": [1, 2]}
+
+
+def test_parse_json_odd_answers_fail_fast():
+    """Hardening S9: an opening fence with a huge tail and no closing fence is rejected at once, not slowly."""
+    started = time.monotonic()
+    for raw in ("```json" + " " * 200_000, "```" + "\n" * 200_000 + "x", "```"):
+        with pytest.raises(json.JSONDecodeError):
+            parse_json(raw)
+    assert time.monotonic() - started < 1
 
 
 def test_ask_chain_first_raises_second_answers():

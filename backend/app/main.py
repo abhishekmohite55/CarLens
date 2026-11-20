@@ -496,6 +496,28 @@ class ConfirmAnswer(BaseModel):
 
 _confirming: set[str] = set()
 _confirm_lock = threading.Lock()
+_photo_work: dict[str, int] = {}  # hardening U2: photo uploads/removals in progress, per run (under _confirm_lock)
+
+
+def _claim_photo(run_id: str) -> bool:
+    """Count a photo change as in progress. False once confirm has started: photos can no longer change."""
+    with _confirm_lock:
+        if run_id in _confirming:
+            return False
+        _photo_work[run_id] = _photo_work.get(run_id, 0) + 1
+        return True
+
+
+def _release_photo(run_id: str) -> None:
+    with _confirm_lock:
+        left = _photo_work.get(run_id, 1) - 1
+        if left > 0:
+            _photo_work[run_id] = left
+        else:
+            _photo_work.pop(run_id, None)
+
+
+_PHOTO_CLOSED = {"error": {"code": "not_waiting", "message": "Photos can only be changed while confirm is waiting."}}
 
 
 @app.post("/api/runs/{run_id}/confirm/start", dependencies=_ADMIN_WORK)
@@ -536,6 +558,10 @@ def api_confirm(run_id: str, answer: ConfirmAnswer, user: SignedIn = Depends(run
             return JSONResponse(status_code=409, content={
                 "error": {"code": "already_confirmed", "message": "This run is already confirmed."}
             })
+        if _photo_work.get(run_id):  # hardening U2: confirm never overtakes a photo still uploading
+            return JSONResponse(status_code=409, content={
+                "error": {"code": "photo_uploading", "message": "A photo is still uploading. Wait for it to finish, then confirm."}
+            })
         paused = is_paused(run_id)
         if not paused and user.role != "admin":  # hardening A1: only the admin's dev path confirms a run not paused
             return JSONResponse(status_code=409, content={
@@ -565,7 +591,7 @@ def _photo_guard(run_id: str, slot: str):
     payload = load_payload(run_id)
     if payload is None or load_record(run_id) is not None:
         return rd, JSONResponse(status_code=409, content={
-            "error": {"code": "not_waiting", "message": "Photos can only be changed while confirm is waiting."}
+            **_PHOTO_CLOSED
         })
     if slot == "odometer" and payload.get("odometer_found"):
         return rd, JSONResponse(status_code=409, content={
@@ -577,23 +603,33 @@ def _photo_guard(run_id: str, slot: str):
 @app.post("/api/runs/{run_id}/photos/{slot}", dependencies=_RUN)
 async def api_upload_photo(run_id: str, slot: str, photo: UploadFile = File(...)):
     """Stage 6: one extra photo per slot (front_left, front_right, rear_left, rear_right, odometer); replaces the old one."""
-    rd, err = await run_in_threadpool(_photo_guard, run_id, slot)  # S8: database and files off the event loop
-    if err:
-        return err
-    data = await photo.read(get_config().photos.max_size_mb * 1024 * 1024 + 1)
-    problem = await run_in_threadpool(save_photo, rd / "05_photos", slot, photo.filename or "", data)  # hardening A4
-    if problem:
-        return JSONResponse(status_code=422, content={"error": {"code": "bad_photo", "message": problem}})
-    return {"saved": f"05_photos/{slot}.jpg"}
+    if not _claim_photo(run_id):
+        return JSONResponse(status_code=409, content=_PHOTO_CLOSED)
+    try:
+        rd, err = await run_in_threadpool(_photo_guard, run_id, slot)  # S8: database and files off the event loop
+        if err:
+            return err
+        data = await photo.read(get_config().photos.max_size_mb * 1024 * 1024 + 1)
+        problem = await run_in_threadpool(save_photo, rd / "05_photos", slot, photo.filename or "", data)  # hardening A4
+        if problem:
+            return JSONResponse(status_code=422, content={"error": {"code": "bad_photo", "message": problem}})
+        return {"saved": f"05_photos/{slot}.jpg"}
+    finally:
+        _release_photo(run_id)
 
 
 @app.delete("/api/runs/{run_id}/photos/{slot}", dependencies=_RUN)
 def api_delete_photo(run_id: str, slot: str):
-    rd, err = _photo_guard(run_id, slot)
-    if err:
-        return err
-    (rd / "05_photos" / f"{slot}.jpg").unlink(missing_ok=True)
-    return {"deleted": True}
+    if not _claim_photo(run_id):
+        return JSONResponse(status_code=409, content=_PHOTO_CLOSED)
+    try:
+        rd, err = _photo_guard(run_id, slot)
+        if err:
+            return err
+        (rd / "05_photos" / f"{slot}.jpg").unlink(missing_ok=True)
+        return {"deleted": True}
+    finally:
+        _release_photo(run_id)
 
 
 @app.post("/api/runs/{run_id}/plan", status_code=202, dependencies=_ADMIN_WORK)

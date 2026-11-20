@@ -129,8 +129,13 @@ function FrameFan({ turn }: { turn: number }) {
 
 const chip = "text-label rounded-full bg-surface px-4 py-2 shadow-panel";
 
+// Hardening U1: a new run id builds a fresh page, so nothing from the previous run can stay on screen.
 export function RunPage() {
   const { id = "" } = useParams();
+  return <RunView key={id} id={id} />;
+}
+
+function RunView({ id }: { id: string }) {
   const { run, missing, online, signedOut, reopen } = useRun(id);
   const { me, setMe } = useSession();
   // The session ended: forget it here too, or the sign-in page would send us straight back (it thinks we are in).
