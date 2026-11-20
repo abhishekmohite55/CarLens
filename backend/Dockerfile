@@ -8,8 +8,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /carlens/backend
 
 # Packages first: this layer is reused until requirements.txt changes.
-COPY backend/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Hardening S12: the lock file (exact versions + hashes, also of every dependency); ready-built wheels only,
+# so no package's setup code runs during the build.
+COPY backend/requirements.lock .
+RUN pip install --no-cache-dir --require-hashes --only-binary :all: -r requirements.lock
 
 # Build check: fails here if a system library is missing (Q3).
 # RapidOCR() also downloads its models (~31 MB) into its package folder now, while the
