@@ -15,6 +15,14 @@ def test_run_id_is_random_without_date():
     assert all(re.fullmatch(r"r_[a-z0-9]{12}", i) for i in ids)
 
 
+def test_is_run_id_only_accepts_made_ids():  # hardening S14
+    assert run_index.is_run_id(run_index.new_run_id())
+    assert run_index.is_run_id("r_1aw7vygbiym6")
+    for bad in ["..", "", "r_", "r_ABCDEFGHIJKL", "r_1aw7vygbiym", "r_1aw7vygbiym67", "r_1aw7vygbiym6\n",
+                "r_1aw7vygbiym6/../x", "x_1aw7vygbiym6", None]:
+        assert not run_index.is_run_id(bad), bad
+
+
 def test_git_commit_without_git_uses_build_value(monkeypatch):
     def no_git(*args, **kwargs):
         raise FileNotFoundError("git")

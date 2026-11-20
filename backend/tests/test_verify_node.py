@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 
 def test_verify_409_without_manifest(tmp_path, monkeypatch):
-    run_id = "r_20261103_000000_test"
+    run_id = "r_verify000001"
     rd = tmp_path / run_id
     rd.mkdir()
     (rd / "meta.json").write_text(json.dumps({"run_id": run_id}), encoding="utf-8")

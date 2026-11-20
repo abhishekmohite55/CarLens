@@ -5,6 +5,7 @@ Only this module writes `runs` and `node_runs`.
 from __future__ import annotations
 
 import os
+import re
 import secrets
 import string
 import subprocess
@@ -20,11 +21,18 @@ from .models import NodeRun, Run, User
 TERMINAL = {"node_done": "done", "node_failed": "failed", "node_skipped": "skipped"}
 
 _ID_CHARS = string.ascii_lowercase + string.digits
+_RUN_ID_RE = re.compile(r"r_[a-z0-9]{12}")
 
 
 def new_run_id() -> str:
     """r_ + 12 random letters/digits (owner, 10 Nov 2026: no date, no sha256; uniqueness from the primary key)."""
     return "r_" + "".join(secrets.choice(_ID_CHARS) for _ in range(12))
+
+
+def is_run_id(value: str) -> bool:
+    """True only for the ids new_run_id makes (hardening S14): anything else from a request never reaches
+    run folders, S3 keys or logs."""
+    return isinstance(value, str) and _RUN_ID_RE.fullmatch(value) is not None
 
 
 def git_commit() -> str | None:

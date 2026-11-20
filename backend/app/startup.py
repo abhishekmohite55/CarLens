@@ -24,7 +24,8 @@ from sqlalchemy import create_engine
 
 from .db import database_url
 
-STARTUP_FILE = Path(os.environ.get("CARLENS_STARTUP_FILE", "/tmp/carlens-startup.json"))
+# In the app user's own home (hardening S2): /tmp can be written by any user on the machine.
+STARTUP_FILE = Path(os.environ.get("CARLENS_STARTUP_FILE") or Path.home() / ".carlens" / "startup.json")
 BACKEND_DIR = Path(__file__).parent.parent
 
 
@@ -101,6 +102,7 @@ def main() -> None:
     report = migrate()
     add_new_settings(report)
     try:
+        STARTUP_FILE.parent.mkdir(mode=0o700, parents=True, exist_ok=True)  # only the app user can open it
         STARTUP_FILE.write_text(json.dumps(report), encoding="utf-8")
     except OSError as exc:
         print(f"startup report not written: {exc}")

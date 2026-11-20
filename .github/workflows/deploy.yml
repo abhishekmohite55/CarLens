@@ -18,7 +18,6 @@ on:
 
 permissions:
   contents: read
-  id-token: write # OIDC token for AWS
 
 concurrency: # one deploy at a time; a newer merge waits for the running one
   group: deploy
@@ -35,6 +34,9 @@ jobs:
     if: ${{ !cancelled() && (needs.checks.result == 'success' || needs.checks.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    permissions:
+      contents: read
+      id-token: write # OIDC token for AWS, only in this job (hardening S13)
     env:
       AWS_REGION: ${{ vars.AWS_REGION }}
       ECR: ${{ vars.ECR_REGISTRY }}
@@ -53,7 +55,7 @@ jobs:
             echo "TAG=${GITHUB_SHA::7}" >> "$GITHUB_ENV"; echo "BUILD=yes" >> "$GITHUB_ENV"
           fi
 
-      - uses: aws-actions/configure-aws-credentials@v6
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0, pinned by commit (hardening S3)
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}

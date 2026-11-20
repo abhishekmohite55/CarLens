@@ -45,7 +45,7 @@ fi
 
 echo "$TAG is not healthy" >&2
 compose logs --tail 40 backend >&2
-if [ -n "$PREVIOUS" ] && [ "$PREVIOUS" != "$TAG" ]; then
+if [[ -n "$PREVIOUS" && "$PREVIOUS" != "$TAG" ]]; then
     echo "rolling back to $PREVIOUS" >&2
     bash "$DIR/deploy.sh" "$PREVIOUS" && healthy && echo "rolled back to $PREVIOUS (healthy)" >&2
 fi

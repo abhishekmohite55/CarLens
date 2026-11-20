@@ -15,6 +15,7 @@ import os
 import sys
 import time
 import urllib.request
+from urllib.parse import urlsplit
 
 from . import maintenance, startup, storage
 from .db import database_url
@@ -103,6 +104,23 @@ def is_degraded() -> bool:
     return degraded
 
 
+_LOCAL_HOSTS = ("127.0.0.1", "localhost")
+
+
+def local_health_url(url: str) -> str:
+    """The deploy's --url, only when it is this machine's /api/health; rebuilt here, so nothing else is fetched
+    (hardening S4). Raises ValueError for any other address."""
+    parts = urlsplit(url)
+    try:
+        port = parts.port
+    except ValueError:
+        port = None
+    if (parts.scheme != "http" or parts.hostname not in _LOCAL_HOSTS or parts.path != "/api/health"
+            or parts.query or parts.fragment or parts.username or parts.password or port is None or not 0 < port < 65536):
+        raise ValueError("--url must be http://127.0.0.1:<port>/api/health (this machine only)")
+    return f"http://127.0.0.1:{int(port)}/api/health"
+
+
 def wait_until_ok(url: str, wait_sec: int) -> bool:
     """Deploy check: True once url answers {"status": "ok"}; prints what it sees."""
     deadline = time.monotonic() + wait_sec
@@ -124,11 +142,17 @@ def wait_until_ok(url: str, wait_sec: int) -> bool:
 
 def main() -> None:
     parser = argparse.ArgumentParser(prog="python -m app.health")
-    parser.add_argument("--url", help="ask a running server instead of checking here")
+    parser.add_argument("--url", help="ask the server on this machine instead of checking here "
+                                      "(only http://127.0.0.1:<port>/api/health)")
     parser.add_argument("--wait", type=int, default=0, help="with --url: keep asking this many seconds")
     args = parser.parse_args()
     if args.url:
-        sys.exit(0 if wait_until_ok(args.url, max(args.wait, 1)) else 1)
+        try:
+            url = local_health_url(args.url)
+        except ValueError as exc:
+            print(exc)
+            sys.exit(2)
+        sys.exit(0 if wait_until_ok(url, max(args.wait, 1)) else 1)
     result = check(detail=True)
     print(json.dumps(result, indent=2, default=str))
     sys.exit(0 if result["status"] == "ok" else 1)

@@ -69,7 +69,9 @@ function Slot({ runId, slot, label, onChange }: { runId: string; slot: string; l
   // After a reload, a photo already uploaded for this slot shows again.
   useEffect(() => {
     const url = `/api/runs/${runId}/files/05_photos/${slot}.jpg`;
-    fetch(url, { cache: "no-store" }).then((r) => { if (r.ok) { setThumb(`${url}?t=${Date.now()}`); onChange(true); } });
+    fetch(url, { cache: "no-store" })
+      .then((r) => { if (r.ok) { setThumb(`${url}?t=${Date.now()}`); onChange(true); } })
+      .catch(() => undefined); // no thumbnail yet is harmless
   }, [runId, slot]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const upload = async (file?: File) => {
@@ -105,7 +107,7 @@ function Slot({ runId, slot, label, onChange }: { runId: string; slot: string; l
       <p className="text-small text-center opacity-80">{label}</p>
       {thumb && <button type="button" onClick={remove} className="text-small block w-full text-center underline opacity-70">Remove</button>}
       {problem && <p className="text-small rounded-input bg-danger-soft px-2 py-1 text-center text-danger-text">{problem}</p>}
-      <input ref={picker} type="file" accept="image/*" hidden onChange={(e) => { upload(e.target.files?.[0]); e.target.value = ""; }} />
+      <input ref={picker} type="file" accept="image/*" hidden onChange={(e) => { void upload(e.target.files?.[0]); e.target.value = ""; }} />
     </div>
   );
 }

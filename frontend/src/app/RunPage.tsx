@@ -23,9 +23,14 @@ import {
   type Figures, type PlanQueries, type SearchResults, type Trimmed,
 } from "./WebSteps";
 
+/** A run file as JSON, or null when it is missing or the network fails (never rejects). */
 async function getJson(path: string): Promise<any> {
-  const response = await fetch(path, { cache: "no-store" });
-  return response.ok ? response.json() : null;
+  try {
+    const response = await fetch(path, { cache: "no-store" });
+    return response.ok ? await response.json() : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Rebuilds the run from its events and keeps following them. */
@@ -146,7 +151,7 @@ export function RunPage() {
   // Moments once locate is done; verdicts once verify is done (read from the run's saved results).
   useEffect(() => {
     if (s.locate.state === "done" && !moments)
-      getJson(`/api/runs/${id}/files/01_locate/response.json`).then((r) => {
+      void getJson(`/api/runs/${id}/files/01_locate/response.json`).then((r) => {
         if (!r?.parsed?.items) return;
         setMoments(r.parsed.items);
         const cov = r.parsed.coverage ?? {};
@@ -155,7 +160,7 @@ export function RunPage() {
   }, [s.locate.state, id, moments]);
   useEffect(() => {
     if (s.verify.state !== "done" || verdicts) return;
-    getJson(`/api/runs/${id}/files/03_verify/response.json`).then((r) => {
+    void getJson(`/api/runs/${id}/files/03_verify/response.json`).then((r) => {
       const p = r?.parsed;
       if (!p) return;
       const findings: { item_id: string; confirmed: boolean }[] = p.findings ?? [];
@@ -188,22 +193,22 @@ export function RunPage() {
   const [trimmed, setTrimmed] = useState<Trimmed>();
   const [figures, setFigures] = useState<Figures>();
   useEffect(() => {
-    if (s.plan.state === "done" && !plan) getJson(`/api/runs/${id}/files/06_plan/queries.json`).then((r) => r && setPlan(r));
+    if (s.plan.state === "done" && !plan) void getJson(`/api/runs/${id}/files/06_plan/queries.json`).then((r) => r && setPlan(r));
   }, [s.plan.state, id, plan]);
   useEffect(() => {
-    if (s.search.state === "done" && !search) getJson(`/api/runs/${id}/files/07_search/results.json`).then((r) => r && setSearch(r));
+    if (s.search.state === "done" && !search) void getJson(`/api/runs/${id}/files/07_search/results.json`).then((r) => r && setSearch(r));
   }, [s.search.state, id, search]);
   // trimmed.json is saved before the extract model is asked, so the ticker can start while it reads.
   useEffect(() => {
     if ((s.extract.state === "running" && s.extract.progress !== undefined) || s.extract.state === "done")
-      if (!trimmed) getJson(`/api/runs/${id}/files/08_extract/trimmed.json`).then((r) => r && setTrimmed(r));
+      if (!trimmed) void getJson(`/api/runs/${id}/files/08_extract/trimmed.json`).then((r) => r && setTrimmed(r));
   }, [s.extract.state, s.extract.progress, id, trimmed]);
   useEffect(() => {
-    if (s.extract.state === "done" && !figures) getJson(`/api/runs/${id}/files/08_extract/figures.json`).then((r) => r && setFigures(r));
+    if (s.extract.state === "done" && !figures) void getJson(`/api/runs/${id}/files/08_extract/figures.json`).then((r) => r && setFigures(r));
   }, [s.extract.state, id, figures]);
   const [report, setReport] = useState<Report>();
   useEffect(() => {
-    if (s.report.state === "done" && !report) getJson(`/api/runs/${id}/files/09_report/report.json`).then((r) => r && setReport(r));
+    if (s.report.state === "done" && !report) void getJson(`/api/runs/${id}/files/09_report/report.json`).then((r) => r && setReport(r));
   }, [s.report.state, id, report]);
   const navigate = useNavigate();
   const pricingStarted = !!s.pricing.startedAt || s.pricing.state !== "waiting";

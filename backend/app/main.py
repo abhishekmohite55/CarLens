@@ -46,7 +46,7 @@ from .llm.tracing import _get_client as _warmup_tracing
 from .nodes.upload import DuplicateUpload, clean_old_pending, drop_pending, process_upload, start_pending
 from .db import get_engine
 from .results import FILES as RESULT_FILES, delete_results, load_result
-from .run_index import (RunRefused, close_open_rows, interrupted_nodes, latest_node_result, other_active_run, run_owner,
+from .run_index import (RunRefused, is_run_id, close_open_rows, interrupted_nodes, latest_node_result, other_active_run, run_owner,
                         user_runs, run_status)
 from .runs import append_event, events_path, failed_at, run_dir
 from .settings_store import SettingsError, repin_run
@@ -143,7 +143,10 @@ _NODES = [
 
 def _local_run(run_id: str, with_video: bool = False) -> Path:
     """The run folder on this server; brought back from S3 first when it was pruned (step 8.1).
-    with_video: also the video (resume and admin re-runs may start at locate or frames)."""
+    with_video: also the video (resume and admin re-runs may start at locate or frames).
+    Any id that is not a run id answers 404 before files or S3 are touched (hardening S14)."""
+    if not is_run_id(run_id):
+        raise HTTPException(404, detail="Run not found.")
     fetch_run(run_id, with_video=with_video)
     return run_dir(run_id)
 
