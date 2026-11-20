@@ -79,7 +79,9 @@ def origin_allowed(origin: str | None, referer: str | None, allowed: list[str]) 
     if not origin and referer:
         parts = urlsplit(referer)
         origin = f"{parts.scheme}://{parts.netloc}" if parts.scheme and parts.netloc else None
-    return bool(origin) and origin.rstrip("/") in {a.rstrip("/") for a in allowed}
+    if not origin:
+        return False
+    return origin.rstrip("/") in {a.rstrip("/") for a in allowed}
 
 
 def google_client_id() -> str:

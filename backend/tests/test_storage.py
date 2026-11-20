@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import app.storage as storage
 
 BUCKET = "carlens-runs-test"
-RUN = "r_s3_test_0001"
+RUN = "r_s3test000001"
 
 
 class _Paginator:

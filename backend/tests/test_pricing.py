@@ -54,3 +54,12 @@ def test_yearly_rates_min_age():
     rates, dropped = yearly_rates(FIGS, 1_000_000, 2026, min_age=3)
     assert [x["source"] for x in rates] == ["S4", "S10"]                # S6 (2024, age 2) too young
     assert ("S6", "under 3 years old") in [(d["source"], d["reason"]) for d in dropped]
+
+
+def test_range_never_high_to_low():  # fix 20 Nov: run r_ym0k3zy6vzyj showed ₹10.39 lakh to ₹9.65 lakh
+    figs = [{"group": "new_price", "type": "on_road", "inr": [1_102_000], "source": "N", "url": "n"}] + [
+        {"group": "listing", "type": "single_listing", "inr": [p], "year": y, "source": f"L{y}", "url": f"l{y}"}
+        for y, p in ((2023, 825_000), (2022, 1_050_000), (2021, 1_015_000))]
+    out = price_report(figs, [], {"year": 2023}, 2026, SETTINGS)
+    assert out["status"] == "ok"
+    assert out["after_repairs"]["max"] >= out["after_repairs"]["median"]

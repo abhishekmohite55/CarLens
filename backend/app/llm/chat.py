@@ -2,13 +2,41 @@ from __future__ import annotations
 
 import base64
 import json
-import re
+import logging
 import threading
 import time
 from pathlib import Path
 from typing import Any, Callable
 
 from langchain.chat_models import init_chat_model
+
+log = logging.getLogger(__name__)
+
+# Hardening A3: model calls still running in this process, also ones past their timeout (a timed-out thread
+# keeps waiting for the provider). ask_chain refuses a new attempt when max_in_flight are running.
+_in_flight = 0
+_in_flight_lock = threading.Lock()
+
+
+def claim_call(max_in_flight: int | None) -> bool:
+    """Count one more running model call; False (nothing counted) when max_in_flight are already running."""
+    global _in_flight
+    with _in_flight_lock:
+        if max_in_flight is not None and _in_flight >= max_in_flight:
+            return False
+        _in_flight += 1
+        return True
+
+
+def release_call() -> None:
+    global _in_flight
+    with _in_flight_lock:
+        _in_flight = max(0, _in_flight - 1)
+
+
+def calls_in_flight() -> int:
+    with _in_flight_lock:
+        return _in_flight
 
 
 def make_chat_model(provider: str, model: str, temperature: float, timeout_sec: int,
@@ -42,10 +70,19 @@ def image_blocks(user_prompt: str, frames: list[dict], folder: Path,
     return content
 
 
+def strip_fences(text: str) -> str:
+    """'```json {...} ```' -> '{...}'. Plain string checks, so odd model output can never make it slow (hardening S9)."""
+    text = text.strip()
+    if len(text) < 6 or not (text.startswith("```") and text.endswith("```")):
+        return text
+    body = text[3:-3]
+    if body.startswith("json"):
+        body = body[4:]
+    return body.strip()
+
+
 def parse_json(raw: str) -> dict:
-    text = raw.strip()
-    m = re.match(r"^```(?:json)?\s*(.*?)\s*```$", text, re.DOTALL)
-    return json.loads(m.group(1) if m else text)
+    return json.loads(strip_fences(raw))
 
 
 def own_settings(entry, chain_timeout: int, chain_temperature: float) -> tuple[int, float]:
@@ -69,6 +106,7 @@ def ask_chain(
     metadata: dict | None = None,
     normalise: Callable[[Any], tuple[Any, list[str]]] | None = None,
     reasoning_effort: str | None = None,  # OpenRouter entries only (thinking_level is Gemini only)
+    max_in_flight: int | None = None,  # hardening A3: models.max_calls_in_flight; None = no cap
 ) -> dict:
     """Try entries in order; per-model timeout enforced via daemon thread.
 
@@ -85,9 +123,15 @@ def ask_chain(
         timeout_sec, temperature = own_settings(entry, chain_timeout, chain_temperature)
         emit(f"[{n}/{len(entries)}] {entry.model}")
         attempt: dict = {"provider": entry.provider, "model": entry.model}
-        box: dict = {}
+        if not claim_call(max_in_flight):
+            attempt["error"] = f"not started: {max_in_flight} model calls are still running"
+            emit(f"{entry.model} not started: too many model calls still running")
+            attempts.append(attempt)
+            continue
+        box: dict = {}  # this attempt's own result; bound into the thread below, so a late thread never touches the next one
+        t0 = time.perf_counter()
 
-        def call(e=entry, temperature=temperature, timeout_sec=timeout_sec) -> None:
+        def call(e=entry, temperature=temperature, timeout_sec=timeout_sec, box=box, t0=t0) -> None:
             try:
                 msgs = build_messages(e)
                 m = make_chat_model(e.provider, e.model, temperature, timeout_sec, thinking_level, reasoning_effort)
@@ -95,8 +139,12 @@ def ask_chain(
                 box["msg"] = m.invoke(msgs, config=cfg)
             except Exception as exc:  # noqa: BLE001
                 box["error"] = f"{type(exc).__name__}: {exc}"
+            finally:
+                release_call()
+                if box.get("abandoned"):
+                    log.warning("late answer from %s ignored: it came %.0f s after the call started",
+                                e.model, time.perf_counter() - t0)
 
-        t0 = time.perf_counter()
         worker = threading.Thread(target=call, daemon=True)
         worker.start()
         while worker.is_alive() and (left := timeout_sec - (time.perf_counter() - t0)) > 0:
@@ -105,6 +153,7 @@ def ask_chain(
         attempt["seconds"] = round(time.perf_counter() - t0, 2)
 
         if worker.is_alive():
+            box["abandoned"] = True  # the thread may still answer later: logged and ignored, never used
             attempt["error"] = f"no answer within {timeout_sec} s"
             emit(f"{entry.model} failed: no answer within {timeout_sec} s")
             attempts.append(attempt)

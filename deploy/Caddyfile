@@ -7,7 +7,7 @@
 		request_body {
 			max_size 600MB # videos up to upload.max_size_mb (500) + room
 		}
-		reverse_proxy frontend:80 {
+		reverse_proxy frontend:8080 { # non-root nginx port (hardening S15)
 			flush_interval -1 # live run events (SSE) are passed on at once
 		}
 	}

@@ -113,6 +113,16 @@ def node_result(run_id: str, node: str, after_seq: int = 0) -> dict | None:
     return hits[-1] if hits else None
 
 
+def count_failures(events: list[dict]) -> int:
+    """How many times the run stopped on a failure (pipeline run_done events with status failed)."""
+    return sum(1 for e in events if e.get("node") == "pipeline" and e.get("type") == "run_done"
+               and (e.get("data") or {}).get("status") == "failed")
+
+
+def failure_count(run_id: str) -> int:
+    return count_failures(read_events(run_id))
+
+
 def failed_at(run_id: str) -> str | None:
     """Node the run stopped at, from the last run_done event; None when the last run did not fail."""
     done = [e for e in read_events(run_id) if e.get("node") == "pipeline" and e.get("type") == "run_done"]

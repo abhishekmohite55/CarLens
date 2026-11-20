@@ -60,6 +60,7 @@ export function Home() {
   const [stage, setStage] = useState<Stage>({ kind: "ready" });
   const [problem, setProblem] = useState("");
   const [dragging, setDragging] = useState(false);
+  const [choosing, setChoosing] = useState(false); // same-video answer on its way: one click only (fix 20 Nov)
   const picker = useRef<HTMLInputElement>(null);
 
   const loadRuns = useCallback(async () => setRuns((await api<{ runs: RunRow[] }>("/api/runs")).runs), []);
@@ -90,6 +91,14 @@ export function Home() {
 
   const upload = async (file: File) => {
     setProblem("");
+    if (!isAdmin) {
+      // Hardening A2: ask first. A refusal in the middle of an upload may only show as a network error.
+      const config = await api<{ busy?: boolean; maintenance?: boolean }>("/api/config").catch(() => null);
+      if (config?.busy) {
+        setProblem("CarLens is busy right now. Try again in a few minutes.");
+        return;
+      }
+    }
     setStage({ kind: "uploading", file, sent: 0 });
     const answer = await sendVideo(file, (sent) => setStage({ kind: "uploading", file, sent }));
     if (answer.kind === "run") {
@@ -105,10 +114,15 @@ export function Home() {
   };
 
   const openOld = async (s: Extract<Stage, { kind: "same" }>) => {
+    if (choosing) return;
+    setChoosing(true);
     await api(`/api/uploads/${s.pendingId}`, { method: "DELETE" }).catch(() => {});
+    setChoosing(false);
     navigate(`/run/${s.oldRunId}`);
   };
   const freshRun = async (s: Extract<Stage, { kind: "same" }>) => {
+    if (choosing) return;
+    setChoosing(true);
     try {
       const { run_id } = await api<{ run_id: string }>(`/api/uploads/${s.pendingId}/start`, { method: "POST" });
       await refresh();
@@ -117,6 +131,8 @@ export function Home() {
       setProblem(e instanceof Error ? e.message : "Could not start the run.");
       setStage({ kind: "ready" });
       await Promise.all([refresh(), loadRuns()]);
+    } finally {
+      setChoosing(false);
     }
   };
 
@@ -212,8 +228,8 @@ export function Home() {
         <div className="space-y-4 p-6">
           <p className="text-heading">You uploaded this video {old ? `on ${dateText(old.created_at)}` : "before"}.</p>
           <div className="flex flex-wrap gap-2">
-            <button onClick={() => openOld(stage)} className={onCanvas}>Open the old run</button>
-            <button onClick={() => freshRun(stage)} className={quiet}>
+            <button onClick={() => openOld(stage)} disabled={choosing} className={onCanvas}>Open the old run</button>
+            <button onClick={() => freshRun(stage)} disabled={choosing} className={`${quiet} disabled:opacity-40`}>
               {isAdmin ? "Start a fresh run" : `Start a fresh run (uses 1 of ${runsLeft})`}
             </button>
           </div>

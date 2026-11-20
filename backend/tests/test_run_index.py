@@ -15,6 +15,14 @@ def test_run_id_is_random_without_date():
     assert all(re.fullmatch(r"r_[a-z0-9]{12}", i) for i in ids)
 
 
+def test_is_run_id_only_accepts_made_ids():  # hardening S14
+    assert run_index.is_run_id(run_index.new_run_id())
+    assert run_index.is_run_id("r_1aw7vygbiym6")
+    for bad in ["..", "", "r_", "r_ABCDEFGHIJKL", "r_1aw7vygbiym", "r_1aw7vygbiym67", "r_1aw7vygbiym6\n",
+                "r_1aw7vygbiym6/../x", "x_1aw7vygbiym6", None]:
+        assert not run_index.is_run_id(bad), bad
+
+
 def test_git_commit_without_git_uses_build_value(monkeypatch):
     def no_git(*args, **kwargs):
         raise FileNotFoundError("git")
@@ -67,3 +75,20 @@ def test_rerun_adds_a_new_node_row(db_engine):
     with db_engine.connect() as conn:
         rows = conn.execute(select(NodeRun.summary).where(NodeRun.run_id == run_id).order_by(NodeRun.id)).scalars().all()
     assert rows == ["try 0", "try 1"]
+
+
+def test_busy_and_resume_rules():  # hardening A7
+    assert not run_index.busy(1, 2)
+    assert run_index.busy(2, 2)
+    assert not run_index.busy(99, None)
+    assert run_index.busy_refusal().status == 503
+    assert run_index.resume_allowed(1, 2) and run_index.resume_allowed(2, 2)
+    assert not run_index.resume_allowed(3, 2)
+    assert not run_index.resume_allowed(1, 0)
+
+
+def test_upload_refusal_uses_the_run_rules():  # hardening A2
+    assert run_index.upload_refusal(0, 1, 0, 2) is None
+    assert run_index.upload_refusal(1, 5, 0, 2).code == "run_in_progress"
+    assert run_index.upload_refusal(0, 0, 0, 2).code == "no_tokens"
+    assert run_index.upload_refusal(0, 1, 2, 2).code == "busy"

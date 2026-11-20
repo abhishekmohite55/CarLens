@@ -2,7 +2,10 @@ upload:
   allowed_types: [mp4, mov, webm]
   max_size_mb: 500
   max_duration_sec: 300
-  pending_minutes: 30 # same video uploaded again: the file waits this long while the user chooses old run / fresh run
+  pending_minutes: 30 # same video uploaded again: the user's choice waits this long (the earlier run's video is reused, no copy kept)
+  max_parallel: 2 # uploads received and checked at once (users); one more gets "busy"
+  repeat_warn_count: 3 # same-video or refused uploads by one user that show them under "Needs you" in admin
+  repeat_window_min: 60 # ... counted over this many minutes
 
 models: # fill model names before each stage
   locate:
@@ -43,12 +46,14 @@ models: # fill model names before each stage
   verify_thinking_level: low # Gemini entries only; empty = model default; or minimal | low | medium | high
   verify_timeout_per_model_sec: 180
   locate_thinking_level: low # empty = model default; or minimal | low | medium | high
+  max_calls_in_flight: 6 # model calls still running at once, also ones past their timeout; more are refused (hardening A3)
 
 locate_video: # copy sent to Gemini locate; frames always use the original
   shrink: true
   height: 1080
   fps: 5
   crf: 23
+  shrink_timeout_sec: 600 # shrink taking longer: ffmpeg stopped, locate fails with a clear message (the original is never sent)
 
 frames:
   window_sec: 1.5 # ± around each locate timestamp (all items, odometer too)
@@ -66,6 +71,8 @@ photos: # extra photos at confirm (Stage 6): 4 optional tyre slots + 1 odometer 
   allowed_types: [jpg, jpeg, png, webp, heic] # heic: iPhone photos, decoded with pillow-heif
   max_size_mb: 10
   km_min_confidence: 0.8 # photo km replaces the confirmed km only at this confidence or higher (owner, 5 Nov)
+  max_pixels: 50000000 # larger photos (megapixels x 1,000,000) are refused before they are opened
+  max_parallel: 2 # photos decoded at once; more wait their turn
 
 plan:
   queries_per_part: 4 # LLM queries per damaged part and per tyre marked "replace"
@@ -128,6 +135,9 @@ auth: # platform step 5 sign-in (docs/platform/05-login.md)
 
 access: # access requests (platform step 6)
   default_tokens: 5 # runs given when the owner approves a request
+  free_resumes_per_run: 2 # a user may press Resume while the run has failed at most this many times (admin: no limit)
+  max_active_runs: 2 # runs uploaded or working at once, all users; more uploads / fresh runs / resumes wait (admin: never refused)
+  max_event_streams: 50 # live run pages open at once, all users; more get "busy"
 
 maintenance: # during a deploy (platform step 9): no new uploads / fresh runs / resumes
   confirm_grace_min: 5 # runs waiting at confirm may still be confirmed this long; after that the deploy goes on

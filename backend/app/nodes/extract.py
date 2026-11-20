@@ -54,7 +54,8 @@ def make_extract(trimmed: dict, text: str, car: dict, emit, callbacks: list, met
         lambda entry: [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)],
         temperature=cfg.models.temperature, timeout_sec=cfg.models.extract_timeout_per_model_sec, thinking_level=None,
         validate=lambda p: None if isinstance(p, dict) and isinstance(p.get("figures"), list) else "no figures list",
-        emit=emit, callbacks=callbacks, metadata=metadata, reasoning_effort=cfg.models.extract_reasoning_effort)
+        emit=emit, callbacks=callbacks, metadata=metadata, reasoning_effort=cfg.models.extract_reasoning_effort,
+        max_in_flight=cfg.models.max_calls_in_flight)
     response = {"received_at": _now(), **answer}
     if answer["parsed"] is None:
         return {"request": request, "response": response, "figures": None}

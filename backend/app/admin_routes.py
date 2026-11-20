@@ -3,12 +3,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from . import admin_data, health, settings_store
 from .auth import SignedIn, require_admin
+from .config import get_config
 from .graph import ORDER, forget_run
+from .run_index import is_run_id
 from .runs import run_dir
 
 router = APIRouter(prefix="/api/admin")
@@ -68,19 +70,26 @@ def runs(status: str | None = None, admin: SignedIn = Depends(require_admin)):
     return {"runs": admin_data.list_runs(status)}
 
 
+def _checked_run_id(run_id: str) -> str:
+    """Hardening S14: only real run ids reach the database, the run folder and S3."""
+    if not is_run_id(run_id):
+        raise HTTPException(404, detail="Run not found.")
+    return run_id
+
+
 @router.get("/runs/{run_id}")
-def run_detail(run_id: str, admin: SignedIn = Depends(require_admin)):
+def run_detail(run_id: str = Depends(_checked_run_id), admin: SignedIn = Depends(require_admin)):
     return {"run_id": run_id, "steps": admin_data.run_steps(run_id)}
 
 
 @router.post("/runs/{run_id}/fail")
-def fail_run(run_id: str, admin: SignedIn = Depends(require_admin)):
+def fail_run(run_id: str = Depends(_checked_run_id), admin: SignedIn = Depends(require_admin)):
     admin_data.mark_run_failed(admin.id, run_id)
     return {"ok": True}
 
 
 @router.delete("/runs/{run_id}")
-def remove_run(run_id: str, admin: SignedIn = Depends(require_admin)):
+def remove_run(run_id: str = Depends(_checked_run_id), admin: SignedIn = Depends(require_admin)):
     admin_data.delete_run(admin.id, run_id, run_dir(run_id), forget_run)
     return {"ok": True}
 
@@ -175,7 +184,8 @@ def admin_health(admin: SignedIn = Depends(require_admin)):
 
 @router.get("/dashboard")
 def dashboard(days: int = 30, admin: SignedIn = Depends(require_admin)):
-    return admin_data.dashboard(days)
+    up = get_config().upload
+    return admin_data.dashboard(days, up.repeat_window_min, up.repeat_warn_count)
 
 
 @router.get("/tables")

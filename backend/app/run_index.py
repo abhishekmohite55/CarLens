@@ -4,27 +4,42 @@ Only this module writes `runs` and `node_runs`.
 """
 from __future__ import annotations
 
+import logging
 import os
+import re
 import secrets
 import string
 import subprocess
 from datetime import datetime
 
-from sqlalchemy import func, insert, select, update
+from sqlalchemy import delete, func, insert, select, text, update
 from sqlalchemy.exc import IntegrityError
 
 from .config import PROJECT_ROOT
 from .db import require_engine
-from .models import NodeRun, Run, User
+from .models import AuditLog, NodeResult, NodeRun, Run, RunEvent, User
+
+log = logging.getLogger(__name__)
 
 TERMINAL = {"node_done": "done", "node_failed": "failed", "node_skipped": "skipped"}
 
+# Fix 20 Nov: one start at a time checks the limits (Postgres transaction lock, released at commit), so two
+# uploads at the same instant cannot both pass the server's run limit or the one-run-per-user rule.
+_ADMISSION_LOCK = 724_215_001
+
 _ID_CHARS = string.ascii_lowercase + string.digits
+_RUN_ID_RE = re.compile(r"r_[a-z0-9]{12}")
 
 
 def new_run_id() -> str:
     """r_ + 12 random letters/digits (owner, 10 Nov 2026: no date, no sha256; uniqueness from the primary key)."""
     return "r_" + "".join(secrets.choice(_ID_CHARS) for _ in range(12))
+
+
+def is_run_id(value: str) -> bool:
+    """True only for the ids new_run_id makes (hardening S14): anything else from a request never reaches
+    run folders, S3 keys or logs."""
+    return isinstance(value, str) and _RUN_ID_RE.fullmatch(value) is not None
 
 
 def git_commit() -> str | None:
@@ -51,6 +66,29 @@ class RunRefused(Exception):
         self.status, self.code, self.message = status, code, message
 
 
+BUSY_STATUSES = ("uploaded", "running")  # hardening A7: these use the server; awaiting_confirm does not
+
+
+def busy(busy_count: int, max_active_runs: int | None) -> bool:
+    """Hardening A7: the server already runs as many runs as it may (None = no limit)."""
+    return max_active_runs is not None and busy_count >= max_active_runs
+
+
+def busy_refusal() -> RunRefused:
+    return RunRefused(503, "busy", "CarLens is busy right now. Try again in a few minutes.")
+
+
+def resume_allowed(failures: int, free_resumes: int) -> bool:
+    """Hardening A7: a user may resume while the run has failed at most free_resumes times."""
+    return failures <= free_resumes
+
+
+def busy_runs() -> int:
+    """Runs uploaded or working right now, all users."""
+    with require_engine().connect() as conn:
+        return conn.execute(select(func.count()).select_from(Run).where(Run.status.in_(BUSY_STATUSES))).scalar_one()
+
+
 def run_refusal(active_runs: int, tokens: int) -> RunRefused | None:
     """One run at a time, and a token for each new run."""
     if active_runs > 0:
@@ -60,10 +98,44 @@ def run_refusal(active_runs: int, tokens: int) -> RunRefused | None:
     return None
 
 
+def upload_refusal(active_runs: int, tokens: int, busy_count: int, max_active_runs: int | None) -> RunRefused | None:
+    """Hardening A2: the same rules as a new run, checked before an upload's body is read."""
+    refused = run_refusal(active_runs, tokens)
+    if refused:
+        return refused
+    return busy_refusal() if busy(busy_count, max_active_runs) else None
+
+
+def admission_refusal(user_id: int, max_active_runs: int | None) -> RunRefused | None:
+    """Hardening A2: may this user upload now? Read only; create_run_row repeats the check atomically."""
+    with require_engine().connect() as conn:
+        tokens = conn.execute(select(User.tokens).where(User.id == user_id)).scalar_one_or_none() or 0
+        active = conn.execute(select(func.count()).select_from(Run).where(
+            Run.user_id == user_id, Run.status.in_(ACTIVE_STATUSES))).scalar_one()
+        busy_count = conn.execute(select(func.count()).select_from(Run).where(
+            Run.status.in_(BUSY_STATUSES))).scalar_one()
+    return upload_refusal(active, tokens, busy_count, max_active_runs)
+
+
+UPLOAD_FLAGS = ("upload_same_video", "upload_refused")  # audit actions that flag a user on the dashboard
+FLAGGED_REFUSALS = ("no_tokens", "run_in_progress")  # refusals a normal user never meets (Home blocks them)
+
+
+def log_upload_event(user_id: int, action: str, details: dict) -> None:
+    """Hardening A2: a same-video or refused upload, in the audit log (no admin: the user did it). Never raises."""
+    try:
+        with require_engine().begin() as conn:
+            conn.execute(insert(AuditLog).values(admin_id=None, action=action, target=f"user {user_id}",
+                                                 details={"user_id": user_id, **details}))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("upload audit row not written: %s", exc)
+
+
 def create_run_row(*, sha256: str, original_filename: str, size_bytes: int, duration_sec: float,
-                   user_id: int | None = None, spend_token: bool = False) -> str:
+                   user_id: int | None = None, spend_token: bool = False, max_active_runs: int | None = None) -> str:
     """Insert the runs row under a new random id and return the id. A clash draws a new id.
-    spend_token (users): in the same transaction, check one run at a time and take 1 token; raises RunRefused."""
+    spend_token (users): in the same transaction, check one run at a time, the server's run limit
+    (max_active_runs, hardening A7) and take 1 token; raises RunRefused."""
     from .settings_store import new_run_pins  # imported here: settings_store imports config and models too
 
     engine = require_engine()
@@ -74,12 +146,17 @@ def create_run_row(*, sha256: str, original_filename: str, size_bytes: int, dura
         try:
             with engine.begin() as conn:
                 if spend_token:
+                    conn.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": _ADMISSION_LOCK})
                     tokens = conn.execute(select(User.tokens).where(User.id == user_id).with_for_update()).scalar_one()
                     active = conn.execute(select(func.count()).select_from(Run).where(
                         Run.user_id == user_id, Run.status.in_(ACTIVE_STATUSES))).scalar_one()
                     refused = run_refusal(active, tokens)
                     if refused:
                         raise refused
+                    all_busy = conn.execute(select(func.count()).select_from(Run).where(
+                        Run.status.in_(BUSY_STATUSES))).scalar_one()
+                    if busy(all_busy, max_active_runs):
+                        raise busy_refusal()
                     conn.execute(update(User).where(User.id == user_id).values(tokens=User.tokens - 1))
                 conn.execute(insert(Run).values(
                     id=run_id, video_sha256=sha256, original_filename=original_filename,
@@ -91,6 +168,18 @@ def create_run_row(*, sha256: str, original_filename: str, size_bytes: int, dura
                 continue  # the random id is taken: draw another
             raise  # any other refusal (missing value, foreign key) is a real error
     raise RuntimeError("Could not draw a free run id")
+
+
+def drop_run_row(run_id: str, refund_user: int | None) -> None:
+    """Undo create_run_row when starting the run failed right after it (fix 20 Nov): the row and anything recorded
+    for it go, and a user's token comes back. Never used on a run that has started working."""
+    with require_engine().begin() as conn:
+        conn.execute(delete(RunEvent).where(RunEvent.run_id == run_id))
+        conn.execute(delete(NodeResult).where(NodeResult.run_id == run_id))
+        conn.execute(delete(NodeRun).where(NodeRun.run_id == run_id))
+        conn.execute(delete(Run).where(Run.id == run_id))
+        if refund_user is not None:
+            conn.execute(update(User).where(User.id == refund_user).values(tokens=User.tokens + 1))
 
 
 def latest_node_result(run_id: str, node: str) -> tuple[str | None, str | None]:
@@ -159,6 +248,9 @@ def record_node_event(event: dict, ts: datetime) -> None:
                 conn.execute(update(NodeRun).where(NodeRun.id == open_id).values(**values))
             else:  # e.g. skipped without a start event
                 conn.execute(insert(NodeRun).values(run_id=run_id, node=node, started_at=ts, **values))
+        elif type_ == "run_resumed":  # fix 20 Nov: counts as busy from the moment Resume is accepted
+            conn.execute(update(Run).where(Run.id == run_id).values(
+                status="running", failed_at=None, error=None, updated_at=ts))
         elif type_ == "awaiting_confirm":
             conn.execute(update(Run).where(Run.id == run_id).values(status="awaiting_confirm", updated_at=ts))
         elif type_ == "run_done":

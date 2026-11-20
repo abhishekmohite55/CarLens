@@ -2,7 +2,7 @@
 // Everything on screen is driven by the run's real events; animations loop only while a step really runs (rule 2).
 // Users see no Sent / Received (owner, 14 Nov).
 import { AnimatePresence, motion } from "motion/react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, Navigate, useNavigate, useParams } from "react-router";
 import { api } from "../shared/api";
 import { Car3D } from "./Car3D";
@@ -23,28 +23,41 @@ import {
   type Figures, type PlanQueries, type SearchResults, type Trimmed,
 } from "./WebSteps";
 
+/** A run file as JSON, or null when it is missing or the network fails (never rejects). */
 async function getJson(path: string): Promise<any> {
-  const response = await fetch(path, { cache: "no-store" });
-  return response.ok ? response.json() : null;
+  try {
+    const response = await fetch(path, { cache: "no-store" });
+    return response.ok ? await response.json() : null;
+  } catch {
+    return null;
+  }
 }
 
-/** Rebuilds the run from its events and keeps following them. */
+/** Rebuilds the run from its events and keeps following them. The stream ends when the run ends (hardening A7):
+ * the server sends "end" and the page closes it (not on run_done: an earlier failure before a Resume is in the
+ * history too); reopen() (after Resume) asks only for events after the last one it has. */
 function useRun(id: string) {
   const [run, setRun] = useState<Run>(emptyRun);
   const [missing, setMissing] = useState(false);
   const [signedOut, setSignedOut] = useState(false);
   const [online, setOnline] = useState(true);
+  const lastSeq = useRef(0);
+  const [stream, setStream] = useState(0);
   useEffect(() => {
-    let lastSeq = 0;
+    lastSeq.current = 0;
     setRun(emptyRun());
-    const source = new EventSource(`/api/runs/${id}/events`);
+  }, [id]);
+  useEffect(() => {
+    const after = lastSeq.current;
+    const source = new EventSource(`/api/runs/${id}/events${after ? `?after=${after}` : ""}`);
     source.onopen = () => setOnline(true);
     source.onmessage = (m) => {
       const e: RunEvent = JSON.parse(m.data);
-      if (e.seq <= lastSeq) return; // a reconnect replays the history: skip what we already have
-      lastSeq = e.seq;
+      if (e.seq <= lastSeq.current) return; // already have it
+      lastSeq.current = e.seq;
       setRun((r) => apply(r, e));
     };
+    source.addEventListener("end", () => source.close()); // the run's last event is run_done: stop asking
     source.onerror = () => {
       setOnline(false);
       fetch(`/api/runs/${id}`).then((r) => {
@@ -54,8 +67,8 @@ function useRun(id: string) {
 
     };
     return () => source.close();
-  }, [id]);
-  return { run, missing, online, signedOut };
+  }, [id, stream]);
+  return { run, missing, online, signedOut, reopen: () => setStream((n) => n + 1) };
 }
 
 /** Counts up once a second; returns m:ss since `since`. */
@@ -117,9 +130,14 @@ function FrameFan({ turn }: { turn: number }) {
 
 const chip = "text-label rounded-full bg-surface px-4 py-2 shadow-panel";
 
+// Hardening U1: a new run id builds a fresh page, so nothing from the previous run can stay on screen.
 export function RunPage() {
   const { id = "" } = useParams();
-  const { run, missing, online, signedOut } = useRun(id);
+  return <RunView key={id} id={id} />;
+}
+
+function RunView({ id }: { id: string }) {
+  const { run, missing, online, signedOut, reopen } = useRun(id);
   const { me, setMe } = useSession();
   // The session ended: forget it here too, or the sign-in page would send us straight back (it thinks we are in).
   useEffect(() => { if (signedOut) setMe(null); }, [signedOut, setMe]);
@@ -130,6 +148,7 @@ export function RunPage() {
     setResuming(true);
     try {
       await api(`/api/runs/${id}/resume`, { method: "POST" });
+      reopen(); // the stream closed at run_done: follow the resumed run
     } catch (e) {
       setResumeProblem(e instanceof Error ? e.message : "Could not resume. Try again.");
     } finally {
@@ -146,7 +165,7 @@ export function RunPage() {
   // Moments once locate is done; verdicts once verify is done (read from the run's saved results).
   useEffect(() => {
     if (s.locate.state === "done" && !moments)
-      getJson(`/api/runs/${id}/files/01_locate/response.json`).then((r) => {
+      void getJson(`/api/runs/${id}/files/01_locate/response.json`).then((r) => {
         if (!r?.parsed?.items) return;
         setMoments(r.parsed.items);
         const cov = r.parsed.coverage ?? {};
@@ -155,7 +174,7 @@ export function RunPage() {
   }, [s.locate.state, id, moments]);
   useEffect(() => {
     if (s.verify.state !== "done" || verdicts) return;
-    getJson(`/api/runs/${id}/files/03_verify/response.json`).then((r) => {
+    void getJson(`/api/runs/${id}/files/03_verify/response.json`).then((r) => {
       const p = r?.parsed;
       if (!p) return;
       const findings: { item_id: string; confirmed: boolean }[] = p.findings ?? [];
@@ -188,22 +207,22 @@ export function RunPage() {
   const [trimmed, setTrimmed] = useState<Trimmed>();
   const [figures, setFigures] = useState<Figures>();
   useEffect(() => {
-    if (s.plan.state === "done" && !plan) getJson(`/api/runs/${id}/files/06_plan/queries.json`).then((r) => r && setPlan(r));
+    if (s.plan.state === "done" && !plan) void getJson(`/api/runs/${id}/files/06_plan/queries.json`).then((r) => r && setPlan(r));
   }, [s.plan.state, id, plan]);
   useEffect(() => {
-    if (s.search.state === "done" && !search) getJson(`/api/runs/${id}/files/07_search/results.json`).then((r) => r && setSearch(r));
+    if (s.search.state === "done" && !search) void getJson(`/api/runs/${id}/files/07_search/results.json`).then((r) => r && setSearch(r));
   }, [s.search.state, id, search]);
   // trimmed.json is saved before the extract model is asked, so the ticker can start while it reads.
   useEffect(() => {
     if ((s.extract.state === "running" && s.extract.progress !== undefined) || s.extract.state === "done")
-      if (!trimmed) getJson(`/api/runs/${id}/files/08_extract/trimmed.json`).then((r) => r && setTrimmed(r));
+      if (!trimmed) void getJson(`/api/runs/${id}/files/08_extract/trimmed.json`).then((r) => r && setTrimmed(r));
   }, [s.extract.state, s.extract.progress, id, trimmed]);
   useEffect(() => {
-    if (s.extract.state === "done" && !figures) getJson(`/api/runs/${id}/files/08_extract/figures.json`).then((r) => r && setFigures(r));
+    if (s.extract.state === "done" && !figures) void getJson(`/api/runs/${id}/files/08_extract/figures.json`).then((r) => r && setFigures(r));
   }, [s.extract.state, id, figures]);
   const [report, setReport] = useState<Report>();
   useEffect(() => {
-    if (s.report.state === "done" && !report) getJson(`/api/runs/${id}/files/09_report/report.json`).then((r) => r && setReport(r));
+    if (s.report.state === "done" && !report) void getJson(`/api/runs/${id}/files/09_report/report.json`).then((r) => r && setReport(r));
   }, [s.report.state, id, report]);
   const navigate = useNavigate();
   const pricingStarted = !!s.pricing.startedAt || s.pricing.state !== "waiting";

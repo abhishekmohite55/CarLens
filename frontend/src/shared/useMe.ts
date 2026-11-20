@@ -22,7 +22,7 @@ export function useMe() {
   }, []);
 
   useEffect(() => {
-    refresh();
+    void refresh();
   }, [refresh]);
 
   const signOut = useCallback(async () => {

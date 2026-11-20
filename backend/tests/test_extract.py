@@ -57,6 +57,16 @@ def test_parse_inr():
     assert parse_inr("Rs. 1,995") == 1995 and parse_inr("₹28k") == 28000 and parse_inr("₹4.1L") == 410000
     assert parse_inr("Rs.8400*") == 8400 and parse_inr("no number") is None
     assert parse_inr("₹ 6.99 - 11.16 Lakh") == 699000
+    assert parse_inr("₹1.2 Cr") == 12_000_000 and parse_inr("4.5 lacs") == 450000 and parse_inr("3 lac") == 300000
+
+
+def test_parse_inr_reads_the_amount_after_the_currency_sign():
+    """Hardening S11: a year or model number before ₹ is not the price."""
+    assert parse_inr("2018 Swift VXI ₹4.25 Lakh") == 425000
+    assert parse_inr("Bumper for 2018 Swift ₹4,500") == 4500
+    assert parse_inr("2019 model Rs. 3,25,000") == 325000
+    assert parse_inr("INR 12,999 for 2 tyres") == 12999
+    assert parse_inr("4.5 lakh, 2018 model") == 450000  # no currency sign: first number, as before
 
 
 def test_check_figures_keeps_and_rejects():

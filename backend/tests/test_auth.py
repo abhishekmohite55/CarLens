@@ -49,6 +49,7 @@ def test_origin_check():
     assert not origin_allowed("https://evil.example", None, ALLOWED)
     assert origin_allowed(None, "http://localhost:8000/login", ALLOWED)
     assert not origin_allowed(None, None, ALLOWED)
+    assert not origin_allowed("", None, ALLOWED) and not origin_allowed(None, "not a url", ALLOWED)
 
 
 def test_email_and_key_hash():

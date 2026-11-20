@@ -131,8 +131,8 @@ function Unreachable({ problem, onRetry }: { problem: string; onRetry: () => voi
   const [health, setHealth] = useState<{ status: string; version: string } | null>(null);
   useEffect(() => {
     const ask = () => api<{ status: string; version: string }>("/api/health").then(setHealth).catch(() => setHealth(null));
-    ask();
-    const timer = setInterval(() => { ask(); onRetry(); }, 15_000);
+    void ask();
+    const timer = setInterval(() => { void ask(); onRetry(); }, 15_000);
     return () => clearInterval(timer);
   }, [onRetry]);
   return (
@@ -159,20 +159,36 @@ type Health = { status: "ok" | "degraded"; version: string; problems: { level: "
 function HealthBanner() {
   const [health, setHealth] = useState<Health | null>(null);
   const [unreachable, setUnreachable] = useState(false);
+  const [checkedAt, setCheckedAt] = useState<Date | null>(null);
   useEffect(() => {
     let alive = true;
     const ask = () => api<Health>("/api/admin/health")
-      .then((h) => { if (alive) { setHealth(h); setUnreachable(false); } })
+      .then((h) => { if (alive) { setHealth(h); setUnreachable(false); setCheckedAt(new Date()); } })
       .catch(() => { if (alive) setUnreachable(true); });
-    ask();
-    const timer = setInterval(ask, 60_000);
+    void ask();
+    const timer = setInterval(() => void ask(), 60_000);
     return () => { alive = false; clearInterval(timer); };
   }, []);
 
   const problems = unreachable
     ? [{ level: "error" as const, message: "The backend did not answer the health check. It may be restarting." }]
     : health?.problems ?? [];
-  if (problems.length === 0) return null;
+  if (problems.length === 0) {
+    if (!health || !checkedAt) return null; // first answer not in yet: never flash green
+    // Owner, 20 Nov 2026: a calm green strip when all is well, so a healthy app is visible too.
+    return (
+      <section role="status"
+        className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-2xl bg-green-900 px-4 py-2 text-sm text-green-200 shadow-card">
+        <span className="relative flex h-2.5 w-2.5" aria-hidden="true">
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-40 motion-reduce:animate-none" />
+          <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-green-400" />
+        </span>
+        <span className="font-medium">All systems healthy</span>
+        <span className="opacity-75">version {health.version}</span>
+        <span className="opacity-75">checked {checkedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+      </section>
+    );
+  }
   const isError = problems.some((p) => p.level === "error");
   return (
     <section role={isError ? "alert" : "status"}

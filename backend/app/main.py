@@ -15,12 +15,13 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
+from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from .auth import NO_STORE, AuthError, SignedIn, require_admin, require_approved, signed_in_user
 from .admin_routes import router as admin_router
 from .auth_routes import router as auth_router
 from .config import get_config
-from .events import sse_stream
+from .events import open_streams, sse_stream
 from .graph import is_paused, resume_from, resume_graph, run_graph
 from .nodes.locate import run_locate
 from .nodes.locate import try_claim as locate_try_claim
@@ -43,12 +44,14 @@ from .nodes.report import run_report
 from .nodes.report import try_claim as report_try_claim
 from .nodes.verify import try_claim as verify_try_claim
 from .llm.tracing import _get_client as _warmup_tracing
-from .nodes.upload import DuplicateUpload, clean_old_pending, drop_pending, process_upload, start_pending
+from .nodes.upload import (DuplicateUpload, body_too_large, claim_upload_slot, clean_old_pending, drop_pending,
+                           process_upload, release_upload_slot, start_pending)
 from .db import get_engine
 from .results import FILES as RESULT_FILES, delete_results, load_result
-from .run_index import (RunRefused, close_open_rows, interrupted_nodes, latest_node_result, other_active_run, run_owner,
+from .run_index import (FLAGGED_REFUSALS, RunRefused, admission_refusal, busy, busy_refusal, busy_runs, is_run_id,
+                        log_upload_event, resume_allowed, close_open_rows, interrupted_nodes, latest_node_result, other_active_run, run_owner,
                         user_runs, run_status)
-from .runs import append_event, events_path, failed_at, run_dir
+from .runs import append_event, events_path, failed_at, failure_count, run_dir
 from .settings_store import SettingsError, repin_run
 from .storage import fetch_run, push_run
 from .health import check as health_check
@@ -143,7 +146,10 @@ _NODES = [
 
 def _local_run(run_id: str, with_video: bool = False) -> Path:
     """The run folder on this server; brought back from S3 first when it was pruned (step 8.1).
-    with_video: also the video (resume and admin re-runs may start at locate or frames)."""
+    with_video: also the video (resume and admin re-runs may start at locate or frames).
+    Any id that is not a run id answers 404 before files or S3 are touched (hardening S14)."""
+    if not is_run_id(run_id):
+        raise HTTPException(404, detail="Run not found.")
     fetch_run(run_id, with_video=with_video)
     return run_dir(run_id)
 
@@ -165,21 +171,62 @@ def api_config():
         },
         "nodes": _NODES,
         "maintenance": maintenance_state()["on"],  # step 9: the app shows "being updated" and keeps uploads closed
+        "busy": _server_busy(cfg.access.max_active_runs),  # hardening A2: Home says "busy" before an upload starts
     }
 
 
-@app.post("/api/runs", dependencies=_NEW_WORK)
-async def api_create_run(background: BackgroundTasks, video: UploadFile = File(...),
-                         user: SignedIn = Depends(require_approved)):
-    """Upload → new run. Users: 1 token, one run at a time, same video again asks first (05-login.md §7.2, §7.3)."""
+def _server_busy(max_active_runs: int) -> bool:
     try:
-        out = await process_upload(video, user.id, is_admin=user.role == "admin")
+        return busy(busy_runs(), max_active_runs)
+    except Exception:  # noqa: BLE001  no database: the upload itself will say what is wrong
+        return False
+
+
+@app.post("/api/runs", dependencies=_NEW_WORK)
+async def api_create_run(request: Request, background: BackgroundTasks, user: SignedIn = Depends(require_approved)):
+    """Upload → new run. Users: 1 token, one run at a time, same video again asks first (05-login.md §7.2, §7.3).
+    Hardening A2: no `video: UploadFile` parameter (FastAPI would read the whole body before any check). Admission
+    first (size, tokens, run in progress, server busy, uploads at once), then the form is read."""
+    cfg = get_config()
+    is_admin = user.role == "admin"
+    if body_too_large(request.headers.get("content-length"), cfg.upload.max_size_mb):
+        return JSONResponse(status_code=413, content={"error": {"code": "too_large", "message":
+                            f"This file exceeds {cfg.upload.max_size_mb} MB. The limit is {cfg.upload.max_size_mb} MB."}})
+    if not is_admin:
+        refused = await run_in_threadpool(admission_refusal, user.id, cfg.access.max_active_runs)
+        if refused:
+            await _log_refusal(user.id, refused)
+            raise refused
+        if not claim_upload_slot(cfg.upload.max_parallel):
+            raise busy_refusal()
+    form = None
+    try:
+        form = await request.form(max_files=1, max_fields=1)
+        video = form.get("video")
+        if not isinstance(video, StarletteUploadFile):
+            return JSONResponse(status_code=400, content={"error": {"code": "no_video", "message": "No video was sent."}})
+        out = await process_upload(video, user.id, is_admin=is_admin)
         background.add_task(push_run, out["run_id"])  # the video to S3 (step 8.1)
         return out
     except DuplicateUpload as dup:
         return JSONResponse(status_code=409, content={
             "error": {"code": "same_video", "message": "You uploaded this video before. Open the old run, or start a fresh run (1 token)."},
             "duplicate_of": dup.duplicate_of, "pending_id": dup.pending_id})
+    except RunRefused as refused:  # the atomic check in create_run_row (a race the admission did not see)
+        if not is_admin:
+            await _log_refusal(user.id, refused)
+        raise
+    finally:
+        if form is not None:
+            await form.close()
+        if not is_admin:
+            release_upload_slot()
+
+
+async def _log_refusal(user_id: int, refused: RunRefused) -> None:
+    """Hardening A2: refusals a normal user never meets (Home blocks them) are counted for the dashboard."""
+    if refused.code in FLAGGED_REFUSALS:
+        await run_in_threadpool(log_upload_event, user_id, "upload_refused", {"code": refused.code})
 
 
 @app.get("/api/runs")
@@ -267,11 +314,22 @@ def api_end_run(run_id: str):
     return {"ended": True}
 
 
+def resume_point(after: int, last_event_id: str | None) -> int:
+    """Hardening A7: the last seq the page already has (?after= or the browser's Last-Event-ID), never negative."""
+    try:
+        header = int(last_event_id) if last_event_id else 0
+    except ValueError:
+        header = 0
+    return max(0, after, header)
+
+
 @app.get("/api/runs/{run_id}/events", dependencies=_RUN)
-async def api_run_events(run_id: str):
+async def api_run_events(run_id: str, request: Request, after: int = 0):
     rd = await run_in_threadpool(_local_run, run_id)
     if not rd.exists():
         raise HTTPException(404, detail=f"Run '{run_id}' not found.")
+    if open_streams() >= get_config().access.max_event_streams:  # hardening A7
+        raise busy_refusal()
 
     with _start_lock:
         # a run uploaded just before maintenance waits; it starts when the page is opened after the update
@@ -281,7 +339,7 @@ async def api_run_events(run_id: str):
             t.start()
 
     return StreamingResponse(
-        sse_stream(run_id),
+        sse_stream(run_id, resume_point(after, request.headers.get("last-event-id"))),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
@@ -348,11 +406,21 @@ def api_resume(run_id: str, user: SignedIn = Depends(run_access)):
         raise HTTPException(404, detail=f"Run '{run_id}' not found.")
     if user.role != "admin" and other_active_run(user.id, run_id):
         raise RunRefused(409, "run_in_progress", "You already have a run in progress. Wait until it is finished.")
+    if run_id in _resuming or is_paused(run_id):  # before the limits: a run already going is not "busy" (fix 20 Nov)
+        return JSONResponse(status_code=409, content={
+            "error": {"code": "already_running", "message": "This run is already running or waiting for confirm."}
+        })
     node = failed_at(run_id)
     if node is None:
         return JSONResponse(status_code=409, content={
             "error": {"code": "not_failed", "message": "Nothing to resume: the last run did not stop on a failure."}
         })
+    if user.role != "admin":  # hardening A7: Resume stays free, but not endless, and waits when the server is full
+        access = get_config().access
+        if not resume_allowed(failure_count(run_id), access.free_resumes_per_run):
+            raise RunRefused(409, "resume_limit", "This run stopped too many times. Start a fresh run.")
+        if busy(busy_runs(), access.max_active_runs):
+            raise busy_refusal()
     with _resume_lock:
         if run_id in _resuming or is_paused(run_id):
             return JSONResponse(status_code=409, content={
@@ -361,6 +429,9 @@ def api_resume(run_id: str, user: SignedIn = Depends(run_access)):
         _resuming.add(run_id)
     repin_run(run_id)  # resume uses the config and prompts active now (step 6.3)
     _clear_node(rd, node)
+    # Written before the answer (fix 20 Nov): the page reconnects at once, and a stream whose last event is still
+    # the old run_done would end before the resumed run writes anything.
+    append_event(run_id, "pipeline", "run_resumed", {"from": node})
 
     def _go():
         try:
@@ -432,11 +503,34 @@ class ConfirmAnswer(BaseModel):
 
 _confirming: set[str] = set()
 _confirm_lock = threading.Lock()
+_photo_work: dict[str, int] = {}  # hardening U2: photo uploads/removals in progress, per run (under _confirm_lock)
 
 
-@app.post("/api/runs/{run_id}/confirm/start", dependencies=_RUN + _NEW_WORK)
+def _claim_photo(run_id: str) -> bool:
+    """Count a photo change as in progress. False once confirm has started: photos can no longer change."""
+    with _confirm_lock:
+        if run_id in _confirming:
+            return False
+        _photo_work[run_id] = _photo_work.get(run_id, 0) + 1
+        return True
+
+
+def _release_photo(run_id: str) -> None:
+    with _confirm_lock:
+        left = _photo_work.get(run_id, 1) - 1
+        if left > 0:
+            _photo_work[run_id] = left
+        else:
+            _photo_work.pop(run_id, None)
+
+
+_PHOTO_CLOSED = {"error": {"code": "not_waiting", "message": "Photos can only be changed while confirm is waiting."}}
+
+
+@app.post("/api/runs/{run_id}/confirm/start", dependencies=_ADMIN_WORK)
 def api_confirm_start(run_id: str):
-    """Dev (used by /inspector): show the confirm step on a run whose graph already ended after verify."""
+    """Dev (used by /inspector): show the confirm step on a run whose graph already ended after verify.
+    Admin only (hardening A1): it clears confirm and photos, and the confirm that follows reruns paid steps."""
     rd = _local_run(run_id)
     if not rd.exists():
         raise HTTPException(404, detail=f"Run '{run_id}' not found.")
@@ -457,7 +551,7 @@ def api_confirm_start(run_id: str):
 
 
 @app.post("/api/runs/{run_id}/confirm", dependencies=_RUN + [Depends(refuse_late_confirm)])
-def api_confirm(run_id: str, answer: ConfirmAnswer):
+def api_confirm(run_id: str, answer: ConfirmAnswer, user: SignedIn = Depends(run_access)):
     rd = _local_run(run_id)
     if not rd.exists():
         raise HTTPException(404, detail=f"Run '{run_id}' not found.")
@@ -471,10 +565,19 @@ def api_confirm(run_id: str, answer: ConfirmAnswer):
             return JSONResponse(status_code=409, content={
                 "error": {"code": "already_confirmed", "message": "This run is already confirmed."}
             })
+        if _photo_work.get(run_id):  # hardening U2: confirm never overtakes a photo still uploading
+            return JSONResponse(status_code=409, content={
+                "error": {"code": "photo_uploading", "message": "A photo is still uploading. Wait for it to finish, then confirm."}
+            })
+        paused = is_paused(run_id)
+        if not paused and user.role != "admin":  # hardening A1: only the admin's dev path confirms a run not paused
+            return JSONResponse(status_code=409, content={
+                "error": {"code": "not_waiting", "message": "This run is not waiting for confirm."}
+            })
         _confirming.add(run_id)
     data = answer.model_dump()
     try:
-        if is_paused(run_id):
+        if paused:
             threading.Thread(target=resume_graph, args=(run_id, data), daemon=True).start()
         else:  # dev path: run started with "Start confirm", no graph waiting
             finish_confirm(run_id, payload, data)
@@ -495,7 +598,7 @@ def _photo_guard(run_id: str, slot: str):
     payload = load_payload(run_id)
     if payload is None or load_record(run_id) is not None:
         return rd, JSONResponse(status_code=409, content={
-            "error": {"code": "not_waiting", "message": "Photos can only be changed while confirm is waiting."}
+            **_PHOTO_CLOSED
         })
     if slot == "odometer" and payload.get("odometer_found"):
         return rd, JSONResponse(status_code=409, content={
@@ -507,23 +610,33 @@ def _photo_guard(run_id: str, slot: str):
 @app.post("/api/runs/{run_id}/photos/{slot}", dependencies=_RUN)
 async def api_upload_photo(run_id: str, slot: str, photo: UploadFile = File(...)):
     """Stage 6: one extra photo per slot (front_left, front_right, rear_left, rear_right, odometer); replaces the old one."""
-    rd, err = _photo_guard(run_id, slot)
-    if err:
-        return err
-    data = await photo.read(get_config().photos.max_size_mb * 1024 * 1024 + 1)
-    problem = save_photo(rd / "05_photos", slot, photo.filename or "", data)
-    if problem:
-        return JSONResponse(status_code=422, content={"error": {"code": "bad_photo", "message": problem}})
-    return {"saved": f"05_photos/{slot}.jpg"}
+    if not _claim_photo(run_id):
+        return JSONResponse(status_code=409, content=_PHOTO_CLOSED)
+    try:
+        rd, err = await run_in_threadpool(_photo_guard, run_id, slot)  # S8: database and files off the event loop
+        if err:
+            return err
+        data = await photo.read(get_config().photos.max_size_mb * 1024 * 1024 + 1)
+        problem = await run_in_threadpool(save_photo, rd / "05_photos", slot, photo.filename or "", data)  # hardening A4
+        if problem:
+            return JSONResponse(status_code=422, content={"error": {"code": "bad_photo", "message": problem}})
+        return {"saved": f"05_photos/{slot}.jpg"}
+    finally:
+        _release_photo(run_id)
 
 
 @app.delete("/api/runs/{run_id}/photos/{slot}", dependencies=_RUN)
 def api_delete_photo(run_id: str, slot: str):
-    rd, err = _photo_guard(run_id, slot)
-    if err:
-        return err
-    (rd / "05_photos" / f"{slot}.jpg").unlink(missing_ok=True)
-    return {"deleted": True}
+    if not _claim_photo(run_id):
+        return JSONResponse(status_code=409, content=_PHOTO_CLOSED)
+    try:
+        rd, err = _photo_guard(run_id, slot)
+        if err:
+            return err
+        (rd / "05_photos" / f"{slot}.jpg").unlink(missing_ok=True)
+        return {"deleted": True}
+    finally:
+        _release_photo(run_id)
 
 
 @app.post("/api/runs/{run_id}/plan", status_code=202, dependencies=_ADMIN_WORK)

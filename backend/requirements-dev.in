@@ -1,0 +1,5 @@
+# CI packages (hardening S12): the app's packages + the dev tools. Lock: requirements-dev.lock (see requirements.txt).
+# Tools only here, never in the image.
+-r requirements.txt
+ruff==0.17.4
+pytest==9.2.0

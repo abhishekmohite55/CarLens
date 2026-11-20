@@ -5,7 +5,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from app.health import problems_from
+import pytest
+
+from app.health import local_health_url, problems_from
 from app.maintenance import expired
 from app.settings_store import fill_defaults
 from app.startup import code_revisions, schema_state
@@ -77,3 +79,25 @@ def test_fill_defaults_stops_at_fields():
     assert data["models"]["verify_chain"] == [{"model": "a"}]
     assert data["models"]["extra"] == {"k": 1}  # a field's own dict is the owner's value: not merged into
     assert added == []
+
+
+def test_local_health_url_accepts_the_deploy_url():  # hardening S4
+    assert local_health_url("http://127.0.0.1:8000/api/health") == "http://127.0.0.1:8000/api/health"
+    assert local_health_url("http://localhost:8001/api/health") == "http://127.0.0.1:8001/api/health"
+
+
+@pytest.mark.parametrize("url", [
+    "http://169.254.169.254/latest/meta-data",
+    "http://169.254.169.254:80/api/health",
+    "file:///etc/passwd",
+    "https://127.0.0.1:8000/api/health",
+    "http://127.0.0.1:8000/api/admin/health",
+    "http://127.0.0.1/api/health",
+    "http://127.0.0.1:99999/api/health",
+    "http://user:pw@127.0.0.1:8000/api/health",
+    "http://127.0.0.1:8000/api/health?x=1",
+    "http://example.com:8000/api/health",
+])
+def test_local_health_url_refuses_other_addresses(url):
+    with pytest.raises(ValueError):
+        local_health_url(url)

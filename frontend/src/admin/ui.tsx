@@ -47,7 +47,7 @@ export function useLoad<T>(load: () => Promise<T>) {
     }
   }, [load]);
   useEffect(() => {
-    reload();
+    void reload();
   }, [reload]);
   const act = useCallback(async (action: () => Promise<unknown>) => {
     try {

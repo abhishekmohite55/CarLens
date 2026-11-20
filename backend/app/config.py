@@ -36,6 +36,9 @@ class UploadConfig(BaseModel):
     max_size_mb: int
     max_duration_sec: int
     pending_minutes: int = 30  # same video again: the kept upload waits this long for the user's choice (step 5)
+    max_parallel: int = Field(2, ge=1)  # hardening A2: uploads received and checked at once (users)
+    repeat_warn_count: int = Field(3, ge=1)  # hardening A2: same-video / refused uploads that flag a user in admin
+    repeat_window_min: int = Field(60, ge=1)  # ... counted over this many minutes
 
 
 class ModelsConfig(BaseModel):
@@ -55,6 +58,7 @@ class ModelsConfig(BaseModel):
     locate_thinking_level: Optional[str] = None
     photos_chain: list[ModelEntry] = []  # empty = use verify_chain
     photos_timeout_per_model_sec: int = 180
+    max_calls_in_flight: int = Field(6, ge=1)  # hardening A3: model calls still running (also timed-out ones) at most
 
 
 class LocateVideoConfig(BaseModel):
@@ -62,6 +66,7 @@ class LocateVideoConfig(BaseModel):
     height: int
     fps: int
     crf: int
+    shrink_timeout_sec: int = Field(600, ge=30)  # hardening A4: longer = ffmpeg stopped, locate fails (no Gemini call)
 
 
 class FramesConfig(BaseModel):
@@ -82,6 +87,8 @@ class PhotosConfig(BaseModel):
     allowed_types: list[str] = ["jpg", "jpeg", "png", "webp", "heic"]
     max_size_mb: int = 10
     km_min_confidence: float = 0.8
+    max_pixels: int = Field(50_000_000, ge=1_000_000)  # hardening A4: larger photos refused before decoding
+    max_parallel: int = Field(2, ge=1)  # hardening A4: photos decoded at once
 
 
 class PlanConfig(BaseModel):
@@ -143,6 +150,9 @@ class AuthConfig(BaseModel):
 class AccessConfig(BaseModel):
     """Access requests (platform step 5/6)."""
     default_tokens: int = 5  # given when the owner approves a request
+    free_resumes_per_run: int = Field(2, ge=0)  # hardening A7: a user may resume while failures <= this
+    max_active_runs: int = Field(2, ge=1)  # hardening A7: runs uploaded or working at once (all users)
+    max_event_streams: int = Field(50, ge=1)  # hardening A7: live run pages open at once (all users)
 
 
 class MaintenanceConfig(BaseModel):

@@ -220,6 +220,7 @@ def _run_verify_inner(run_id: str) -> None:
         emit=lambda msg: append_event(run_id, "verify", "node_progress", {"message": msg}),
         callbacks=cbs,
         metadata={"langfuse_session_id": run_id, "langfuse_trace_name": "verify"},
+        max_in_flight=cfg.models.max_calls_in_flight,
     )
 
     # --- Merge OCR plate into parsed (before response.json, so the saved answer has it) ---

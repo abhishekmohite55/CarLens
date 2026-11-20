@@ -23,6 +23,7 @@ import time
 from pathlib import Path
 
 from .config import PROJECT_ROOT, get_config
+from .run_index import is_run_id
 from .runs import run_dir
 
 log = logging.getLogger(__name__)
@@ -119,7 +120,7 @@ def push_run(run_id: str) -> None:
 def fetch_run(run_id: str, with_video: bool = False) -> None:
     """Bring a pruned run back from S3 (the video only with with_video). Never raises.
     A run folder on this server is the newest copy: nothing is fetched while it is here (and has the video)."""
-    if not enabled():
+    if not enabled() or not is_run_id(run_id):  # hardening S14: never a key or log line from a bad id
         return
     folder = run_dir(run_id)
     if folder.is_dir() and (not with_video or any(folder.glob("video.*"))):
@@ -139,9 +140,24 @@ def fetch_run(run_id: str, with_video: bool = False) -> None:
             log.warning("S3 fetch failed for run %s: %s", run_id, exc)
 
 
+def has_video(run_id: str) -> bool:
+    """Hardening A2: the run's video is still here or in S3 (a same-video upload can then reuse it). Never raises."""
+    if not is_run_id(run_id):
+        return False
+    if any(run_dir(run_id).glob("video.*")):
+        return True
+    if not enabled():
+        return False
+    try:
+        return any(_is_video(rel) for rel in _remote(run_id))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("S3 check failed: %s", exc)
+        return False
+
+
 def delete_run_files(run_id: str) -> None:
     """Delete the run's objects in S3 (admin deleted the run). Never raises."""
-    if not enabled():
+    if not enabled() or not is_run_id(run_id):  # hardening S14
         return
     _pushed.pop(run_id, None)
     try:

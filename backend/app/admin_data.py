@@ -216,8 +216,9 @@ AI_NODES = ("verify", "photos", "plan", "extract")
 TAVILY_FREE_CREDITS = 1000  # Tavily free plan per month (basic search = 1 credit per query)
 
 
-def dashboard(days: int = 30) -> dict[str, Any]:
-    """Numbers for the admin dashboard over the last `days` days (status counts and access: now)."""
+def dashboard(days: int = 30, flag_window_min: int = 60, flag_count: int = 3) -> dict[str, Any]:
+    """Numbers for the admin dashboard over the last `days` days (status counts and access: now).
+    flagged (hardening A2): users with flag_count or more same-video / refused uploads in the last flag_window_min."""
     days = max(1, min(days, 365))
     problems: list[dict[str, str]] = []  # step 9.3: a part that fails is reported, the rest still loads
 
@@ -276,11 +277,20 @@ def dashboard(days: int = 30) -> dict[str, Any]:
         SELECT r.id AS run_id, r.status, r.original_filename AS file, u.email AS user, r.updated_at::text AS since
         FROM runs r LEFT JOIN users u ON u.id = r.user_id
         WHERE r.status IN ('uploaded', 'running', 'awaiting_confirm') ORDER BY r.updated_at DESC LIMIT 50""")
+    flagged = rows("flagged", """
+        SELECT u.id AS user_id, u.email, count(*) AS n,
+               count(*) FILTER (WHERE a.action = 'upload_same_video') AS same_video,
+               count(*) FILTER (WHERE a.action = 'upload_refused') AS refused
+        FROM audit_log a JOIN users u ON u.id = (a.details->>'user_id')::bigint
+        WHERE a.action IN ('upload_same_video', 'upload_refused') AND a.at > now() - make_interval(mins => :mins)
+        GROUP BY u.id, u.email HAVING count(*) >= :flag_count ORDER BY n DESC LIMIT 20""",
+                   mins=max(1, flag_window_min), flag_count=max(1, flag_count))
     langfuse = os.environ.get("LANGFUSE_HOST", "").strip() or None
     return {"days": days, "runs_per_day": runs_per_day, "steps": steps, "last_errors": last_errors, "models": models,
             "tavily": {"queries_this_month": int(tavily), "free_credits": TAVILY_FREE_CREDITS,
                        "note": "approximate: search runs this month x their plan queries (1 credit each, basic)"},
             "access": access, "tokens": tokens, "prices": prices, "in_progress": now_runs, "langfuse_url": langfuse,
+            "flagged": flagged, "flag_window_min": flag_window_min,
             "problems": problems}
 
 

@@ -3,7 +3,8 @@
 # Run by the Deploy workflow through Session Manager Run Command (as root); by hand:
 #   sudo bash /opt/carlens/repo/deploy/release.sh <tag>
 # 1. maintenance on (no new uploads / fresh runs / resumes)  2. wait for working runs (python -m app.maintenance wait)
-# 3. deploy.sh <tag>  4. health check (90 s): not healthy -> deploy the version that ran before, exit 1
+# 3. deploy.sh <tag>  4. health check (90 s) + the app page through Caddy (60 s, hardening E):
+#    not healthy -> deploy the version that ran before, exit 1
 # 5. maintenance off, also when a step failed (the app never stays closed; it also expires by itself, auto_off_min)
 set -uo pipefail
 
@@ -13,6 +14,24 @@ HEALTH_WAIT_SEC=90
 compose() { docker compose -f "$DIR/docker-compose.prod.yml" "$@"; }
 maintenance() { compose exec -T backend python -m app.maintenance "$@"; }
 healthy() { compose exec -T backend python -m app.health --url http://127.0.0.1:8000/api/health --wait "$HEALTH_WAIT_SEC"; }
+
+# Hardening E: the app page answers through Caddy and nginx (the backend check alone misses a broken frontend).
+# Straight to this server's Caddy (--resolve); the secret header goes from a file descriptor, never on the command line.
+env_value() { sed -n "s/^$1='\(.*\)'$/\1/p" "$DIR/.env"; }
+page_ok() {
+    local host secret
+    host="$(env_value ORIGIN_HOST)"
+    secret="$(env_value ORIGIN_SECRET)"
+    for _ in $(seq 1 12); do
+        if curl -fsS -o /dev/null --max-time 10 --resolve "$host:443:127.0.0.1" \
+            -H @<(printf 'X-Origin-Secret: %s\n' "$secret") "https://$host/"; then
+            return 0
+        fi
+        sleep 5
+    done
+    echo "the app page did not answer through Caddy" >&2
+    return 1
+}
 
 maintenance_off() {
     for _ in $(seq 1 24); do # the new backend needs a few seconds (migrations) before it answers
@@ -38,15 +57,15 @@ if ! bash "$DIR/deploy.sh" "$TAG"; then
     exit 1
 fi
 
-if healthy; then
+if healthy && page_ok; then
     echo "released $TAG"
     exit 0
 fi
 
 echo "$TAG is not healthy" >&2
-compose logs --tail 40 backend >&2
-if [ -n "$PREVIOUS" ] && [ "$PREVIOUS" != "$TAG" ]; then
+compose logs --tail 40 backend frontend caddy >&2
+if [[ -n "$PREVIOUS" && "$PREVIOUS" != "$TAG" ]]; then
     echo "rolling back to $PREVIOUS" >&2
-    bash "$DIR/deploy.sh" "$PREVIOUS" && healthy && echo "rolled back to $PREVIOUS (healthy)" >&2
+    bash "$DIR/deploy.sh" "$PREVIOUS" && healthy && page_ok && echo "rolled back to $PREVIOUS (healthy)" >&2
 fi
 exit 1

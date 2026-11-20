@@ -1,3 +1,7 @@
+# Hand-edited list of the backend's packages (laptop venv: pip install -r requirements.txt).
+# The image and CI install the lock files instead (hardening S12): every package and dependency with its hash.
+# After editing this file, re-make both locks (Linux + Python 3.12, like the image), from the repo root:
+#   docker run --rm -v "${PWD}/backend:/w" -w /w python:3.12-slim sh -c "pip install --quiet pip-tools && pip-compile --quiet --generate-hashes --allow-unsafe --strip-extras -o requirements.lock requirements.txt && pip-compile --quiet --generate-hashes --allow-unsafe --strip-extras -o requirements-dev.lock requirements-dev.in"
 imageio-ffmpeg==0.8.0
 fastapi==0.162.0
 uvicorn[standard]==0.54.0
