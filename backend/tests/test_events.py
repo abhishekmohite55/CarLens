@@ -93,7 +93,8 @@ async def test_stream_ends_after_run_done_and_resumes_after_seq(tmp_path):  # ha
     ev_mod.events_path = lambda rid: evfile
     try:
         sent = [m async for m in ev_mod.sse_stream("r_x", after=1)]  # ends by itself: no hang
-        assert len(sent) == 2 and '"seq":2' in sent[0] and sent[1].startswith("retry:")
+        assert len(sent) == 3 and '"seq":2' in sent[0] and sent[1].startswith("retry:")
+        assert sent[2] == ev_mod.END_MESSAGE  # the page closes on this, not on run_done
         assert ev_mod.open_streams() == 0
     finally:
         ev_mod.events_path = original_ep

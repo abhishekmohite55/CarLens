@@ -95,7 +95,9 @@ def price_report(figures: list[dict], tyres: list[dict], car: dict, current_year
     r = [x["rate"] for x in rates]
     age = max(0, current_year - int(car["year"]))
     top = sorted(r)[-max(1, settings["max_from_top"]):]
-    kept = {"median": median(r), "max": sum(top) / len(top)}
+    # fix 20 Nov: with few listings the top average can fall below the median (e.g. 0.908 / 0.984 / 0.988 → top 0.960
+    # vs median 0.984), which showed the range high-to-low; the high end is never below the low end.
+    kept = {"median": median(r), "max": max(median(r), sum(top) / len(top))}
     fair = {k: np["value"] * v ** age for k, v in kept.items()}
     return {**base, "status": "ok", "car_age_years": age, "yearly_value_kept": kept,
             "fair_value": {k: _round(v) for k, v in fair.items()},

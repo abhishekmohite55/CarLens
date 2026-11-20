@@ -163,6 +163,7 @@ def _run_locate_inner(run_id: str) -> None:
             shrink_settings = {"height": lv.height, "fps": lv.fps, "crf": lv.crf}
         except Exception as exc:
             log.warning("shrink failed for %s: %s", run_id, exc)
+            (out_dir / "video_small.part.mp4").unlink(missing_ok=True)  # a half-made file is no use (fix 20 Nov)
             append_event(run_id, "locate", "node_failed", {
                 "error": "The video could not be prepared. Try again, or upload a shorter or lower-resolution video.",
                 "detail": f"shrink failed: {exc}"[:300]})

@@ -11,6 +11,7 @@ const POLL_MS = 1500;
 const TYPE_LABEL: Record<string, string> = {
   node_started: "started", node_progress: "progress", node_done: "done", node_failed: "failed",
   node_skipped: "skipped", packet: "packet", awaiting_confirm: "waiting for confirm", run_done: "run ended",
+  run_resumed: "resumed",
 };
 const DOT: Record<string, string> = {
   node_started: "bg-accent", node_done: "bg-green-400", node_failed: "bg-red-400", node_skipped: "bg-ink-3",

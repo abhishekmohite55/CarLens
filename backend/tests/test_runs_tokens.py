@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import insert, select, update
+from sqlalchemy import func, insert, select, update
 
 ORIGIN = {"Origin": "http://127.0.0.1:8000"}
 VIDEO = {"video": ("car.mp4", b"x", "video/mp4")}
@@ -224,3 +224,34 @@ def test_same_video_again_keeps_no_copy(env):  # hardening A2 (owner, 20 Nov)
     new_run = r.json()["run_id"]
     assert list((tmp_path / "runs" / new_run).glob("video.*"))
     assert list((tmp_path / "runs" / run1).glob("video.*"))  # the earlier run keeps its own
+
+
+def test_failed_fresh_run_is_undone_and_can_be_retried(env, monkeypatch):  # fix 20 Nov
+    """A fresh run that fails after its runs row exists leaves no half run: row gone, token back, kept upload back."""
+    import app.nodes.upload as upload_mod
+    from app.models import Run
+    db_engine, app, shas, tmp_path = env
+    shas["sha"] = uuid4().hex * 2
+    client = _user_client(db_engine, app, tokens=3)
+    run1 = client.post("/api/runs", files=VIDEO, headers=ORIGIN).json()["run_id"]
+    _finish(db_engine, run1)
+    pending = client.post("/api/runs", files=VIDEO, headers=ORIGIN).json()["pending_id"]
+    assert _tokens(client) == 2
+
+    real_save = upload_mod.save_result
+
+    def broken_save(*args, **kwargs):
+        raise RuntimeError("database went away")
+    monkeypatch.setattr(upload_mod, "save_result", broken_save)
+    with pytest.raises(RuntimeError):
+        client.post(f"/api/uploads/{pending}/start", headers=ORIGIN)
+    assert _tokens(client) == 2  # token given back
+    with db_engine.connect() as conn:
+        user_runs = conn.execute(select(func.count()).select_from(Run).where(
+            Run.video_sha256 == shas["sha"])).scalar_one()
+    assert user_runs == 1  # only run1: the half run's row is gone
+    assert (tmp_path / "pending" / pending / "pending.json").exists()  # kept upload put back
+
+    monkeypatch.setattr(upload_mod, "save_result", real_save)
+    r = client.post(f"/api/uploads/{pending}/start", headers=ORIGIN)
+    assert r.status_code == 200 and _tokens(client) == 1

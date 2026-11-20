@@ -34,7 +34,8 @@ async function getJson(path: string): Promise<any> {
 }
 
 /** Rebuilds the run from its events and keeps following them. The stream ends when the run ends (hardening A7):
- * the page closes it on run_done, and reopen() (after Resume) asks only for events after the last one it has. */
+ * the server sends "end" and the page closes it (not on run_done: an earlier failure before a Resume is in the
+ * history too); reopen() (after Resume) asks only for events after the last one it has. */
 function useRun(id: string) {
   const [run, setRun] = useState<Run>(emptyRun);
   const [missing, setMissing] = useState(false);
@@ -55,8 +56,8 @@ function useRun(id: string) {
       if (e.seq <= lastSeq.current) return; // already have it
       lastSeq.current = e.seq;
       setRun((r) => apply(r, e));
-      if (e.node === "pipeline" && e.type === "run_done") source.close(); // finished: stop asking
     };
+    source.addEventListener("end", () => source.close()); // the run's last event is run_done: stop asking
     source.onerror = () => {
       setOnline(false);
       fetch(`/api/runs/${id}`).then((r) => {

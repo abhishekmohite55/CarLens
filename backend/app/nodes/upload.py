@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
 import secrets
@@ -19,9 +20,11 @@ from starlette.concurrency import run_in_threadpool
 
 from ..config import PROJECT_ROOT, get_config
 from ..results import save_result
-from ..run_index import create_run_row, log_upload_event, user_run_with_video
+from ..run_index import create_run_row, drop_run_row, log_upload_event, user_run_with_video
 from ..runs import append_event, create_run, run_dir
 from ..storage import fetch_run, has_video
+
+log = logging.getLogger(__name__)
 
 _CHUNK = 1 * 1024 * 1024  # 1 MB
 _PENDING_ID = re.compile(r"^[A-Za-z0-9_-]{8,40}$")
@@ -149,11 +152,21 @@ async def receive_upload(video: UploadFile) -> Received:
 
 def start_run(rec: Received, user_id: int | None, spend_token: bool) -> str:
     """runs row (token taken for users), then the run folder, the video, meta.json and the upload events.
-    Raises RunRefused (the file is left where it is; the caller cleans up)."""
+    Raises RunRefused (the file is left where it is; the caller cleans up). If anything fails after the row exists,
+    the row is removed, the token given back and the video put back where it was (fix 20 Nov)."""
     # runs row first: the primary key guarantees the random id is unique; then the folder
     run_id = create_run_row(sha256=rec.sha256, original_filename=rec.name, size_bytes=rec.size,
                             duration_sec=rec.duration_sec, user_id=user_id, spend_token=spend_token,
                             max_active_runs=get_config().access.max_active_runs if spend_token else None)
+    try:
+        _fill_run(run_id, rec)
+    except BaseException:
+        _undo_run(run_id, rec, user_id if spend_token else None)
+        raise
+    return run_id
+
+
+def _fill_run(run_id: str, rec: Received) -> None:
     run_path = create_run(run_id)
     dest = run_path / f"video.{rec.ext}"
     shutil.move(str(rec.path), str(dest))
@@ -176,7 +189,22 @@ def start_run(rec: Received, user_id: int | None, spend_token: bool) -> str:
     append_event(run_id, "upload", "node_started", {"label": "Upload & check"})
     append_event(run_id, "upload", "packet", {"from": "upload", "to": "locate", "label": f"{mb_label} video"})
     append_event(run_id, "upload", "node_done", {"summary": f"{rec.name}, {mb_label}, {m} min {s} s"})
-    return run_id
+
+
+def _undo_run(run_id: str, rec: Received, refund_user: int | None) -> None:
+    """Best effort: every step is tried, a failure here is logged and never hides the first error."""
+    run_path = run_dir(run_id)
+    try:
+        moved = run_path / f"video.{rec.ext}"
+        if moved.exists() and not rec.path.exists():
+            shutil.move(str(moved), str(rec.path))
+    except OSError:
+        log.exception("could not put the video back for %s", run_id)
+    shutil.rmtree(run_path, ignore_errors=True)
+    try:
+        drop_run_row(run_id, refund_user)
+    except Exception:
+        log.exception("could not remove the runs row %s", run_id)
 
 
 async def process_upload(video: UploadFile, user_id: int, is_admin: bool) -> dict:
@@ -221,7 +249,7 @@ def _user_pending(user_id: int) -> list[tuple[Path, dict]]:
                 info = json.loads((d / "pending.json").read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 continue
-            if info.get("user_id") == user_id:
+            if info.get("user_id") == user_id and not d.name.endswith(_STARTING):  # one being started stays
                 out.append((d, info))
     return out
 
@@ -273,15 +301,32 @@ def _copy_source_video(d: Path, source_run: str) -> Path:
     return dest
 
 
+_STARTING = ".start"  # a kept upload being started is renamed <id>.start, so a second click finds nothing
+
+
 def start_pending(pending_id: str, user_id: int) -> dict:
-    """"Fresh run" on a kept upload: the normal checks and 1 token."""
+    """"Fresh run" on a kept upload: the normal checks and 1 token. The kept upload is claimed first (renamed),
+    so two clicks at once start one run (fix 20 Nov); on a failure it is put back for another try."""
     d, info = _load_pending(pending_id, user_id)
-    path = d / f"video.{info['ext']}"
-    if not path.exists() and info.get("source_run"):
-        path = _copy_source_video(d, info["source_run"])
-    rec = Received(path, info["name"], path.suffix.lstrip("."), info["size"], info["sha256"], info["duration_sec"])
-    run_id = start_run(rec, user_id, spend_token=True)  # RunRefused leaves the kept file for another try
-    shutil.rmtree(d, ignore_errors=True)
+    claimed = d.with_name(d.name + _STARTING)
+    try:
+        d.rename(claimed)
+    except OSError:
+        raise HTTPException(409, detail={"error": {"code": "already_starting",
+                                                   "message": "This upload is already being started."}})
+    try:
+        path = claimed / f"video.{info['ext']}"
+        if not path.exists() and info.get("source_run"):
+            path = _copy_source_video(claimed, info["source_run"])
+        rec = Received(path, info["name"], path.suffix.lstrip("."), info["size"], info["sha256"], info["duration_sec"])
+        run_id = start_run(rec, user_id, spend_token=True)  # RunRefused leaves the kept file for another try
+    except BaseException:
+        try:
+            claimed.rename(d)
+        except OSError:
+            log.exception("could not put back kept upload %s", pending_id)
+        raise
+    shutil.rmtree(claimed, ignore_errors=True)
     return {"run_id": run_id}
 
 

@@ -406,6 +406,10 @@ def api_resume(run_id: str, user: SignedIn = Depends(run_access)):
         raise HTTPException(404, detail=f"Run '{run_id}' not found.")
     if user.role != "admin" and other_active_run(user.id, run_id):
         raise RunRefused(409, "run_in_progress", "You already have a run in progress. Wait until it is finished.")
+    if run_id in _resuming or is_paused(run_id):  # before the limits: a run already going is not "busy" (fix 20 Nov)
+        return JSONResponse(status_code=409, content={
+            "error": {"code": "already_running", "message": "This run is already running or waiting for confirm."}
+        })
     node = failed_at(run_id)
     if node is None:
         return JSONResponse(status_code=409, content={
@@ -425,6 +429,9 @@ def api_resume(run_id: str, user: SignedIn = Depends(run_access)):
         _resuming.add(run_id)
     repin_run(run_id)  # resume uses the config and prompts active now (step 6.3)
     _clear_node(rd, node)
+    # Written before the answer (fix 20 Nov): the page reconnects at once, and a stream whose last event is still
+    # the old run_done would end before the resumed run writes anything.
+    append_event(run_id, "pipeline", "run_resumed", {"from": node})
 
     def _go():
         try:

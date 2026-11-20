@@ -20,6 +20,9 @@ from .runs import events_path
 _POLL_INTERVAL = 0.5   # seconds between file checks
 _KEEPALIVE_SEC = 15    # SSE keep-alive comment interval
 _RETRY_AFTER_END_MS = 60_000  # a browser that reconnects by itself after the end waits this long
+# Sent last when the stream ends (fix 20 Nov): the page closes on this, not on a run_done, because an older
+# run_done in the history (a failure before a Resume) is not the end.
+END_MESSAGE = "event: end\ndata: {}\n\n"
 
 _open_streams = 0
 _open_lock = threading.Lock()
@@ -88,6 +91,7 @@ async def sse_stream(run_id: str, after: int = 0) -> AsyncGenerator[str, None]:
                 yield sse_message(seq, line)
         if ended:
             yield f"retry: {_RETRY_AFTER_END_MS}\n\n"
+            yield END_MESSAGE
             return
 
         last_ka = time.monotonic()
@@ -124,6 +128,7 @@ async def sse_stream(run_id: str, after: int = 0) -> AsyncGenerator[str, None]:
                     yield sse_message(seq, line)
                 if ended:
                     yield f"retry: {_RETRY_AFTER_END_MS}\n\n"
+                    yield END_MESSAGE
                     return
     finally:
         _count_stream(-1)

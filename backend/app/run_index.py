@@ -12,16 +12,20 @@ import string
 import subprocess
 from datetime import datetime
 
-from sqlalchemy import func, insert, select, update
+from sqlalchemy import delete, func, insert, select, text, update
 from sqlalchemy.exc import IntegrityError
 
 from .config import PROJECT_ROOT
 from .db import require_engine
-from .models import AuditLog, NodeRun, Run, User
+from .models import AuditLog, NodeResult, NodeRun, Run, RunEvent, User
 
 log = logging.getLogger(__name__)
 
 TERMINAL = {"node_done": "done", "node_failed": "failed", "node_skipped": "skipped"}
+
+# Fix 20 Nov: one start at a time checks the limits (Postgres transaction lock, released at commit), so two
+# uploads at the same instant cannot both pass the server's run limit or the one-run-per-user rule.
+_ADMISSION_LOCK = 724_215_001
 
 _ID_CHARS = string.ascii_lowercase + string.digits
 _RUN_ID_RE = re.compile(r"r_[a-z0-9]{12}")
@@ -142,6 +146,7 @@ def create_run_row(*, sha256: str, original_filename: str, size_bytes: int, dura
         try:
             with engine.begin() as conn:
                 if spend_token:
+                    conn.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": _ADMISSION_LOCK})
                     tokens = conn.execute(select(User.tokens).where(User.id == user_id).with_for_update()).scalar_one()
                     active = conn.execute(select(func.count()).select_from(Run).where(
                         Run.user_id == user_id, Run.status.in_(ACTIVE_STATUSES))).scalar_one()
@@ -163,6 +168,18 @@ def create_run_row(*, sha256: str, original_filename: str, size_bytes: int, dura
                 continue  # the random id is taken: draw another
             raise  # any other refusal (missing value, foreign key) is a real error
     raise RuntimeError("Could not draw a free run id")
+
+
+def drop_run_row(run_id: str, refund_user: int | None) -> None:
+    """Undo create_run_row when starting the run failed right after it (fix 20 Nov): the row and anything recorded
+    for it go, and a user's token comes back. Never used on a run that has started working."""
+    with require_engine().begin() as conn:
+        conn.execute(delete(RunEvent).where(RunEvent.run_id == run_id))
+        conn.execute(delete(NodeResult).where(NodeResult.run_id == run_id))
+        conn.execute(delete(NodeRun).where(NodeRun.run_id == run_id))
+        conn.execute(delete(Run).where(Run.id == run_id))
+        if refund_user is not None:
+            conn.execute(update(User).where(User.id == refund_user).values(tokens=User.tokens + 1))
 
 
 def latest_node_result(run_id: str, node: str) -> tuple[str | None, str | None]:
@@ -231,6 +248,9 @@ def record_node_event(event: dict, ts: datetime) -> None:
                 conn.execute(update(NodeRun).where(NodeRun.id == open_id).values(**values))
             else:  # e.g. skipped without a start event
                 conn.execute(insert(NodeRun).values(run_id=run_id, node=node, started_at=ts, **values))
+        elif type_ == "run_resumed":  # fix 20 Nov: counts as busy from the moment Resume is accepted
+            conn.execute(update(Run).where(Run.id == run_id).values(
+                status="running", failed_at=None, error=None, updated_at=ts))
         elif type_ == "awaiting_confirm":
             conn.execute(update(Run).where(Run.id == run_id).values(status="awaiting_confirm", updated_at=ts))
         elif type_ == "run_done":
