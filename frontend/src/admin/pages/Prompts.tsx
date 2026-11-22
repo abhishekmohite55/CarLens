@@ -52,7 +52,7 @@ export function Prompts() {
 
   return (
     <div>
-      <h1 className="mb-4 text-xl font-semibold">Prompts</h1>
+      <h1 className="mb-6 font-display text-3xl font-light tracking-tight text-ink">Prompts</h1>
       <div className="flex flex-col gap-4 md:flex-row md:gap-6">
         <ul className="no-scrollbar -mx-4 flex shrink-0 gap-1 overflow-x-auto px-4 md:mx-0 md:block md:w-56 md:space-y-1 md:overflow-visible md:px-0">
           {list.map((p) => (

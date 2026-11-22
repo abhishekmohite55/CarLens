@@ -9,7 +9,7 @@ import { Lens } from "./Lens";
 import { springs } from "./motion";
 import { afterSignIn, homeFor, useSession } from "./session";
 
-const field = "text-body w-full rounded-input bg-canvas px-4 py-3 text-ink outline-none placeholder:text-ink-3 focus:ring-2 focus:ring-line-strong";
+const field = "text-base w-full rounded-input bg-canvas px-4 py-3 text-ink outline-none placeholder:text-ink-3 focus:ring-2 focus:ring-line-strong";
 const primary = "text-label w-full rounded-full bg-canvas px-5 py-3.5 text-ink disabled:opacity-60";
 const quiet = "text-label rounded-full px-4 py-2 opacity-75 hover:opacity-100";
 
@@ -57,16 +57,33 @@ function GoogleButton({ onError }: { onError: (text: string) => void }) {
         onError(e instanceof Error ? e.message : "Google sign-in failed. Try again.");
       }
     });
+    let observer: ResizeObserver | undefined;
+    let debounce: ReturnType<typeof setTimeout> | undefined;
     loadGoogle().then((google) => {
       if (!live) return;
       if (!google || !box.current) return setState("off");
-      google.renderButton(box.current, {
-        theme: "outline", size: "large", shape: "pill", text: "continue_with",
-        width: Math.min(400, Math.round(box.current.clientWidth)),
-      });
+      const render = () => {
+        if (!live || !box.current) return;
+        box.current.innerHTML = "";
+        google.renderButton(box.current, {
+          theme: "outline", size: "large", shape: "pill", text: "continue_with",
+          width: Math.min(400, Math.round(box.current.clientWidth)),
+        });
+      };
+      render();
       setState("ready");
+      // Re-render on container resize so the button never overflows at 320 px.
+      observer = new ResizeObserver(() => {
+        clearTimeout(debounce);
+        debounce = setTimeout(render, 150);
+      });
+      observer.observe(box.current);
     });
-    return () => { live = false; };
+    return () => {
+      live = false;
+      observer?.disconnect();
+      clearTimeout(debounce);
+    };
   }, [navigate, onError, setMe]);
 
   if (state === "off") return null;
@@ -114,7 +131,7 @@ export function DoorForm({ mode }: { mode: "sign-in" | "request" }) {
     <Frame>
       <Lens scene={mode} radius={32} className="w-[min(92vw,26rem)]">
         <form onSubmit={submit} className="space-y-4 p-6 sm:p-8">
-          <h1 className="text-title">{signIn ? "Sign in to CarLens" : "Request access"}</h1>
+          <h1 className="text-title text-balance">{signIn ? "Sign in to CarLens" : "Request access"}</h1>
           {!signIn && <p className="text-body opacity-80">The owner approves each request. You can use CarLens once you are approved.</p>}
           {signIn && new URLSearchParams(search).get("next") && <p className="text-body opacity-80">You were signed out. Sign in to continue where you were.</p>}
           <Arrive order={0}>
@@ -127,7 +144,7 @@ export function DoorForm({ mode }: { mode: "sign-in" | "request" }) {
           <Arrive order={1}>
             <label className="text-label block space-y-2">
               <span className="opacity-80">Password</span>
-              <input className={field} type="password" autoComplete={signIn ? "current-password" : "new-password"} required
+              <input className={`${field} font-mono`} type="password" autoComplete={signIn ? "current-password" : "new-password"} required
                 value={password} onChange={(e) => setPassword(e.target.value)} />
               {!signIn && <span className="text-small block opacity-70">At least 10 characters.</span>}
             </label>
@@ -203,7 +220,7 @@ export function Waiting() {
         <div className="space-y-4 p-6 sm:p-8">
           {rejected ? (
             <>
-              <h1 className="text-heading">Your request was not approved.</h1>
+              <h1 className="text-heading text-balance">Your request was not approved.</h1>
               <p className="text-body opacity-90">Ask the owner if this is a mistake.</p>
             </>
           ) : (
@@ -219,7 +236,7 @@ export function Waiting() {
                 {checking ? "Checking" : "Check again"}
               </button>
             )}
-            <button onClick={leave} className={quiet}>Sign out</button>
+            <button onClick={leave} className={`${quiet} min-h-11`}>Sign out</button>
           </div>
         </div>
       </Lens>

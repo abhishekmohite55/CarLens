@@ -39,7 +39,7 @@ export function PriceCard({ report }: { report: Report }) {
       <p className="text-small opacity-75">{carName(report.vehicle)}{report.vehicle.fuel ? `, ${report.vehicle.fuel}` : ""}</p>
       {p.status === "ok" ? (
         <>
-          <p className="text-title"><RollingNumber text={`${inr(p.low)} to ${inr(p.high)}`} /></p>
+          <p className="text-title tabular"><RollingNumber text={`${inr(p.low)} to ${inr(p.high)}`} /></p>
           <p className="text-body opacity-80">
             Fair value after repairs, from {p.listings_used.length} listings and {p.new_price.sources.length} new-price sources.
           </p>

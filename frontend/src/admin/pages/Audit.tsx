@@ -9,7 +9,7 @@ export function Audit() {
   const { data, error } = useLoad(load);
   return (
     <div>
-      <h1 className="mb-4 text-xl font-semibold">Audit log</h1>
+      <h1 className="mb-6 font-display text-3xl font-light tracking-tight text-ink">Audit log</h1>
       {error && <p className="mb-3 text-sm text-red-400">{error}</p>}
       <table className="w-full">
         <thead>

@@ -100,8 +100,8 @@ function NavCapsule() {
   }, [measure]);
 
   const reduce = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-  const lead = "300ms cubic-bezier(.3, 1.35, .5, 1)";
-  const trail = "480ms cubic-bezier(.3, 1.45, .45, 1) 70ms";
+  const lead = "250ms cubic-bezier(.4, 0, .2, 1)";
+  const trail = "380ms cubic-bezier(.4, 0, .6, 1) 60ms";
   const transition = !edge?.animate || reduce ? "none"
     : edge.dir === 1 ? `right ${lead}, left ${trail}` : `left ${lead}, right ${trail}`;
 
@@ -177,7 +177,7 @@ function HealthBanner() {
     if (!health || !checkedAt) return null; // first answer not in yet: never flash green
     // Owner, 20 Nov 2026: a calm green strip when all is well, so a healthy app is visible too.
     return (
-      <section role="status"
+      <output
         className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-2xl bg-green-900 px-4 py-2 text-sm text-green-200 shadow-card">
         <span className="relative flex h-2.5 w-2.5" aria-hidden="true">
           <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-40 motion-reduce:animate-none" />
@@ -186,19 +186,19 @@ function HealthBanner() {
         <span className="font-medium">All systems healthy</span>
         <span className="opacity-75">version {health.version}</span>
         <span className="opacity-75">checked {checkedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
-      </section>
+      </output>
     );
   }
   const isError = problems.some((p) => p.level === "error");
   return (
-    <section role={isError ? "alert" : "status"}
+    <div role={isError ? "alert" : "status"}
       className={`mb-4 rounded-2xl px-4 py-3 text-sm shadow-card ${isError ? "bg-bad text-page" : "bg-card text-ink"}`}>
       <p className="font-medium">{isError ? "CarLens is degraded: new runs are refused" : "Needs your attention"}
         {health?.version ? <span className="ml-2 font-normal opacity-75">version {health.version}</span> : null}</p>
       <ul className="mt-1 list-disc space-y-0.5 pl-5">
         {problems.map((p, i) => <li key={i}>{p.message}</li>)}
       </ul>
-    </section>
+    </div>
   );
 }
 

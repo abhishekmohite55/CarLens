@@ -54,7 +54,7 @@ export function Runs() {
 
   return (
     <div className={logRun ? "xl:pr-[33rem]" : ""}>
-      <h1 className="mb-4 text-xl font-semibold">Runs</h1>
+      <h1 className="mb-6 font-display text-3xl font-light tracking-tight text-ink">Runs</h1>
       <select value={status} onChange={(e) => setStatus(e.target.value)} className="mb-4 rounded bg-neutral-900 px-3 py-1 text-sm">
         {STATUSES.map((s) => <option key={s} value={s}>{s || "all statuses"}</option>)}
       </select>

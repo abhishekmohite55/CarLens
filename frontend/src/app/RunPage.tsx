@@ -23,6 +23,16 @@ import {
   type Figures, type PlanQueries, type SearchResults, type Trimmed,
 } from "./WebSteps";
 
+/** Map raw network/SSL/timeout errors to a user-friendly message. Full text visible in admin console. */
+function friendlyError(raw: string | undefined): string {
+  if (!raw) return "";
+  if (/ssl|certificate|handshake/i.test(raw)) return "Could not reach the AI service. Resume to try again.";
+  if (/dns|name.*resolv|no.*address|getaddrinfo/i.test(raw)) return "Network could not reach the AI service. Check DNS. Resume to retry.";
+  if (/timeout|timed out|read timeout/i.test(raw)) return "The AI service took too long to respond. Resume to try again.";
+  if (/connect(ion)? refused|connection.*reset|broken pipe/i.test(raw)) return "Connection to the AI service was refused. Resume to try again.";
+  return raw;
+}
+
 /** A run file as JSON, or null when it is missing or the network fails (never rejects). */
 async function getJson(path: string): Promise<any> {
   try {
@@ -288,7 +298,7 @@ function RunView({ id }: { id: string }) {
       <Lens scene="failed" radius={32} tone="danger" className="w-[min(92vw,28rem)]">
         <div className="space-y-3 p-6">
           <p className="text-heading">{at === "admin" ? "The owner stopped this run." : `${STEP_NAME[at] ?? "A step"} stopped.`}</p>
-          {at !== "admin" && <p className="text-small break-words opacity-90">{run.ended.error ?? s[at]?.error}</p>}
+          {at !== "admin" && <p className="text-small break-words opacity-90">{friendlyError(run.ended.error ?? s[at]?.error)}</p>}
           <button onClick={resume} disabled={resuming}
             className="text-label rounded-full bg-on-status px-5 py-3 text-danger disabled:opacity-60">
             {resuming ? "Resuming" : at === "admin" ? "Resume" : `Resume from ${STEP_NAME[at]?.toLowerCase() ?? "this step"}`}

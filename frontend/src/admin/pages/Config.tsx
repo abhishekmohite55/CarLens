@@ -120,7 +120,10 @@ export function Config() {
     setDraft(structuredClone(data.data));
     setShown((n) => n + 1);
     setProblems([]);
-    setVersions(null);
+    // Load versions independently; a failure only leaves the list empty.
+    api<{ versions: VersionRow[] }>("/api/admin/config/versions")
+      .then((r) => setVersions(r.versions))
+      .catch(() => setVersions([]));
   }
   useEffect(() => {
     load().catch((e) => setMessage(e.message));
@@ -158,7 +161,7 @@ export function Config() {
   return (
     <div>
       <div className="mb-4 flex flex-wrap items-baseline justify-between gap-2">
-        <h1 className="text-xl font-semibold">Config</h1>
+        <h1 className="font-display text-3xl font-light tracking-tight text-ink">Config</h1>
         <span className="text-xs text-neutral-500">
           Active: version {loaded.id}, {when(loaded.saved_at)}{loaded.saved_by ? ` by ${loaded.saved_by}` : ""}{loaded.note ? ` · ${loaded.note}` : ""}
         </span>
@@ -200,29 +203,30 @@ export function Config() {
           <Button kind="primary" disabled={!dirty} onClick={save}>Save as new version</Button>
           <Button disabled={!dirty} onClick={() => { setDraft(structuredClone(loaded.data)); setShown((n) => n + 1); setProblems([]); setMessage(""); }}>Discard</Button>
           <span className="flex-1 text-sm text-neutral-400">{message}</span>
-          <Button onClick={async () => setVersions(versions ? null : (await api<{ versions: VersionRow[] }>("/api/admin/config/versions")).versions)}>
-            {versions ? "Hide versions" : "Versions"}
-          </Button>
           <Button onClick={importFile}>Import config.yaml</Button>
         </div>
-        {versions && (
-          <table className="mt-3 w-full text-sm">
-            <tbody>
-              {versions.map((v) => (
-                <tr key={v.id} className="border-t border-neutral-900">
-                  <td className="py-1 pr-4">v{v.id}{v.id === loaded.id && <span className="ml-2 text-xs text-green-400">active</span>}</td>
-                  <td className="py-1 pr-4 text-neutral-400">{when(v.saved_at)}</td>
-                  <td className="py-1 pr-4 text-neutral-400">{v.saved_by ?? "seed"}</td>
-                  <td className="py-1 pr-4 text-neutral-400">{v.note}</td>
-                  <td className="py-1">
-                    {v.id !== loaded.id && (
-                      <span className="flex gap-1"><Button onClick={() => view(v.id)}>View</Button><Button onClick={() => rollback(v.id)}>Roll back</Button></span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        {versions !== null && (
+          <div className="mt-4 max-h-72 overflow-y-auto rounded border border-neutral-800">
+            <table className="w-full text-sm">
+              <tbody>
+                {versions.length === 0 ? (
+                  <tr><td className="px-3 py-2 text-neutral-500">No versions yet.</td></tr>
+                ) : versions.map((v) => (
+                  <tr key={v.id} className="border-t border-neutral-900 first:border-0">
+                    <td className="py-1 pl-3 pr-4">v{v.id}{v.id === loaded.id && <span className="ml-2 text-xs text-green-400">active</span>}</td>
+                    <td className="py-1 pr-4 text-neutral-400">{when(v.saved_at)}</td>
+                    <td className="py-1 pr-4 text-neutral-400">{v.saved_by ?? "seed"}</td>
+                    <td className="py-1 pr-4 text-neutral-400">{v.note}</td>
+                    <td className="py-1 pr-3">
+                      {v.id !== loaded.id && (
+                        <span className="flex gap-1"><Button onClick={() => view(v.id)}>View</Button><Button onClick={() => rollback(v.id)}>Roll back</Button></span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
     </div>

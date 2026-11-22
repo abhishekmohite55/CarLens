@@ -63,7 +63,7 @@ export function Users() {
 
   return (
     <div>
-      <h1 className="mb-4 text-xl font-semibold">Users & requests</h1>
+      <h1 className="mb-6 font-display text-3xl font-light tracking-tight text-ink">Users & requests</h1>
       <div className="mb-4 flex flex-wrap gap-2">
         {FILTERS.map((f) => (
           <button key={f || "all"} onClick={() => setStatus(f)}
