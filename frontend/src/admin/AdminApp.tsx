@@ -59,7 +59,6 @@ export function AdminApp() {
         </div>
       </header>
       <main className="mx-auto max-w-[1440px] px-4 pb-10 pt-3 sm:px-6">
-        <HealthBanner />
         <Routes>
           <Route index element={<Navigate to="dashboard" replace />} />
           {SECTIONS.map((s) => (
@@ -156,7 +155,7 @@ type Health = { status: "ok" | "degraded"; version: string; problems: { level: "
 
 /** Step 9.3: what the admin must know (database newer than the code, failed migration, maintenance left on, S3).
  * Asked on load and every minute; shown on every admin page. Says nothing when all is well. */
-function HealthBanner() {
+export function HealthBanner() {
   const [health, setHealth] = useState<Health | null>(null);
   const [unreachable, setUnreachable] = useState(false);
   const [checkedAt, setCheckedAt] = useState<Date | null>(null);

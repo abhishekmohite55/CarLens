@@ -93,6 +93,14 @@
   }
 }
 
+/* Hide the browser's page-level scrollbar on all admin pages (layout shift fix). */
+html {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
 /* Phones (owner, 12 Nov): a table wider than the screen scrolls sideways inside itself instead of widening the page. */
 @media (max-width: 767px) {
   main table {
