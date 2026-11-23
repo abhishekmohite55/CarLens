@@ -6,10 +6,10 @@ type User = {
   id: number; email: string; role: string; status: string; tokens: number; has_password: boolean; google: boolean;
   locked: boolean; runs: number; sessions: number; created_at: string; last_login_at: string | null;
 };
-const FILTERS = ["pending", "approved", "rejected", ""] as const;
+const FILTERS = ["", "approved", "rejected", "pending"] as const;
 
 export function Users() {
-  const [status, setStatus] = useState<(typeof FILTERS)[number]>("pending");
+  const [status, setStatus] = useState<(typeof FILTERS)[number]>("");
   const load = useCallback(() => api<{ users: User[] }>(`/api/admin/users${status ? `?status=${status}` : ""}`), [status]);
   const { data, error, act } = useLoad(load);
   const post = (path: string, body?: unknown) => api(path, { method: "POST", body });
@@ -63,14 +63,12 @@ export function Users() {
 
   return (
     <div>
-      <h1 className="mb-4 text-xl font-semibold">Users & requests</h1>
-      <div className="mb-4 flex flex-wrap gap-2">
-        {FILTERS.map((f) => (
-          <button key={f || "all"} onClick={() => setStatus(f)}
-            className={`rounded px-3 py-1 text-sm ${status === f ? "bg-neutral-700 text-white" : "bg-neutral-900 text-neutral-400"}`}>
-            {f || "all"}
-          </button>
-        ))}
+      <div className="mb-6 flex items-baseline justify-between">
+        <h1 className="font-display text-3xl font-light tracking-tight text-ink">Users & requests</h1>
+        <select value={status} onChange={(e) => setStatus(e.target.value as typeof status)}
+          className="rounded bg-neutral-900 px-3 py-1 text-sm text-neutral-300 outline-none">
+          {FILTERS.map((f) => <option key={f || "all"} value={f}>{f || "all"}</option>)}
+        </select>
       </div>
       {error && <p className="mb-3 text-sm text-red-400">{error}</p>}
       <table className="w-full">

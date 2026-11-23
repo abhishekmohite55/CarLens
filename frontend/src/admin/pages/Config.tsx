@@ -120,7 +120,10 @@ export function Config() {
     setDraft(structuredClone(data.data));
     setShown((n) => n + 1);
     setProblems([]);
-    setVersions(null);
+    // Load versions independently; a failure only leaves the list empty.
+    api<{ versions: VersionRow[] }>("/api/admin/config/versions")
+      .then((r) => setVersions(r.versions))
+      .catch(() => setVersions([]));
   }
   useEffect(() => {
     load().catch((e) => setMessage(e.message));
@@ -157,74 +160,101 @@ export function Config() {
   const sections = [...SECTIONS.filter((s) => s in draft), ...Object.keys(draft).filter((s) => !SECTIONS.includes(s))];
   return (
     <div>
-      <div className="mb-4 flex flex-wrap items-baseline justify-between gap-2">
-        <h1 className="text-xl font-semibold">Config</h1>
-        <span className="text-xs text-neutral-500">
-          Active: version {loaded.id}, {when(loaded.saved_at)}{loaded.saved_by ? ` by ${loaded.saved_by}` : ""}{loaded.note ? ` · ${loaded.note}` : ""}
+      <div className="mb-6 flex flex-wrap items-baseline justify-between gap-3">
+        <h1 className="font-display text-3xl font-light tracking-tight text-ink">Config</h1>
+        <span className="flex items-center gap-1.5 rounded-full bg-green-900/50 px-3 py-1 text-xs text-green-300">
+          <span className="h-1.5 w-1.5 rounded-full bg-green-400" aria-hidden="true" />
+          Active: v{loaded.id} · {when(loaded.saved_at)}{loaded.saved_by ? ` · ${loaded.saved_by}` : ""}{loaded.note ? ` · ${loaded.note}` : ""}
         </span>
       </div>
-      <div className="flex flex-col gap-4 md:flex-row md:gap-6">
-        <ul className="no-scrollbar -mx-4 flex shrink-0 gap-1 overflow-x-auto px-4 md:mx-0 md:block md:w-36 md:space-y-1 md:overflow-visible md:px-0">
-          {sections.map((s) => {
-            const changed = JSON.stringify(draft[s]) !== JSON.stringify(loaded.data[s]);
-            const hasProblem = problems.some((p) => p.field.startsWith(`${s}.`) || p.field === s);
-            return (
-              <li key={s}>
-                <button onClick={() => setSection(s)}
-                  className={`w-full whitespace-nowrap rounded px-3 py-1 text-left font-mono text-sm ${section === s ? "bg-neutral-800 text-white" : "text-neutral-400 hover:bg-neutral-900"}`}>
-                  {s}{changed && <span className="text-amber-400"> •</span>}{hasProblem && <span className="text-red-400"> !</span>}
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-        <div className="min-w-0 flex-1">
-          {READ_ONLY.includes(section) && <p className="mb-2 text-xs text-neutral-500">Read-only.</p>}
-          {Object.entries(fields).map(([name, value]) => (
-            <Field key={`${shown}.${section}.${name}`} path={`${section}.${name}`} name={name} value={value}
-              saved={loaded.data[section]?.[name]} options={loaded.options}
-              readOnly={READ_ONLY.includes(section)}
-              onChange={(changed) => setDraft({ ...draft, [section]: { ...draft[section], [name]: changed } })} />
-          ))}
+
+      {/* Settings card */}
+      <div className="mb-6 overflow-hidden rounded-2xl bg-card shadow-card">
+        <div className="flex flex-col gap-4 p-4 md:flex-row md:gap-6 md:p-6">
+          <ul className="no-scrollbar -mx-4 flex shrink-0 gap-1 overflow-x-auto px-4 md:mx-0 md:block md:w-36 md:space-y-1 md:overflow-visible md:px-0">
+            {sections.map((s) => {
+              const changed = JSON.stringify(draft[s]) !== JSON.stringify(loaded.data[s]);
+              const hasProblem = problems.some((p) => p.field.startsWith(`${s}.`) || p.field === s);
+              return (
+                <li key={s}>
+                  <button onClick={() => setSection(s)}
+                    className={`w-full whitespace-nowrap rounded px-3 py-1 text-left font-mono text-sm transition-colors ${section === s ? "bg-neutral-800 text-white" : "text-neutral-400 hover:bg-neutral-900 hover:text-neutral-200"}`}>
+                    {s}{changed && <span className="text-amber-400"> •</span>}{hasProblem && <span className="text-red-400"> !</span>}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+          <div className="min-w-0 flex-1">
+            {READ_ONLY.includes(section) && <p className="mb-2 text-xs text-neutral-500">Read-only.</p>}
+            {Object.entries(fields).map(([name, value]) => (
+              <Field key={`${shown}.${section}.${name}`} path={`${section}.${name}`} name={name} value={value}
+                saved={loaded.data[section]?.[name]} options={loaded.options}
+                readOnly={READ_ONLY.includes(section)}
+                onChange={(changed) => setDraft({ ...draft, [section]: { ...draft[section], [name]: changed } })} />
+            ))}
+          </div>
+        </div>
+        <div className="border-t border-neutral-800 px-4 py-3 md:px-6">
+          {problems.length > 0 && (
+            <ul className="mb-2 text-sm text-red-400">
+              {problems.map((p, i) => <li key={i}><span className="font-mono">{p.field}</span>: {p.message}</li>)}
+            </ul>
+          )}
+          <div className="flex flex-wrap items-center gap-2">
+            <input className={`${input} w-72 max-w-full`} placeholder="Note for this version (optional)" value={note} onChange={(e) => setNote(e.target.value)} />
+            <Button kind="primary" disabled={!dirty} onClick={save}>Save as new version</Button>
+            <Button disabled={!dirty} onClick={() => { setDraft(structuredClone(loaded.data)); setShown((n) => n + 1); setProblems([]); setMessage(""); }}>Discard</Button>
+            <span className="flex-1 text-sm text-neutral-400">{message}</span>
+            <Button onClick={importFile}>Import config.yaml</Button>
+          </div>
         </div>
       </div>
 
-      <div className="sticky bottom-0 mt-6 border-t border-neutral-800 bg-neutral-950 py-3">
-        {problems.length > 0 && (
-          <ul className="mb-2 text-sm text-red-400">
-            {problems.map((p, i) => <li key={i}><span className="font-mono">{p.field}</span>: {p.message}</li>)}
-          </ul>
-        )}
-        <div className="flex flex-wrap items-center gap-2">
-          <input className={`${input} w-72 max-w-full`} placeholder="Note for this version (optional)" value={note} onChange={(e) => setNote(e.target.value)} />
-          <Button kind="primary" disabled={!dirty} onClick={save}>Save as new version</Button>
-          <Button disabled={!dirty} onClick={() => { setDraft(structuredClone(loaded.data)); setShown((n) => n + 1); setProblems([]); setMessage(""); }}>Discard</Button>
-          <span className="flex-1 text-sm text-neutral-400">{message}</span>
-          <Button onClick={async () => setVersions(versions ? null : (await api<{ versions: VersionRow[] }>("/api/admin/config/versions")).versions)}>
-            {versions ? "Hide versions" : "Versions"}
-          </Button>
-          <Button onClick={importFile}>Import config.yaml</Button>
-        </div>
-        {versions && (
-          <table className="mt-3 w-full text-sm">
+      {/* Version list card */}
+      {versions !== null && (
+        <div className="rounded-2xl bg-card shadow-card">
+          <div className="border-b border-neutral-800 px-4 py-3 md:px-6">
+            <h2 className="text-sm font-semibold text-neutral-300">Version history</h2>
+          </div>
+          <table className="w-full text-sm">
             <tbody>
-              {versions.map((v) => (
-                <tr key={v.id} className="border-t border-neutral-900">
-                  <td className="py-1 pr-4">v{v.id}{v.id === loaded.id && <span className="ml-2 text-xs text-green-400">active</span>}</td>
-                  <td className="py-1 pr-4 text-neutral-400">{when(v.saved_at)}</td>
-                  <td className="py-1 pr-4 text-neutral-400">{v.saved_by ?? "seed"}</td>
-                  <td className="py-1 pr-4 text-neutral-400">{v.note}</td>
-                  <td className="py-1">
+              {versions.length === 0 ? (
+                <tr><td className="px-4 py-3 text-neutral-500">No versions yet.</td></tr>
+              ) : versions.map((v) => (
+                <tr key={v.id} className="border-t border-neutral-900 first:border-0">
+                  <td className="py-2 pl-4 pr-4">v{v.id}{v.id === loaded.id && <span className="ml-2 text-xs text-green-400">active</span>}</td>
+                  <td className="py-2 pr-4 text-neutral-400">{when(v.saved_at)}</td>
+                  <td className="py-2 pr-4 text-neutral-400">{v.saved_by ?? "seed"}</td>
+                  <td className="py-2 pr-4 text-neutral-400">{v.note}</td>
+                  <td className="py-2 pr-4">
                     {v.id !== loaded.id && (
-                      <span className="flex gap-1"><Button onClick={() => view(v.id)}>View</Button><Button onClick={() => rollback(v.id)}>Roll back</Button></span>
+                      <span className="flex gap-1">
+                        <button onClick={() => view(v.id)} title="View this version"
+                          className="rounded p-1.5 text-neutral-400 transition-colors hover:bg-neutral-800 hover:text-neutral-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent">
+                          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                            <ellipse cx="8" cy="8" rx="6.5" ry="4.5" />
+                            <circle cx="8" cy="8" r="1.75" fill="currentColor" stroke="none" />
+                          </svg>
+                          <span className="sr-only">View</span>
+                        </button>
+                        <button onClick={() => rollback(v.id)} title="Roll back to this version"
+                          className="rounded p-1.5 text-neutral-400 transition-colors hover:bg-neutral-800 hover:text-neutral-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent">
+                          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                            <path d="M2.5 8a5.5 5.5 0 1 0 1.1-3.3" />
+                            <polyline points="2.5 2.5 2.5 6 6 6" />
+                          </svg>
+                          <span className="sr-only">Roll back</span>
+                        </button>
+                      </span>
                     )}
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }

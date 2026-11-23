@@ -5,7 +5,7 @@
   font-family: "Geist";
   src: url("./fonts/Geist-Variable.woff2") format("woff2");
   font-weight: 100 900;
-  font-display: block; /* no flash of a fallback font; the file is preloaded in index.html */
+  font-display: swap; /* preloaded in index.html so FOUT is minimal; swap unblocks text on slow connections */
 }
 
 @theme {
@@ -152,3 +152,10 @@
   font-size: clamp(0.75rem, 0.7292rem + 0.0926vw, 0.8125rem);
   line-height: 1.4;
 }
+
+/* Safe-area padding for notched phones */
+@utility pb-safe { padding-bottom: env(safe-area-inset-bottom, 0px); }
+@utility pt-safe  { padding-top:    env(safe-area-inset-top,    0px); }
+
+/* Tabular digits: use in prices, timers and counters so digits don't jitter */
+@utility tabular { font-variant-numeric: tabular-nums; }

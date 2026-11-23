@@ -6,6 +6,7 @@ import { useCallback, useMemo, useState, type CSSProperties, type ReactNode } fr
 import { Link } from "react-router";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api } from "../../shared/api";
+import { HealthBanner } from "../AdminApp";
 import { useTheme, type Theme } from "../theme";
 import { useLoad, when } from "../ui";
 
@@ -415,6 +416,7 @@ export function Dashboard() {
 
   return (
     <div className="mx-auto max-w-[1320px]">
+      <HealthBanner />
       <header className="mb-6 flex flex-wrap items-end justify-between gap-4">
         <h1 className="font-display text-4xl font-light tracking-tighter text-ink sm:text-5xl">Dashboard</h1>
         <div className="flex flex-wrap items-center gap-2">

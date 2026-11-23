@@ -73,6 +73,16 @@ function Panel({ runId, file, user, status, live, onClose }: Props) {
   const [openSeq, setOpenSeq] = useState<number | null>(null);
   const [follow, setFollow] = useState(true);
   const list = useRef<HTMLDivElement>(null);
+  const pillsRef = useRef<HTMLDivElement>(null);
+  const [pillCanLeft, setPillCanLeft] = useState(false);
+  const [pillCanRight, setPillCanRight] = useState(false);
+
+  function onPillScroll() {
+    const el = pillsRef.current;
+    if (!el) return;
+    setPillCanLeft(el.scrollLeft > 4);
+    setPillCanRight(el.scrollLeft < el.scrollWidth - el.clientWidth - 4);
+  }
   const ended = events.some((e) => e.type === "run_done");
 
   const load = useCallback(async (signal?: AbortSignal) => {
@@ -129,6 +139,10 @@ function Panel({ runId, file, user, status, live, onClose }: Props) {
   }, [onClose]);
 
   const nodes = useMemo(() => [...new Set(events.map((e) => e.node))], [events]);
+  useEffect(() => {
+    const el = pillsRef.current;
+    if (el) setPillCanRight(el.scrollLeft < el.scrollWidth - el.clientWidth - 4);
+  }, [nodes]);
   const shown = useMemo(() => {
     const q = search.trim().toLowerCase();
     return events.filter((e) => (!node || e.node === node)
@@ -190,13 +204,27 @@ function Panel({ runId, file, user, status, live, onClose }: Props) {
       </header>
 
       <div className="space-y-2 border-b border-line px-5 pb-3">
-        <div className="no-scrollbar -mx-5 flex gap-1 overflow-x-auto px-5">
-          {["", ...nodes].map((n) => (
-            <button key={n || "all"} onClick={() => setNode(n)}
-              className={`whitespace-nowrap rounded-full px-3 py-1 text-xs transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent ${node === n ? "bg-ink text-page" : "bg-inset text-ink-2 hover:text-ink"}`}>
-              {n || "All steps"}
+        <div className="relative -mx-5">
+          {pillCanLeft && (
+            <button onClick={() => pillsRef.current?.scrollBy({ left: -120, behavior: "smooth" })}
+              className="absolute inset-y-0 left-0 z-10 flex items-center px-2 bg-gradient-to-r from-card via-card/80 to-transparent focus:outline-none" aria-label="Scroll left">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className="text-ink-2" aria-hidden="true"><path d="M10 3l-5 5 5 5" /></svg>
             </button>
-          ))}
+          )}
+          <div ref={pillsRef} onScroll={onPillScroll} className="no-scrollbar flex gap-1 overflow-x-auto px-5">
+            {["", ...nodes].map((n) => (
+              <button key={n || "all"} onClick={() => setNode(n)}
+                className={`whitespace-nowrap rounded-full px-3 py-1 text-xs transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent ${node === n ? "bg-ink text-page" : "bg-inset text-ink-2 hover:text-ink"}`}>
+                {n || "All steps"}
+              </button>
+            ))}
+          </div>
+          {pillCanRight && (
+            <button onClick={() => pillsRef.current?.scrollBy({ left: 120, behavior: "smooth" })}
+              className="absolute inset-y-0 right-0 z-10 flex items-center px-2 bg-gradient-to-l from-card via-card/80 to-transparent focus:outline-none" aria-label="Scroll right">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className="text-ink-2" aria-hidden="true"><path d="M6 3l5 5-5 5" /></svg>
+            </button>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search the log"
