@@ -64,50 +64,87 @@ export function Users() {
   return (
     <div>
       <div className="mb-6 flex items-baseline justify-between">
-        <h1 className="font-display text-3xl font-light tracking-tight text-ink">Users & requests</h1>
+        <h1 className="font-display text-xl sm:text-3xl font-light tracking-tight text-ink">Users & requests</h1>
         <select value={status} onChange={(e) => setStatus(e.target.value as typeof status)}
           className="rounded bg-neutral-900 px-3 py-1 text-sm text-neutral-300 outline-none">
           {FILTERS.map((f) => <option key={f || "all"} value={f}>{f || "all"}</option>)}
         </select>
       </div>
       {error && <p className="mb-3 text-sm text-red-400">{error}</p>}
-      <table className="w-full">
-        <thead>
-          <tr>{["Email", "Sign-in", "Status", "Tokens", "Runs", "Last sign-in", ""].map((h) => <th key={h} className={th}>{h}</th>)}</tr>
-        </thead>
-        <tbody>
-          {data?.users.map((u) => (
-            <tr key={u.id}>
-              <td className={td}>{u.email}{u.locked && <span className="ml-2 text-xs text-amber-400">locked</span>}</td>
-              <td className={td}>{[u.google && "Google", u.has_password && "password"].filter(Boolean).join(" + ")}</td>
-              <td className={td}><Badge text={u.role === "admin" ? "admin" : u.status} /></td>
-              <td className={td}>
-                {u.role === "admin" ? "—" : (
-                  <span className="flex items-center gap-1">
-                    <Button onClick={() => addTokens(u, -1)} disabled={(pending[u.id] ?? u.tokens) === 0}>−</Button>
-                    <button onClick={() => setTokens(u)} className="w-8 text-center hover:underline">{pending[u.id] ?? u.tokens}</button>
-                    <Button onClick={() => addTokens(u, 1)}>+</Button>
-                  </span>
-                )}
-              </td>
-              <td className={td}>{u.runs}</td>
-              <td className={td}>{when(u.last_login_at)}</td>
-              <td className={td}>
-                {u.role !== "admin" && (
-                  <span className="flex flex-wrap gap-1">
-                    {u.status !== "approved" && <Button kind="primary" onClick={() => act(() => post(`/api/admin/users/${u.id}/approve`))}>Approve</Button>}
-                    {u.status !== "rejected" && <Button onClick={() => act(() => post(`/api/admin/users/${u.id}/reject`))}>Reject</Button>}
-                    <Button onClick={() => resetPassword(u)}>Reset password</Button>
-                    {u.sessions > 0 && <Button onClick={() => act(() => post(`/api/admin/users/${u.id}/signout`))}>Sign out</Button>}
-                    {u.runs === 0 && <Button kind="danger" onClick={() => remove(u)}>Delete</Button>}
-                  </span>
-                )}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      {data && data.users.length === 0 && <p className="mt-4 text-sm text-neutral-500">Nobody here.</p>}
+      {/* Mobile cards */}
+      <div className="sm:hidden space-y-2">
+        {data?.users.map((u) => (
+          <div key={u.id} className="rounded-2xl bg-card px-4 py-3 shadow-card">
+            <div className="flex items-start justify-between gap-2">
+              <span className="min-w-0 truncate text-sm text-neutral-200">
+                {u.email}{u.locked && <span className="ml-1.5 text-xs text-amber-400">locked</span>}
+              </span>
+              <Badge text={u.role === "admin" ? "admin" : u.status} />
+            </div>
+            <div className="mt-0.5 text-xs text-neutral-500">
+              {u.runs} run{u.runs !== 1 ? "s" : ""} · last {when(u.last_login_at)}
+            </div>
+            {u.role !== "admin" && (
+              <div className="mt-2 flex items-center gap-1">
+                <span className="text-xs text-neutral-500">tokens</span>
+                <Button onClick={() => addTokens(u, -1)} disabled={(pending[u.id] ?? u.tokens) === 0}>−</Button>
+                <button onClick={() => setTokens(u)} className="w-8 text-center text-sm hover:underline">{pending[u.id] ?? u.tokens}</button>
+                <Button onClick={() => addTokens(u, 1)}>+</Button>
+              </div>
+            )}
+            {u.role !== "admin" && (
+              <div className="mt-2 flex flex-wrap gap-1">
+                {u.status !== "approved" && <Button kind="primary" onClick={() => act(() => post(`/api/admin/users/${u.id}/approve`))}>Approve</Button>}
+                {u.status !== "rejected" && <Button onClick={() => act(() => post(`/api/admin/users/${u.id}/reject`))}>Reject</Button>}
+                <Button onClick={() => resetPassword(u)}>Reset password</Button>
+                {u.sessions > 0 && <Button onClick={() => act(() => post(`/api/admin/users/${u.id}/signout`))}>Sign out</Button>}
+                {u.runs === 0 && <Button kind="danger" onClick={() => remove(u)}>Delete</Button>}
+              </div>
+            )}
+          </div>
+        ))}
+        {data && data.users.length === 0 && <p className="mt-4 text-sm text-neutral-500">Nobody here.</p>}
+      </div>
+      {/* Desktop table */}
+      <div className="hidden sm:block">
+        <table className="w-full">
+          <thead>
+            <tr>{["Email", "Sign-in", "Status", "Tokens", "Runs", "Last sign-in", ""].map((h) => <th key={h} className={th}>{h}</th>)}</tr>
+          </thead>
+          <tbody>
+            {data?.users.map((u) => (
+              <tr key={u.id}>
+                <td className={td}>{u.email}{u.locked && <span className="ml-2 text-xs text-amber-400">locked</span>}</td>
+                <td className={td}>{[u.google && "Google", u.has_password && "password"].filter(Boolean).join(" + ")}</td>
+                <td className={td}><Badge text={u.role === "admin" ? "admin" : u.status} /></td>
+                <td className={td}>
+                  {u.role === "admin" ? "—" : (
+                    <span className="flex items-center gap-1">
+                      <Button onClick={() => addTokens(u, -1)} disabled={(pending[u.id] ?? u.tokens) === 0}>−</Button>
+                      <button onClick={() => setTokens(u)} className="w-8 text-center hover:underline">{pending[u.id] ?? u.tokens}</button>
+                      <Button onClick={() => addTokens(u, 1)}>+</Button>
+                    </span>
+                  )}
+                </td>
+                <td className={td}>{u.runs}</td>
+                <td className={td}>{when(u.last_login_at)}</td>
+                <td className={td}>
+                  {u.role !== "admin" && (
+                    <span className="flex flex-wrap gap-1">
+                      {u.status !== "approved" && <Button kind="primary" onClick={() => act(() => post(`/api/admin/users/${u.id}/approve`))}>Approve</Button>}
+                      {u.status !== "rejected" && <Button onClick={() => act(() => post(`/api/admin/users/${u.id}/reject`))}>Reject</Button>}
+                      <Button onClick={() => resetPassword(u)}>Reset password</Button>
+                      {u.sessions > 0 && <Button onClick={() => act(() => post(`/api/admin/users/${u.id}/signout`))}>Sign out</Button>}
+                      {u.runs === 0 && <Button kind="danger" onClick={() => remove(u)}>Delete</Button>}
+                    </span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {data && data.users.length === 0 && <p className="mt-4 text-sm text-neutral-500">Nobody here.</p>}
+      </div>
     </div>
   );
 }

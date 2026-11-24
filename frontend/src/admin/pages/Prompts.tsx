@@ -52,9 +52,16 @@ export function Prompts() {
 
   return (
     <div>
-      <h1 className="mb-6 font-display text-3xl font-light tracking-tight text-ink">Prompts</h1>
+      <h1 className="mb-6 font-display text-xl sm:text-3xl font-light tracking-tight text-ink">Prompts</h1>
       <div className="flex flex-col gap-4 md:flex-row md:gap-6">
-        <ul className="no-scrollbar -mx-4 flex shrink-0 gap-1 overflow-x-auto px-4 md:mx-0 md:block md:w-56 md:space-y-1 md:overflow-visible md:px-0">
+        <select
+          className="block md:hidden rounded border border-neutral-700 bg-neutral-900 px-2 py-1.5 text-sm text-neutral-200"
+          value={prompt?.name ?? ""}
+          onChange={(e) => { if (e.target.value && (!dirty || window.confirm("Drop your unsaved changes?"))) open(e.target.value); }}
+        >
+          {list.map((p) => <option key={p.name} value={p.name}>{p.name} v{p.number}</option>)}
+        </select>
+        <ul className="hidden md:block shrink-0 md:w-56 md:space-y-1">
           {list.map((p) => (
             <li key={p.name}>
               <button onClick={() => (!dirty || window.confirm("Drop your unsaved changes?")) && open(p.name)}
@@ -81,6 +88,26 @@ export function Prompts() {
               <span className="flex-1 text-sm text-neutral-400">{message}</span>
               <Button onClick={importFile}>Import file</Button>
             </div>
+            {/* Mobile version list */}
+            <div className="sm:hidden mt-4 divide-y divide-neutral-900">
+              {prompt.versions.map((v, i) => (
+                <div key={v.id} className="flex items-center justify-between gap-2 py-2 text-sm">
+                  <div>
+                    <span className="text-neutral-200">v{v.number}</span>
+                    {i === 0 && <span className="ml-1.5 text-xs text-green-400">active</span>}
+                    <span className="ml-2 text-xs text-neutral-500">{when(v.saved_at)}</span>
+                  </div>
+                  {i > 0 && (
+                    <span className="flex shrink-0 gap-1">
+                      <Button onClick={() => open(prompt.name, v.id)}>View</Button>
+                      <Button onClick={() => rollback(v)}>Roll back</Button>
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+            {/* Desktop version table */}
+            <div className="hidden sm:block">
             <table className="mt-4 w-full text-sm">
               <tbody>
                 {prompt.versions.map((v, i) => (
@@ -98,6 +125,7 @@ export function Prompts() {
                 ))}
               </tbody>
             </table>
+            </div>
           </div>
         )}
       </div>

@@ -211,7 +211,7 @@ export function Runs() {
   return (
     <div className={logRun ? "xl:pr-[33rem]" : ""}>
       <div className="mb-6 flex items-center gap-3">
-        <h1 className="font-display text-3xl font-light tracking-tight text-ink">Runs</h1>
+        <h1 className="font-display text-xl sm:text-3xl font-light tracking-tight text-ink">Runs</h1>
         <div className="ml-auto flex items-center gap-2">
           <StatusSelect value={status} onChange={setStatus} />
           <a href="/inspector" target="_blank" rel="noreferrer"
@@ -225,82 +225,144 @@ export function Runs() {
         </div>
       </div>
       {error && <p className="mb-3 text-sm text-red-400">{error}</p>}
-      <table className="w-full">
-        <thead>
-          <tr>
-            {["Started", "Run", "User", "File"].map((h) => <th key={h} className={th}>{h}</th>)}
-            <th className={`${th} text-center`}>Status</th>
-            <th className={th} />
-          </tr>
-        </thead>
-        <tbody>
-          {data?.runs.map((r) => (
-            <Fragment key={r.run_id}>
-              <tr className={eventsOf === r.run_id ? "bg-inset" : ""}>
-                <td className={td}>{when(r.created_at)}</td>
-                <td className={`${td} font-mono text-xs`}>{r.run_id}</td>
-                <td className={td}>{r.user ?? "—"}</td>
-                <td className={td}>{r.file}</td>
-                <td className="border-b border-neutral-900 px-3 py-2 text-sm align-middle">
-                  <div className="flex flex-col items-center gap-0.5">
-                    <StatusChip status={r.status} />
-                    {where(r) && <span className="text-xs text-neutral-500">{where(r)}</span>}
+
+      {/* Mobile cards */}
+      <div className="sm:hidden space-y-2">
+        {data?.runs.map((r) => (
+          <div key={r.run_id} className="rounded-2xl bg-card px-4 py-3 shadow-card">
+            <div className="flex items-center gap-2">
+              <StatusChip status={r.status} />
+              <span className="font-mono text-xs text-neutral-200">{r.run_id.slice(0, 8)}</span>
+              <span className="ml-auto shrink-0 text-xs text-neutral-500">{when(r.created_at)}</span>
+            </div>
+            <div className="mt-0.5 text-xs text-neutral-500">
+              {r.user ?? "—"}{r.file ? ` · ${r.file}` : ""}
+              {where(r) && <span className="ml-1">{where(r)}</span>}
+            </div>
+            <div className="mt-2 flex items-center gap-0.5">
+              <ActionBtn onClick={() => toggle(r.run_id)} label={open === r.run_id ? "Hide steps" : "Show steps"} active={open === r.run_id}>
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M2 5h12M2 8h12M2 11h7" />
+                </svg>
+              </ActionBtn>
+              <ActionBtn onClick={() => setEventsOf(eventsOf === r.run_id ? null : r.run_id)} label={eventsOf === r.run_id ? "Hide log" : "Open log"} active={eventsOf === r.run_id}>
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <rect x="2" y="3" width="12" height="10" rx="1.5" />
+                  <path d="M5 7h6M5 10h4" />
+                </svg>
+              </ActionBtn>
+              {ACTIVE.includes(r.status) && (
+                <ActionBtn onClick={() => markFailed(r)} label="Mark as failed">
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M8 2.5L14 13H2L8 2.5z" />
+                    <path d="M8 7v2.5" />
+                    <circle cx="8" cy="11.5" r="0.75" fill="currentColor" stroke="none" />
+                  </svg>
+                </ActionBtn>
+              )}
+              <ActionBtn onClick={() => remove(r)} label="Delete run data" danger>
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M3 4h10M6 4V2.5h4V4M5.5 4l.5 9h4l.5-9" />
+                </svg>
+              </ActionBtn>
+            </div>
+            {open === r.run_id && steps.length > 0 && (
+              <div className="mt-2 space-y-1 border-t border-neutral-900 pt-2">
+                {r.error && <p className="text-xs text-red-400">{r.error}</p>}
+                {steps.map((s, i) => (
+                  <div key={i} className="flex items-center gap-2 text-xs">
+                    <StatusChip status={s.status} />
+                    <span className="text-neutral-200">{s.node}</span>
+                    <span className="text-neutral-500">{s.seconds !== null ? `${s.seconds}s` : "…"}</span>
+                    {(s.error ?? s.summary) && <span className="min-w-0 truncate text-neutral-400">{s.error ?? s.summary}</span>}
                   </div>
-                </td>
-                <td className="border-b border-neutral-900 px-3 py-2 text-sm align-middle">
-                  <span className="flex items-center gap-0.5">
-                    <ActionBtn onClick={() => toggle(r.run_id)} label={open === r.run_id ? "Hide steps" : "Show steps"} active={open === r.run_id}>
-                      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                        <path d="M2 5h12M2 8h12M2 11h7" />
-                      </svg>
-                    </ActionBtn>
-                    <ActionBtn onClick={() => setEventsOf(eventsOf === r.run_id ? null : r.run_id)} label={eventsOf === r.run_id ? "Hide log" : "Open log"} active={eventsOf === r.run_id}>
-                      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                        <rect x="2" y="3" width="12" height="10" rx="1.5" />
-                        <path d="M5 7h6M5 10h4" />
-                      </svg>
-                    </ActionBtn>
-                    {ACTIVE.includes(r.status) && (
-                      <ActionBtn onClick={() => markFailed(r)} label="Mark as failed">
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+        {data && data.runs.length === 0 && <p className="mt-4 text-sm text-neutral-500">No runs.</p>}
+      </div>
+
+      {/* Desktop table */}
+      <div className="hidden sm:block">
+        <table className="w-full">
+          <thead>
+            <tr>
+              {["Started", "Run", "User", "File"].map((h) => <th key={h} className={th}>{h}</th>)}
+              <th className={`${th} text-center`}>Status</th>
+              <th className={th} />
+            </tr>
+          </thead>
+          <tbody>
+            {data?.runs.map((r) => (
+              <Fragment key={r.run_id}>
+                <tr className={eventsOf === r.run_id ? "bg-inset" : ""}>
+                  <td className={td}>{when(r.created_at)}</td>
+                  <td className={`${td} font-mono text-xs`}>{r.run_id}</td>
+                  <td className={td}>{r.user ?? "—"}</td>
+                  <td className={td}>{r.file}</td>
+                  <td className="border-b border-neutral-900 px-3 py-2 text-sm align-middle">
+                    <div className="flex flex-col items-center gap-0.5">
+                      <StatusChip status={r.status} />
+                      {where(r) && <span className="text-xs text-neutral-500">{where(r)}</span>}
+                    </div>
+                  </td>
+                  <td className="border-b border-neutral-900 px-3 py-2 text-sm align-middle">
+                    <span className="flex items-center gap-0.5">
+                      <ActionBtn onClick={() => toggle(r.run_id)} label={open === r.run_id ? "Hide steps" : "Show steps"} active={open === r.run_id}>
                         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                          <path d="M8 2.5L14 13H2L8 2.5z" />
-                          <path d="M8 7v2.5" />
-                          <circle cx="8" cy="11.5" r="0.75" fill="currentColor" stroke="none" />
+                          <path d="M2 5h12M2 8h12M2 11h7" />
                         </svg>
                       </ActionBtn>
-                    )}
-                    <ActionBtn onClick={() => remove(r)} label="Delete run data" danger>
-                      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                        <path d="M3 4h10M6 4V2.5h4V4M5.5 4l.5 9h4l.5-9" />
-                      </svg>
-                    </ActionBtn>
-                  </span>
-                </td>
-              </tr>
-              {open === r.run_id && (
-                <tr>
-                  <td colSpan={6} className="bg-neutral-900 px-6 py-3">
-                    {r.error && <p className="mb-2 text-sm text-red-400">{r.error}</p>}
-                    <table className="w-full text-xs">
-                      <tbody>
-                        {steps.map((s, i) => (
-                          <tr key={i}>
-                            <td className="py-1 pr-4">{s.node}</td>
-                            <td className="py-1 pr-4"><StatusChip status={s.status} /></td>
-                            <td className="py-1 pr-4">{s.seconds !== null ? `${s.seconds} s` : "…"}</td>
-                            <td className="py-1 text-neutral-400">{s.error ?? s.summary}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                      <ActionBtn onClick={() => setEventsOf(eventsOf === r.run_id ? null : r.run_id)} label={eventsOf === r.run_id ? "Hide log" : "Open log"} active={eventsOf === r.run_id}>
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                          <rect x="2" y="3" width="12" height="10" rx="1.5" />
+                          <path d="M5 7h6M5 10h4" />
+                        </svg>
+                      </ActionBtn>
+                      {ACTIVE.includes(r.status) && (
+                        <ActionBtn onClick={() => markFailed(r)} label="Mark as failed">
+                          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                            <path d="M8 2.5L14 13H2L8 2.5z" />
+                            <path d="M8 7v2.5" />
+                            <circle cx="8" cy="11.5" r="0.75" fill="currentColor" stroke="none" />
+                          </svg>
+                        </ActionBtn>
+                      )}
+                      <ActionBtn onClick={() => remove(r)} label="Delete run data" danger>
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                          <path d="M3 4h10M6 4V2.5h4V4M5.5 4l.5 9h4l.5-9" />
+                        </svg>
+                      </ActionBtn>
+                    </span>
                   </td>
                 </tr>
-              )}
-            </Fragment>
-          ))}
-        </tbody>
-      </table>
-      {data && data.runs.length === 0 && <p className="mt-4 text-sm text-neutral-500">No runs.</p>}
+                {open === r.run_id && (
+                  <tr>
+                    <td colSpan={6} className="bg-neutral-900 px-6 py-3">
+                      {r.error && <p className="mb-2 text-sm text-red-400">{r.error}</p>}
+                      <table className="w-full text-xs">
+                        <tbody>
+                          {steps.map((s, i) => (
+                            <tr key={i}>
+                              <td className="py-1 pr-4">{s.node}</td>
+                              <td className="py-1 pr-4"><StatusChip status={s.status} /></td>
+                              <td className="py-1 pr-4">{s.seconds !== null ? `${s.seconds} s` : "…"}</td>
+                              <td className="py-1 text-neutral-400">{s.error ?? s.summary}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
+            ))}
+          </tbody>
+        </table>
+        {data && data.runs.length === 0 && <p className="mt-4 text-sm text-neutral-500">No runs.</p>}
+      </div>
       {logRun && (
         <RunEvents key={logRun.run_id} runId={logRun.run_id} file={logRun.file} user={logRun.user} status={logRun.status}
           live={ACTIVE.includes(logRun.status)} onClose={closeLog} />
