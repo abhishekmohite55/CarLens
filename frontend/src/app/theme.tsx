@@ -19,7 +19,7 @@ export function ThemeToggle() {
   };
   return (
     <button onClick={flip} className="text-label rounded-full border border-line-strong px-4 py-2 text-ink-2 hover:text-ink">
-      {theme === "dark" ? "Light theme" : "Dark theme"}
+      {theme === "dark" ? "Light" : "Dark"}<span className="hidden sm:inline"> theme</span>
     </button>
   );
 }

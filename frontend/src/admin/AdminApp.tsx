@@ -46,7 +46,7 @@ export function AdminApp() {
         <div className="mx-auto flex max-w-[1440px] flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3 sm:px-6">
           <div className="flex items-center gap-2.5">
             <span className="grid h-8 w-8 place-items-center rounded-[10px] bg-ink font-display text-sm font-semibold text-page" aria-hidden="true">CL</span>
-            <span className="font-display text-lg font-medium tracking-tight">CarLens admin</span>
+            <span className="font-display text-lg font-medium tracking-tight">CarLens<span className="hidden sm:inline"> admin</span></span>
           </div>
           <div className="order-3 w-full xl:order-2 xl:flex xl:w-auto xl:flex-1 xl:justify-center">
             <NavCapsule />

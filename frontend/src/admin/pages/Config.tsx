@@ -158,20 +158,52 @@ export function Config() {
 
   const fields = draft[section] ?? {};
   const sections = [...SECTIONS.filter((s) => s in draft), ...Object.keys(draft).filter((s) => !SECTIONS.includes(s))];
+  const versionActions = (id: number) => (
+    <>
+      <button onClick={() => view(id)} title="View this version"
+        className="rounded p-1.5 text-neutral-400 transition-colors hover:bg-neutral-800 hover:text-neutral-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent">
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <ellipse cx="8" cy="8" rx="6.5" ry="4.5" />
+          <circle cx="8" cy="8" r="1.75" fill="currentColor" stroke="none" />
+        </svg>
+        <span className="sr-only">View</span>
+      </button>
+      <button onClick={() => rollback(id)} title="Roll back to this version"
+        className="rounded p-1.5 text-neutral-400 transition-colors hover:bg-neutral-800 hover:text-neutral-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent">
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M2.5 8a5.5 5.5 0 1 0 1.1-3.3" />
+          <polyline points="2.5 2.5 2.5 6 6 6" />
+        </svg>
+        <span className="sr-only">Roll back</span>
+      </button>
+    </>
+  );
+
   return (
     <div>
       <div className="mb-6 flex flex-wrap items-baseline justify-between gap-3">
-        <h1 className="font-display text-3xl font-light tracking-tight text-ink">Config</h1>
+        <h1 className="font-display text-xl sm:text-3xl font-light tracking-tight text-ink">Config</h1>
         <span className="flex items-center gap-1.5 rounded-full bg-green-900/50 px-3 py-1 text-xs text-green-300">
           <span className="h-1.5 w-1.5 rounded-full bg-green-400" aria-hidden="true" />
-          Active: v{loaded.id} · {when(loaded.saved_at)}{loaded.saved_by ? ` · ${loaded.saved_by}` : ""}{loaded.note ? ` · ${loaded.note}` : ""}
+          v{loaded.id} active<span className="hidden sm:inline"> · {when(loaded.saved_at)}{loaded.saved_by ? ` · ${loaded.saved_by}` : ""}{loaded.note ? ` · ${loaded.note}` : ""}</span>
         </span>
       </div>
 
       {/* Settings card */}
       <div className="mb-6 overflow-hidden rounded-2xl bg-card shadow-card">
         <div className="flex flex-col gap-4 p-4 md:flex-row md:gap-6 md:p-6">
-          <ul className="no-scrollbar -mx-4 flex shrink-0 gap-1 overflow-x-auto px-4 md:mx-0 md:block md:w-36 md:space-y-1 md:overflow-visible md:px-0">
+          <select
+            className="block md:hidden rounded border border-neutral-700 bg-neutral-900 px-2 py-1.5 text-sm text-neutral-200"
+            value={section}
+            onChange={(e) => setSection(e.target.value)}
+          >
+            {sections.map((s) => {
+              const changed = JSON.stringify(draft[s]) !== JSON.stringify(loaded.data[s]);
+              const hasProblem = problems.some((p) => p.field.startsWith(`${s}.`) || p.field === s);
+              return <option key={s} value={s}>{s}{changed ? " •" : ""}{hasProblem ? " !" : ""}</option>;
+            })}
+          </select>
+          <ul className="hidden md:block shrink-0 md:w-36 md:space-y-1">
             {sections.map((s) => {
               const changed = JSON.stringify(draft[s]) !== JSON.stringify(loaded.data[s]);
               const hasProblem = problems.some((p) => p.field.startsWith(`${s}.`) || p.field === s);
@@ -217,6 +249,27 @@ export function Config() {
           <div className="border-b border-neutral-800 px-4 py-3 md:px-6">
             <h2 className="text-sm font-semibold text-neutral-300">Version history</h2>
           </div>
+          {/* Mobile version list */}
+          <div className="sm:hidden divide-y divide-neutral-900">
+            {versions.length === 0 ? (
+              <p className="px-4 py-3 text-sm text-neutral-500">No versions yet.</p>
+            ) : versions.map((v) => (
+              <div key={v.id} className="flex items-center justify-between gap-2 px-4 py-2.5 text-sm">
+                <div>
+                  <span className="text-neutral-200">v{v.id}</span>
+                  {v.id === loaded.id && <span className="ml-1.5 text-xs text-green-400">active</span>}
+                  <span className="ml-2 text-xs text-neutral-500">{when(v.saved_at)}</span>
+                </div>
+                {v.id !== loaded.id && (
+                  <span className="flex shrink-0 gap-1">
+                    {versionActions(v.id)}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+          {/* Desktop version table */}
+          <div className="hidden sm:block">
           <table className="w-full text-sm">
             <tbody>
               {versions.length === 0 ? (
@@ -230,22 +283,7 @@ export function Config() {
                   <td className="py-2 pr-4">
                     {v.id !== loaded.id && (
                       <span className="flex gap-1">
-                        <button onClick={() => view(v.id)} title="View this version"
-                          className="rounded p-1.5 text-neutral-400 transition-colors hover:bg-neutral-800 hover:text-neutral-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent">
-                          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                            <ellipse cx="8" cy="8" rx="6.5" ry="4.5" />
-                            <circle cx="8" cy="8" r="1.75" fill="currentColor" stroke="none" />
-                          </svg>
-                          <span className="sr-only">View</span>
-                        </button>
-                        <button onClick={() => rollback(v.id)} title="Roll back to this version"
-                          className="rounded p-1.5 text-neutral-400 transition-colors hover:bg-neutral-800 hover:text-neutral-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent">
-                          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                            <path d="M2.5 8a5.5 5.5 0 1 0 1.1-3.3" />
-                            <polyline points="2.5 2.5 2.5 6 6 6" />
-                          </svg>
-                          <span className="sr-only">Roll back</span>
-                        </button>
+                        {versionActions(v.id)}
                       </span>
                     )}
                   </td>
@@ -253,6 +291,7 @@ export function Config() {
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       )}
     </div>

@@ -50,7 +50,17 @@ export function Tables() {
 
   return (
     <div className="flex flex-col gap-4 md:flex-row md:gap-6">
-      <ul className="no-scrollbar -mx-4 flex shrink-0 gap-1 overflow-x-auto px-4 md:mx-0 md:block md:w-52 md:space-y-1 md:overflow-visible md:px-0">
+      {/* Mobile table picker */}
+      <select
+        className="block md:hidden rounded border border-neutral-700 bg-neutral-900 px-2 py-1.5 text-sm text-neutral-200"
+        value={table ?? ""}
+        onChange={(e) => { if (e.target.value) open(e.target.value); else { setTable(null); setData(null); } }}
+      >
+        <option value="">select a table…</option>
+        {list?.tables.map((t) => <option key={t.name} value={t.name}>{t.name} ({t.rows})</option>)}
+      </select>
+      {/* Desktop table list */}
+      <ul className="hidden md:block shrink-0 md:w-52 md:space-y-1">
         {listError && <li className="text-sm text-red-400">{listError}</li>}
         {list?.tables.map((t) => (
           <li key={t.name}>

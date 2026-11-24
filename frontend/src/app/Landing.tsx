@@ -172,6 +172,15 @@ export function Landing() {
         listings; with fewer, the report says valuation unavailable instead of guessing. It is a demo, not a certified valuation.
       </Section>
 
+      <section className="mx-auto max-w-2xl px-4 py-16 text-center sm:px-8">
+        <h2 className="text-heading">Request access</h2>
+        <p className="text-body-l mx-auto mt-3 max-w-sm text-ink-2">The owner approves each request. Run your first inspection once approved.</p>
+        <div className="mt-7 flex flex-wrap justify-center gap-3">
+          <Link to="/request-access" className="text-label rounded-full bg-ink px-6 py-3.5 text-canvas shadow-lens">Request access</Link>
+          <Link to="/sign-in" className="text-label rounded-full bg-surface px-6 py-3.5 text-ink shadow-panel hover:bg-top">Sign in</Link>
+        </div>
+      </section>
+
       <Footer />
     </div>
   );
