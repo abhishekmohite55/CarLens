@@ -158,6 +158,27 @@ export function Config() {
 
   const fields = draft[section] ?? {};
   const sections = [...SECTIONS.filter((s) => s in draft), ...Object.keys(draft).filter((s) => !SECTIONS.includes(s))];
+  const versionActions = (id: number) => (
+    <>
+      <button onClick={() => view(id)} title="View this version"
+        className="rounded p-1.5 text-neutral-400 transition-colors hover:bg-neutral-800 hover:text-neutral-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent">
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <ellipse cx="8" cy="8" rx="6.5" ry="4.5" />
+          <circle cx="8" cy="8" r="1.75" fill="currentColor" stroke="none" />
+        </svg>
+        <span className="sr-only">View</span>
+      </button>
+      <button onClick={() => rollback(id)} title="Roll back to this version"
+        className="rounded p-1.5 text-neutral-400 transition-colors hover:bg-neutral-800 hover:text-neutral-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent">
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M2.5 8a5.5 5.5 0 1 0 1.1-3.3" />
+          <polyline points="2.5 2.5 2.5 6 6 6" />
+        </svg>
+        <span className="sr-only">Roll back</span>
+      </button>
+    </>
+  );
+
   return (
     <div>
       <div className="mb-6 flex flex-wrap items-baseline justify-between gap-3">
@@ -241,22 +262,7 @@ export function Config() {
                 </div>
                 {v.id !== loaded.id && (
                   <span className="flex shrink-0 gap-1">
-                    <button onClick={() => view(v.id)} title="View this version"
-                      className="rounded p-1.5 text-neutral-400 transition-colors hover:bg-neutral-800 hover:text-neutral-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent">
-                      <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                        <ellipse cx="8" cy="8" rx="6.5" ry="4.5" />
-                        <circle cx="8" cy="8" r="1.75" fill="currentColor" stroke="none" />
-                      </svg>
-                      <span className="sr-only">View</span>
-                    </button>
-                    <button onClick={() => rollback(v.id)} title="Roll back to this version"
-                      className="rounded p-1.5 text-neutral-400 transition-colors hover:bg-neutral-800 hover:text-neutral-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent">
-                      <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                        <path d="M2.5 8a5.5 5.5 0 1 0 1.1-3.3" />
-                        <polyline points="2.5 2.5 2.5 6 6 6" />
-                      </svg>
-                      <span className="sr-only">Roll back</span>
-                    </button>
+                    {versionActions(v.id)}
                   </span>
                 )}
               </div>
@@ -277,22 +283,7 @@ export function Config() {
                   <td className="py-2 pr-4">
                     {v.id !== loaded.id && (
                       <span className="flex gap-1">
-                        <button onClick={() => view(v.id)} title="View this version"
-                          className="rounded p-1.5 text-neutral-400 transition-colors hover:bg-neutral-800 hover:text-neutral-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent">
-                          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                            <ellipse cx="8" cy="8" rx="6.5" ry="4.5" />
-                            <circle cx="8" cy="8" r="1.75" fill="currentColor" stroke="none" />
-                          </svg>
-                          <span className="sr-only">View</span>
-                        </button>
-                        <button onClick={() => rollback(v.id)} title="Roll back to this version"
-                          className="rounded p-1.5 text-neutral-400 transition-colors hover:bg-neutral-800 hover:text-neutral-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent">
-                          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                            <path d="M2.5 8a5.5 5.5 0 1 0 1.1-3.3" />
-                            <polyline points="2.5 2.5 2.5 6 6 6" />
-                          </svg>
-                          <span className="sr-only">Roll back</span>
-                        </button>
+                        {versionActions(v.id)}
                       </span>
                     )}
                   </td>

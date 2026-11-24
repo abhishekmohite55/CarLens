@@ -57,43 +57,47 @@ function build(): Edge[] {
       }
     }
     roofline.push(...line(TOP.map(at)));
-    // Underside: rear end → rear arch, sill between the arches, front arch → front end.
-    rest.push([at(TOP[10]), [-WHEEL_X - ARCH, s * SIDE, WHEEL_Z]]);
-    rest.push([[-WHEEL_X + ARCH, s * SIDE, WHEEL_Z], [WHEEL_X - ARCH, s * SIDE, WHEEL_Z]]);
-    rest.push([[WHEEL_X + ARCH, s * SIDE, WHEEL_Z], at(TOP[0])]);
-    rest.push(...line(GLASS.map(at), true));
-    rest.push([[-0.25, s * 0.8, 0.94], [-0.25, s * 0.67, 1.33]]); // pillar between the doors
-    rest.push([[-0.25, s * 0.83, 0.94], [-0.25, s * SIDE, WHEEL_Z]]); // door seams
-    rest.push([[0.78, s * 0.82, 0.91], [0.78, s * SIDE, WHEEL_Z]]);
-    // Headlight — rectangle (was single horizontal line)
-    rest.push([[1.985, s * 0.78, 0.62], [1.985, s * 0.42, 0.62]]); // top edge
-    rest.push([[1.985, s * 0.42, 0.62], [1.985, s * 0.42, 0.44]]); // inner vertical
-    rest.push([[1.985, s * 0.42, 0.44], [1.985, s * 0.78, 0.44]]); // bottom edge
-    rest.push([[1.985, s * 0.78, 0.44], [1.985, s * 0.78, 0.62]]); // outer vertical
-    // Tail light — rectangle (was single horizontal line)
-    rest.push([[-1.995, s * 0.8, 0.8], [-1.995, s * 0.5, 0.8]]); // top edge
-    rest.push([[-1.995, s * 0.5, 0.8], [-1.995, s * 0.5, 0.58]]); // inner vertical
-    rest.push([[-1.995, s * 0.5, 0.58], [-1.995, s * 0.8, 0.58]]); // bottom edge
-    rest.push([[-1.995, s * 0.8, 0.58], [-1.995, s * 0.8, 0.8]]); // outer vertical
-    // Hood character line: headlight area toward A-pillar
-    rest.push([[1.96, s * 0.55, 0.72], [1.1, s * 0.67, 0.91]]);
-    // Belt line crease: front arch to rear arch at door-handle height
-    rest.push([[1.55, s * 0.81, 0.73], [-1.6, s * 0.81, 0.69]]);
-    // Side mirror — small wing shape
-    rest.push([[0.9, s * 0.83, 0.93], [0.9, s * 0.91, 0.97]]);
-    rest.push([[0.9, s * 0.91, 0.97], [0.73, s * 0.91, 0.97]]);
-    rest.push([[0.73, s * 0.91, 0.97], [0.73, s * 0.83, 0.93]]);
+    rest.push(
+      // Underside: rear end → rear arch, sill between the arches, front arch → front end.
+      [at(TOP[10]), [-WHEEL_X - ARCH, s * SIDE, WHEEL_Z]],
+      [[-WHEEL_X + ARCH, s * SIDE, WHEEL_Z], [WHEEL_X - ARCH, s * SIDE, WHEEL_Z]],
+      [[WHEEL_X + ARCH, s * SIDE, WHEEL_Z], at(TOP[0])],
+      ...line(GLASS.map(at), true),
+      [[-0.25, s * 0.8, 0.94], [-0.25, s * 0.67, 1.33]], // pillar between the doors
+      [[-0.25, s * 0.83, 0.94], [-0.25, s * SIDE, WHEEL_Z]], // door seams
+      [[0.78, s * 0.82, 0.91], [0.78, s * SIDE, WHEEL_Z]],
+      // Headlight — rectangle (was single horizontal line)
+      [[1.985, s * 0.78, 0.62], [1.985, s * 0.42, 0.62]], // top edge
+      [[1.985, s * 0.42, 0.62], [1.985, s * 0.42, 0.44]], // inner vertical
+      [[1.985, s * 0.42, 0.44], [1.985, s * 0.78, 0.44]], // bottom edge
+      [[1.985, s * 0.78, 0.44], [1.985, s * 0.78, 0.62]], // outer vertical
+      // Tail light — rectangle (was single horizontal line)
+      [[-1.995, s * 0.8, 0.8], [-1.995, s * 0.5, 0.8]], // top edge
+      [[-1.995, s * 0.5, 0.8], [-1.995, s * 0.5, 0.58]], // inner vertical
+      [[-1.995, s * 0.5, 0.58], [-1.995, s * 0.8, 0.58]], // bottom edge
+      [[-1.995, s * 0.8, 0.58], [-1.995, s * 0.8, 0.8]], // outer vertical
+      // Hood character line: headlight area toward A-pillar
+      [[1.96, s * 0.55, 0.72], [1.1, s * 0.67, 0.91]],
+      // Belt line crease: front arch to rear arch at door-handle height
+      [[1.55, s * 0.81, 0.73], [-1.6, s * 0.81, 0.69]],
+      // Side mirror — small wing shape
+      [[0.9, s * 0.83, 0.93], [0.9, s * 0.91, 0.97]],
+      [[0.9, s * 0.91, 0.97], [0.73, s * 0.91, 0.97]],
+      [[0.73, s * 0.91, 0.97], [0.73, s * 0.83, 0.93]],
+    );
   }
   for (const [x, z, half] of TOP) rest.push([[x, half, z], [x, -half, z]]); // left ↔ right
-  rest.push(...line([[-2.0, 0.26, 0.52], [-2.0, 0.26, 0.64], [-2.0, -0.26, 0.64], [-2.0, -0.26, 0.52]], true)); // rear plate
-  // Front grille: two horizontal slats inside a rectangular border
-  rest.push([[1.98, 0.44, 0.24], [1.98, -0.44, 0.24]]);
-  rest.push([[1.98, 0.44, 0.33], [1.98, -0.44, 0.33]]);
-  rest.push([[1.98, 0.44, 0.17], [1.98, -0.44, 0.17]]); // bottom
-  rest.push([[1.98, 0.44, 0.17], [1.98, 0.44, 0.40]]); // left border
-  rest.push([[1.98, -0.44, 0.17], [1.98, -0.44, 0.40]]); // right border
-  // Rear spoiler lip
-  rest.push([[-1.52, 0.65, 1.28], [-1.52, -0.65, 1.28]]);
+  rest.push(
+    ...line([[-2.0, 0.26, 0.52], [-2.0, 0.26, 0.64], [-2.0, -0.26, 0.64], [-2.0, -0.26, 0.52]], true), // rear plate
+    // Front grille: two horizontal slats inside a rectangular border
+    [[1.98, 0.44, 0.24], [1.98, -0.44, 0.24]],
+    [[1.98, 0.44, 0.33], [1.98, -0.44, 0.33]],
+    [[1.98, 0.44, 0.17], [1.98, -0.44, 0.17]], // bottom
+    [[1.98, 0.44, 0.17], [1.98, 0.44, 0.40]], // left border
+    [[1.98, -0.44, 0.17], [1.98, -0.44, 0.40]], // right border
+    // Rear spoiler lip
+    [[-1.52, 0.65, 1.28], [-1.52, -0.65, 1.28]],
+  );
   // Drawing order (Scene 1): wheel arches first, then the roofline, then the rest.
   return [...arches, ...roofline, ...rest, ...wheels];
 }

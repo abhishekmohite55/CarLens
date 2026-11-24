@@ -57,7 +57,7 @@ export function Prompts() {
         <select
           className="block md:hidden rounded border border-neutral-700 bg-neutral-900 px-2 py-1.5 text-sm text-neutral-200"
           value={prompt?.name ?? ""}
-          onChange={(e) => { if (e.target.value && (!dirty || window.confirm("Drop your unsaved changes?"))) open(e.target.value); }}
+          onChange={(e) => { if (e.target.value && (!dirty || window.confirm("Drop your unsaved changes?"))) void open(e.target.value); }}
         >
           {list.map((p) => <option key={p.name} value={p.name}>{p.name} v{p.number}</option>)}
         </select>

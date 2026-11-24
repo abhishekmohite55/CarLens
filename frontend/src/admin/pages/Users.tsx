@@ -103,7 +103,7 @@ export function Users() {
             )}
           </div>
         ))}
-        {data && data.users.length === 0 && <p className="mt-4 text-sm text-neutral-500">Nobody here.</p>}
+        {data?.users.length === 0 && <p className="mt-4 text-sm text-neutral-500">Nobody here.</p>}
       </div>
       {/* Desktop table */}
       <div className="hidden sm:block">
@@ -143,7 +143,7 @@ export function Users() {
             ))}
           </tbody>
         </table>
-        {data && data.users.length === 0 && <p className="mt-4 text-sm text-neutral-500">Nobody here.</p>}
+        {data?.users.length === 0 && <p className="mt-4 text-sm text-neutral-500">Nobody here.</p>}
       </div>
     </div>
   );

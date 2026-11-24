@@ -31,7 +31,7 @@ export function Audit() {
             )}
           </div>
         ))}
-        {data && data.entries.length === 0 && <p className="mt-4 text-sm text-neutral-500">No admin changes yet.</p>}
+        {data?.entries.length === 0 && <p className="mt-4 text-sm text-neutral-500">No admin changes yet.</p>}
       </div>
       {/* Desktop table */}
       <div className="hidden sm:block">
@@ -51,7 +51,7 @@ export function Audit() {
             ))}
           </tbody>
         </table>
-        {data && data.entries.length === 0 && <p className="mt-4 text-sm text-neutral-500">No admin changes yet.</p>}
+        {data?.entries.length === 0 && <p className="mt-4 text-sm text-neutral-500">No admin changes yet.</p>}
       </div>
     </div>
   );
