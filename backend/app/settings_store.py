@@ -118,6 +118,15 @@ def check_config(data: Any, nodes: list[str], keep_origin: str | None = None) ->
         limits = cfg.markets.of(market).extract_limits
         if not 0 < limits.listing_min < limits.listing_max:
             bad(f"markets.{market}.extract_limits", "listing_min must be above 0 and below listing_max")
+    from .vin.providers import KNOWN as VIN_PROVIDERS  # stage U1
+    if cfg.vin.provider not in VIN_PROVIDERS:
+        bad("vin.provider", f"must be one of {', '.join(VIN_PROVIDERS)}")
+    elif cfg.vin.provider not in cfg.vin.providers:
+        bad("vin.providers", f"needs an entry for {cfg.vin.provider}")
+    else:
+        missing = sorted({"make", "model", "year"} - set(cfg.vin.providers[cfg.vin.provider].fields))
+        if missing:
+            bad(f"vin.providers.{cfg.vin.provider}.fields", f"needs {', '.join(missing)}")
     if cfg.auth.session_hours <= 0 or cfg.auth.max_failed_logins <= 0 or cfg.auth.lockout_minutes <= 0:
         bad("auth", "session_hours, max_failed_logins and lockout_minutes must be above 0")
     if keep_origin and keep_origin.rstrip("/") not in {o.rstrip("/") for o in cfg.auth.allowed_origins}:

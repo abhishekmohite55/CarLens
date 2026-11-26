@@ -51,7 +51,8 @@ from .results import FILES as RESULT_FILES, delete_results, load_result
 from .run_index import (FLAGGED_REFUSALS, RunRefused, admission_refusal, busy, busy_refusal, busy_runs, is_run_id,
                         log_upload_event, resume_allowed, close_open_rows, interrupted_nodes, latest_node_result, other_active_run, run_owner,
                         user_runs, run_status, market_off_refusal)
-from .market import market_is_on, resolve_market
+from .market import US_STATES, market_is_on, resolve_market, state_guess
+from .vin.lookup import VinError, lookup_vin
 from .runs import append_event, events_path, failed_at, failure_count, run_dir
 from .settings_store import SettingsError, repin_run, run_market
 from .storage import fetch_run, push_run
@@ -188,6 +189,11 @@ def api_config(request: Request, market: str | None = None, user: SignedIn = Dep
     return {
         "market": visitor_market(request, user, market),  # stage M0
         "markets_on": cfg.dev.markets_on,
+        "us": {  # stage U1: US first screen (state chips, type-ahead, guess from CloudFront's region header)
+            "top_states": cfg.markets.us.top_states,
+            "states": [{"code": code, "name": name} for code, name in US_STATES.items()],
+            "state_guess": state_guess(request.headers.get("CloudFront-Viewer-Country-Region")),
+        },
         "upload": {
             "allowed_types": cfg.upload.allowed_types,
             "max_size_mb": cfg.upload.max_size_mb,
@@ -197,6 +203,22 @@ def api_config(request: Request, market: str | None = None, user: SignedIn = Dep
         "maintenance": maintenance_state()["on"],  # step 9: the app shows "being updated" and keeps uploads closed
         "busy": _server_busy(cfg.access.max_active_runs),  # hardening A2: Home says "busy" before an upload starts
     }
+
+
+class VinBody(BaseModel):
+    vin: str = Field(max_length=64)
+
+
+@app.post("/api/vin/lookup")
+def api_vin_lookup(body: VinBody, user: SignedIn = Depends(require_approved)):
+    """Stage U1 (07-us-market.md §4): the car for a VIN, or a plain message. US market off → refused (closed is
+    closed, owner 26 Nov). 422 vin_invalid / vin_not_found, 429 too_many, 503 vin_unavailable."""
+    refuse_market_off("us")
+    try:
+        return lookup_vin(body.vin, user.id, get_config().vin, is_admin=user.role == "admin")
+    except VinError as exc:
+        return JSONResponse(status_code=exc.status, content={"error": {"code": exc.code, "message": exc.message},
+                                                             "answer": exc.answer})
 
 
 def _server_busy(max_active_runs: int) -> bool:

@@ -206,6 +206,27 @@ class StorageConfig(BaseModel):
     local_keep_days: int = Field(7, ge=1)  # finished runs untouched this long lose their server copy (S3 keeps it)
 
 
+VPIC_FIELDS = {"make": "Make", "model": "Model", "year": "ModelYear", "trim": "Trim", "series": "Series",
+               "fuel": "FuelTypePrimary", "body": "BodyClass", "displacement_l": "DisplacementL",
+               "cylinders": "EngineCylinders", "engine_layout": "EngineConfiguration", "drive": "DriveType"}
+
+
+class VinProviderConfig(BaseModel):
+    base_url: str
+    timeout_sec: float = Field(10, gt=0)
+    key_env: str = ""  # name of the .env variable with the key; empty = no key (vPIC)
+    fields: dict[str, str] = {}  # common name → the provider's key (or dotted path)
+
+
+class VinConfig(BaseModel):
+    """VIN lookup (stage U1, docs/backend/07-us-market.md §4): the provider and how to read it."""
+    provider: str = "vpic"
+    cache_days: int = Field(30, ge=0)  # same VIN within this many days → the saved answer, no second call
+    max_lookups_per_hour: int = Field(20, ge=1)  # real provider calls per user (the admin has no limit)
+    providers: dict[str, VinProviderConfig] = {
+        "vpic": VinProviderConfig(base_url="https://vpic.nhtsa.dot.gov/api/vehicles", fields=VPIC_FIELDS)}
+
+
 class AppConfig(BaseModel):
     model_config = ConfigDict(serialize_by_alias=True)  # stage M0: markets.in is saved as "in", not "in_"
 
@@ -226,6 +247,7 @@ class AppConfig(BaseModel):
     storage: StorageConfig = StorageConfig()
     maintenance: MaintenanceConfig = MaintenanceConfig()
     markets: MarketsConfig
+    vin: VinConfig = VinConfig()
 
     @model_validator(mode="before")
     @classmethod

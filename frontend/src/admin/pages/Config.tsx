@@ -14,7 +14,7 @@ type Loaded = Version & { options: { stop_after: string[]; stop_after_us: string
 type VersionRow = { id: number; saved_at: string; saved_by: string | null; note: string | null };
 type Problem = { field: string; message: string };
 
-const SECTIONS = ["upload", "models", "locate_video", "frames", "confirm", "photos", "plan", "search", "extract", "pricing", "markets", "dev", "auth", "access", "storage", "maintenance", "paths"];
+const SECTIONS = ["upload", "models", "locate_video", "frames", "confirm", "photos", "plan", "search", "extract", "pricing", "markets", "vin", "dev", "auth", "access", "storage", "maintenance", "paths"];
 const MARKET_TABS: { id: Market; label: string }[] = [{ id: "in", label: "India" }, { id: "us", label: "US" }];
 // stage M0: "upload" in the US stop list means upload/vin (video + VIN saved, locate never starts)
 const OPTION_LABELS: Record<string, string> = { "dev.stop_after_us:upload": "upload/vin" };
@@ -41,6 +41,10 @@ const HINTS: Record<string, string> = {
   "markets.us.odometer_min_confidence": "Verify's odometer reading counts only at this confidence or higher (used from stage U3).",
   "markets.us.top_states": "State chips on the first screen, one per line (used from stage U1).",
   "markets.us.state_templates_max": "At most this many {state} templates per run; the rest are US-wide (used from stage U4).",
+  "vin.provider": "The VIN service that decodes the VIN on the US first screen.",
+  "vin.cache_days": "The same VIN again within this many days gets the saved answer (no second call). 0 = always call.",
+  "vin.max_lookups_per_hour": "Real VIN service calls per user per hour. The admin has no limit.",
+  "vin.providers": "Each service: base_url, timeout_sec, key_env (name of the .env variable with its key) and fields (common name → the service's field). Edited as JSON.",
   "models.verify_chain": "Tried top to bottom; the next model runs on an error, a bad answer or a timeout.",
   "models.photos_chain": "Empty = use the verify chain.",
   "models.locate": "Video call (Google SDK). The fallback model is tried on a 503 / 500 / 504 / 429.",
@@ -112,6 +116,9 @@ function Field({ path, name, value, saved, options, readOnly, onChange }: {
         ))}
       </div>
     );
+  } else if (value !== null && typeof value === "object" && !Array.isArray(value) && !("provider" in value)) {
+    // stage U1: a nested group (vin.providers) is edited as JSON; saved only when it parses
+    control = <JsonField value={value} readOnly={readOnly} onChange={onChange} />;
   } else if (isChain(name, value)) {
     control = <ChainEditor entries={value} providers={options.providers} onChange={onChange} />;
   } else if (value !== null && typeof value === "object" && !Array.isArray(value) && "provider" in value) {
@@ -374,6 +381,30 @@ function MarketTab({ draft, saved, tab, tabs, onTab, shown, options, onChange }:
         <Field key={`${shown}.markets.${current}.${name}`} path={`markets.${current}.${name}`} name={name} value={value}
           saved={savedFields[name]} options={options} readOnly={false} onChange={(changed) => onChange(current, name, changed)} />
       ))}
+    </div>
+  );
+}
+
+/** Stage U1: a nested settings group as JSON text. The draft changes only while the text is valid JSON. */
+function JsonField({ value, readOnly, onChange }: { value: object; readOnly: boolean; onChange: (value: unknown) => void }) {
+  const [text, setText] = useState(() => JSON.stringify(value, null, 2));
+  const [bad, setBad] = useState("");
+  return (
+    <div>
+      <textarea className={`${input} w-full font-mono`} disabled={readOnly} spellCheck={false}
+        rows={Math.min(24, text.split("\n").length + 1)} value={text}
+        onChange={(e) => {
+          setText(e.target.value);
+          try {
+            const parsed: unknown = JSON.parse(e.target.value);
+            if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("must be an object { … }");
+            setBad("");
+            onChange(parsed);
+          } catch (err) {
+            setBad(err instanceof Error ? err.message : "not valid JSON");
+          }
+        }} />
+      {bad && <p className="mt-1 text-xs text-red-400">Not valid JSON yet (not taken into the draft): {bad}</p>}
     </div>
   );
 }

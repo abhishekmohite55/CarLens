@@ -150,6 +150,28 @@ markets: # stage M0 (docs/backend/07-us-market.md §3, §9): settings that diffe
     state_templates_max: 2 # at most this many {state} templates per run, the rest US-wide (U4)
     odometer_min_confidence: 0.8 # verify's odometer reading counts only at this confidence or higher (U3)
 
+vin: # stage U1 (docs/backend/07-us-market.md §4): every VIN source sits behind backend/app/vin/
+  provider: vpic # decodes the VIN on the first screen
+  cache_days: 30 # same VIN again within this many days: the saved answer (car found or not found), no second call
+  max_lookups_per_hour: 20 # real provider calls per user per hour (the admin has no limit)
+  providers:
+    vpic: # NHTSA vPIC, free, no key
+      base_url: https://vpic.nhtsa.dot.gov/api/vehicles
+      timeout_sec: 10 # longer: "VIN lookup is not working, please come back later"
+      key_env: "" # name of the .env variable holding a key; empty = no key
+      fields: # common name: vPIC field (make, model and year are required for a car to count as found)
+        make: Make
+        model: Model
+        year: ModelYear
+        trim: Trim
+        series: Series
+        fuel: FuelTypePrimary
+        body: BodyClass
+        displacement_l: DisplacementL
+        cylinders: EngineCylinders
+        engine_layout: EngineConfiguration
+        drive: DriveType
+
 auth: # platform step 5 sign-in (docs/platform/05-login.md)
   session_hours: 24 # a sign-in lasts this long
   max_failed_logins: 4 # wrong password/code tries per email, then the email waits

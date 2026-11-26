@@ -89,3 +89,24 @@ def past_stop(node: str, stop: str | None, order: tuple[str, ...]) -> bool:
 def checked_market(value: str | None) -> str | None:
     """A market filter from a query string: "in" / "us", or None for all (empty, "all" or anything unknown)."""
     return value if value in MARKETS else None
+
+
+# US states + DC (stage U1, 07-us-market.md §5): state chips and type-ahead on the US first screen.
+US_STATES = {
+    "AL": "Alabama", "AK": "Alaska", "AZ": "Arizona", "AR": "Arkansas", "CA": "California", "CO": "Colorado",
+    "CT": "Connecticut", "DE": "Delaware", "DC": "District of Columbia", "FL": "Florida", "GA": "Georgia",
+    "HI": "Hawaii", "ID": "Idaho", "IL": "Illinois", "IN": "Indiana", "IA": "Iowa", "KS": "Kansas",
+    "KY": "Kentucky", "LA": "Louisiana", "ME": "Maine", "MD": "Maryland", "MA": "Massachusetts", "MI": "Michigan",
+    "MN": "Minnesota", "MS": "Mississippi", "MO": "Missouri", "MT": "Montana", "NE": "Nebraska", "NV": "Nevada",
+    "NH": "New Hampshire", "NJ": "New Jersey", "NM": "New Mexico", "NY": "New York", "NC": "North Carolina",
+    "ND": "North Dakota", "OH": "Ohio", "OK": "Oklahoma", "OR": "Oregon", "PA": "Pennsylvania",
+    "RI": "Rhode Island", "SC": "South Carolina", "SD": "South Dakota", "TN": "Tennessee", "TX": "Texas",
+    "UT": "Utah", "VT": "Vermont", "VA": "Virginia", "WA": "Washington", "WV": "West Virginia",
+    "WI": "Wisconsin", "WY": "Wyoming",
+}
+
+
+def state_guess(region: str | None) -> str | None:
+    """CloudFront-Viewer-Country-Region ("CA") → a US state code, or None when it is not one."""
+    code = (region or "").strip().upper()
+    return code if code in US_STATES else None

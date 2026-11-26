@@ -83,34 +83,44 @@
 </div>
 
 <div class="section" id="us-panel" style="display:none">
-  <label>US inspection — first screen (stage M0 skeleton: VIN lookup comes in U1, VIN / state / miles upload in U2)</label>
+  <label>US inspection — first screen (stage U1: VIN lookup live; VIN / state / miles go with the upload in U2)</label>
   <div class="us-grid">
     <div class="us-card">
       <label>VIN (17 characters)</label>
-      <input type="text" id="us-vin" placeholder="1HGCM82633A004352" maxlength="17" disabled style="text-transform:uppercase">
-      <button id="us-vin-btn" style="margin-top:6px" disabled>VIN lookup</button>
-      <div class="us-later">Live check + vPIC lookup: stage U1</div>
+      <input type="text" id="us-vin" placeholder="1HGCM82643A104332" maxlength="24" autocomplete="off" spellcheck="false" style="text-transform:uppercase">
+      <div id="us-vin-check" class="status"></div>
+      <button id="us-vin-btn" style="margin-top:6px" onclick="doVinLookup()" disabled>VIN lookup</button>
+      <div class="us-later">Format + check digit here; the server checks again and asks vPIC.</div>
     </div>
     <div class="us-card">
       <label>Is this your car?</label>
-      <div class="skel skel-line" style="width:70%"></div>
-      <div class="skel skel-line" style="width:50%"></div>
-      <div class="skel skel-line" style="width:60%"></div>
-      <button disabled style="margin-top:6px">Yes</button> <button disabled style="margin-top:6px">Change VIN</button>
-      <div class="us-later">Car card from the VIN lookup: stage U1</div>
+      <div id="us-car">
+        <div class="skel skel-line" style="width:70%"></div>
+        <div class="skel skel-line" style="width:50%"></div>
+        <div class="skel skel-line" style="width:60%"></div>
+      </div>
+      <button id="us-car-yes" onclick="confirmCar(true)" disabled style="margin-top:6px">Yes</button>
+      <button id="us-car-change" onclick="confirmCar(false)" disabled style="margin-top:6px">Change VIN</button>
+      <div id="us-car-status" class="status"></div>
     </div>
     <div class="us-card">
       <label>State (optional; empty = US-wide prices)</label>
       <div id="us-state-chips"></div>
-      <input type="text" placeholder="Type a state…" disabled>
-      <div class="us-later">Top-9 chips + type-ahead over 50 states + DC: stage U1</div>
+      <input type="text" id="us-state-input" placeholder="Type a state…" list="us-state-list" autocomplete="off">
+      <datalist id="us-state-list"></datalist>
+      <div id="us-state-status" class="status"></div>
     </div>
     <div class="us-card">
       <label>Miles (required)</label>
-      <input type="text" placeholder="e.g. 48,200" disabled>
+      <input type="text" id="us-miles" placeholder="e.g. 48,200" inputmode="numeric" autocomplete="off">
+      <div id="us-miles-status" class="status"></div>
       <div class="us-later">Sent with the upload: stage U2</div>
     </div>
   </div>
+  <details style="margin-top:8px"><summary class="status" style="cursor:pointer">VIN lookup — Sent / Received</summary>
+    <label style="margin-top:6px">Sent</label><pre id="us-vin-sent">(nothing yet)</pre>
+    <label>Received</label><pre id="us-vin-received">(nothing yet)</pre>
+  </details>
   <label style="margin-top:12px">Video</label>
   <input type="file" id="us-file-input" accept="video/*">
   <div class="progress-bar"><div class="progress-fill" id="us-prog"></div></div>
@@ -316,6 +326,149 @@ function setMarket(m) {
   if (inspectorMarket !== null && typeof loadConfig === 'function') loadConfig(false);
 }
 
+// --- stage U1: US first screen (VIN lookup, car card, state, miles) ---
+const VIN_VALUES = {A:1,B:2,C:3,D:4,E:5,F:6,G:7,H:8,J:1,K:2,L:3,M:4,N:5,P:7,R:9,S:2,T:3,U:4,V:5,W:6,X:7,Y:8,Z:9};
+const VIN_WEIGHTS = [8,7,6,5,4,3,2,10,0,9,8,7,6,5,4,3,2];
+const STATE_KEY = 'carlens.inspector.state';
+let usStates = [];       // [{code, name}] from /api/config
+let usStateGuess = null; // CloudFront region (empty on the laptop)
+let usState = null;      // chosen state code, null = US-wide
+let usCar = null;        // last lookup answer
+let usCarConfirmed = false;
+
+function normaliseVin(text) { return (text || '').replace(/[\s-]/g, '').toUpperCase(); }
+
+// Same rules and messages as backend/app/vin/check.py (the server checks again).
+function vinProblem(vin) {
+  if (vin.length !== 17) return `A VIN has 17 characters (you typed ${vin.length}).`;
+  if (/[IOQ]/.test(vin)) return 'A VIN never contains the letters I, O or Q.';
+  if (!/^[A-HJ-NPR-Z0-9]+$/.test(vin)) return 'A VIN has only letters and numbers.';
+  let total = 0;
+  for (let i = 0; i < 17; i++) total += (/[0-9]/.test(vin[i]) ? Number(vin[i]) : VIN_VALUES[vin[i]]) * VIN_WEIGHTS[i];
+  const digit = total % 11 === 10 ? 'X' : String(total % 11);
+  if (vin[8] !== digit) return 'This VIN does not add up (check digit). Check it for typos.';
+  return null;
+}
+
+function onVinInput() {
+  const vin = normaliseVin(document.getElementById('us-vin').value);
+  const box = document.getElementById('us-vin-check');
+  const problem = vin ? vinProblem(vin) : null;
+  box.textContent = !vin ? '' : problem || 'Looks like a valid VIN.';
+  box.className = 'status ' + (!vin ? '' : problem ? (vin.length < 17 ? 'warn' : 'err') : 'ok');
+  document.getElementById('us-vin-btn').disabled = !vin || !!problem;
+  if (usCar && usCar.vin !== vin) showCar(null);
+}
+document.getElementById('us-vin').addEventListener('input', onVinInput);
+document.getElementById('us-vin').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !document.getElementById('us-vin-btn').disabled) doVinLookup();
+});
+
+function showCar(answer, message, cls) {
+  usCar = answer && answer.ok ? answer : null;
+  usCarConfirmed = false;
+  const box = document.getElementById('us-car');
+  if (usCar) {
+    const c = usCar.car;
+    const rows = [['Car', `${c.year} ${c.make} ${c.model}`], ['Trim', c.variant], ['Body', c.body], ['Engine', c.engine],
+                  ['Fuel', c.fuel], ['Drive', c.drive]].filter(r => r[1]);
+    box.innerHTML = rows.map(([k, v]) => `<div class="cf-row" style="grid-template-columns:70px 1fr"><span style="color:#888">${k}</span><b>${esc(v)}</b></div>`).join('')
+      + `<div class="us-later">${usCar.provider} · ${usCar.reused ? 'saved answer, no call' : usCar.ms + ' ms'}</div>`;
+  } else {
+    box.innerHTML = message ? `<div class="${cls || 'err'}" style="font-size:13px">${esc(message)}</div>`
+      : '<div class="skel skel-line" style="width:70%"></div><div class="skel skel-line" style="width:50%"></div><div class="skel skel-line" style="width:60%"></div>';
+  }
+  document.getElementById('us-car-yes').disabled = !usCar;
+  document.getElementById('us-car-change').disabled = !usCar;
+  document.getElementById('us-car-status').textContent = '';
+}
+
+function esc(s) { return String(s).replace(/[&<>"]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch])); }
+
+async function doVinLookup() {
+  const vin = normaliseVin(document.getElementById('us-vin').value);
+  const btn = document.getElementById('us-vin-btn');
+  btn.disabled = true;
+  showCar(null);
+  document.getElementById('us-car').innerHTML = '<div class="skel skel-line" style="width:70%"></div><div class="skel skel-line" style="width:50%"></div><div class="status">Looking up…</div>';
+  const sent = {method: 'POST', url: '/api/vin/lookup', body: {vin}};
+  document.getElementById('us-vin-sent').textContent = JSON.stringify(sent, null, 2);
+  const t0 = performance.now();
+  try {
+    const r = await fetch('/api/vin/lookup', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({vin})});
+    const data = await r.json().catch(() => ({error: {message: 'The server answered with something that is not JSON.'}}));
+    document.getElementById('us-vin-received').textContent =
+      `HTTP ${r.status} · ${Math.round(performance.now() - t0)} ms (browser)\n` + JSON.stringify(data, null, 2);
+    if (r.ok) showCar(data);
+    else showCar(null, data.error ? `${data.error.message}` : `HTTP ${r.status}`, r.status === 503 || r.status === 409 ? 'warn' : 'err');
+  } catch (e) {
+    document.getElementById('us-vin-received').textContent = String(e);
+    showCar(null, 'The server did not answer.', 'err');
+  } finally {
+    btn.disabled = !!vinProblem(vin);
+  }
+}
+
+function confirmCar(yes) {
+  if (yes && usCar) {
+    usCarConfirmed = true;
+    document.getElementById('us-car-status').textContent = 'Car confirmed (upload with the VIN comes in U2).';
+    document.getElementById('us-car-status').className = 'status ok';
+    document.getElementById('us-car-yes').disabled = true;
+  } else {
+    showCar(null);
+    const input = document.getElementById('us-vin');
+    input.value = '';
+    onVinInput();
+    input.focus();
+  }
+}
+
+function setState(code) {
+  usState = code || null;
+  try { code ? localStorage.setItem(STATE_KEY, code) : localStorage.removeItem(STATE_KEY); } catch (e) { /* not remembered */ }
+  const name = (usStates.find(s => s.code === usState) || {}).name;
+  document.getElementById('us-state-status').innerHTML = usState
+    ? `Selected: <b>${esc(name)}</b> (${usState}) &nbsp;<a href="#" onclick="setState(null);return false" style="color:#8bf">clear</a>`
+    : 'Empty: US-wide prices only.';
+  document.querySelectorAll('#us-state-chips .chip').forEach(ch => ch.style.borderColor = ch.dataset.code === usState ? '#6366f1' : '');
+  document.getElementById('us-state-input').value = '';
+}
+
+function drawStates(us) {
+  usStates = us.states || [];
+  usStateGuess = us.state_guess || null;
+  document.getElementById('us-state-list').innerHTML = usStates.map(s => `<option value="${s.code} — ${esc(s.name)}">`).join('');
+  document.getElementById('us-state-chips').innerHTML = (us.top_states || []).map(code => {
+    const s = usStates.find(x => x.code === code);
+    return `<span class="chip" data-code="${code}" title="${s ? esc(s.name) : code}" onclick="setState('${code}')">${code}</span>`;
+  }).join('');
+  let saved = null;
+  try { saved = localStorage.getItem(STATE_KEY); } catch (e) { /* not remembered */ }
+  setState(usState || (usStates.some(s => s.code === saved) ? saved : usStateGuess));
+}
+
+document.getElementById('us-state-input').addEventListener('change', function() {
+  const typed = this.value.trim().toLowerCase();
+  const code = typed.slice(0, 2).toUpperCase();
+  const hit = usStates.find(s => s.code === code && (typed.length === 2 || typed.startsWith(code.toLowerCase() + ' ')))
+           || usStates.find(s => s.name.toLowerCase() === typed);
+  if (hit) setState(hit.code);
+  else if (typed) document.getElementById('us-state-status').textContent = 'Not a US state. Pick one from the list.';
+});
+
+function milesValue(text) {
+  const t = (text || '').trim();
+  if (!/^\d{1,3}(,\d{3})*$|^\d+$/.test(t)) return null;
+  return Number(t.replace(/,/g, ''));
+}
+document.getElementById('us-miles').addEventListener('input', function() {
+  const box = document.getElementById('us-miles-status');
+  const v = milesValue(this.value);
+  box.textContent = !this.value.trim() ? 'Required.' : v === null ? 'Digits only (thousands commas allowed), e.g. 48,200.' : `${v.toLocaleString('en-US')} miles`;
+  box.className = 'status ' + (v === null ? (this.value.trim() ? 'err' : 'warn') : 'ok');
+});
+
 function drawUsSkeleton() {
   document.getElementById('us-state-chips').innerHTML =
     Array.from({length: 9}, () => '<span class="skel skel-chip"></span>').join('');
@@ -338,6 +491,7 @@ fetch('/api/config').then(r => r.json()).then(cfg => {
   document.getElementById('market-info').innerHTML =
     `server's market for you: <b>${cfg.market === 'us' ? 'US' : 'India'}</b> &nbsp; dev.markets_on: ${badge('in', 'India')} &nbsp; ${badge('us', 'US')}`;
   document.getElementById('market-info').innerHTML += ` &nbsp; <span style="color:#666">checked ${new Date().toLocaleTimeString()}</span>`;
+  if (cfg.us && !usStates.length) drawStates(cfg.us);  // stage U1: once (the list does not change while the page is open)
   if (first) {
     const saved = storedMarket();
     setMarket(saved === 'in' || saved === 'us' ? saved : (cfg.market || 'in'));

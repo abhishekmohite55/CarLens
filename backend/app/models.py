@@ -349,3 +349,20 @@ class AppState(Base):
     maintenance: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
     maintenance_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     maintenance_by: Mapped[str | None] = mapped_column(Text)
+
+
+# --- VIN lookups (stage U1, docs/backend/07-us-market.md §4.3) ---
+
+class VinLookup(Base):
+    __tablename__ = "vin_lookups"  # one row per provider call; reused for the same VIN within vin.cache_days
+    __table_args__ = (Index("ix_vin_lookups_vin_provider", "vin", "provider"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    vin: Mapped[str] = mapped_column(Text)
+    provider: Mapped[str] = mapped_column(Text)  # vpic (U1); mcpvin (U4)
+    ok: Mapped[bool] = mapped_column(Boolean, default=False)  # make, model and year found
+    error: Mapped[str | None] = mapped_column(Text)  # not_found / unavailable
+    car: Mapped[Any | None] = mapped_column(JSONB)  # common shape "car" (make, model, variant, year, ...)
+    raw: Mapped[Any | None] = mapped_column(JSONB)  # the provider's whole answer ({"failure": ...} when down)
+    ms: Mapped[int | None] = mapped_column(Integer)
+    user_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="SET NULL"), index=True)
+    created_at: Mapped[datetime] = _now()
