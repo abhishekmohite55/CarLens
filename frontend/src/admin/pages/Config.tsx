@@ -4,16 +4,20 @@
 // to runs that start from then on.
 import { useEffect, useState } from "react";
 import { api, ApiError } from "../../shared/api";
+import { useMarket, type Market } from "../market";
 import { Button, when } from "../ui";
 import { ChainEditor, EntryFields, type ModelEntry } from "./ChainEditor";
 
 type Data = Record<string, Record<string, unknown>>;
 type Version = { id: number; active: boolean; saved_at: string; saved_by: string | null; note: string | null; data: Data };
-type Loaded = Version & { options: { stop_after: string[]; providers: string[] } };
+type Loaded = Version & { options: { stop_after: string[]; stop_after_us: string[]; markets: string[]; providers: string[] } };
 type VersionRow = { id: number; saved_at: string; saved_by: string | null; note: string | null };
 type Problem = { field: string; message: string };
 
-const SECTIONS = ["upload", "models", "locate_video", "frames", "confirm", "photos", "plan", "search", "extract", "pricing", "dev", "auth", "access", "storage", "maintenance", "paths"];
+const SECTIONS = ["upload", "models", "locate_video", "frames", "confirm", "photos", "plan", "search", "extract", "pricing", "markets", "dev", "auth", "access", "storage", "maintenance", "paths"];
+const MARKET_TABS: { id: Market; label: string }[] = [{ id: "in", label: "India" }, { id: "us", label: "US" }];
+// stage M0: "upload" in the US stop list means upload/vin (video + VIN saved, locate never starts)
+const OPTION_LABELS: Record<string, string> = { "dev.stop_after_us:upload": "upload/vin" };
 const READ_ONLY = ["paths"]; // moving run folders under a live app would lose runs
 const LEVELS = ["", "minimal", "low", "medium", "high"];
 // Fields with a fixed set of values ("" = empty = default)
@@ -24,9 +28,19 @@ const CHOICES: Record<string, string[]> = {
   "models.verify_thinking_level": LEVELS,
   "models.extract_reasoning_effort": ["", "none", "minimal", "low", "medium", "high"],
   "search.depth": ["basic", "advanced"],
+  "markets.default": ["in", "us"],
 };
 const HINTS: Record<string, string> = {
-  "dev.stop_after": "The pipeline ends after this step. Empty = run everything.",
+  "dev.stop_after": "India pipeline: it ends after this step. Empty = run everything.",
+  "dev.stop_after_us": "US pipeline: it ends after this step. upload/vin = video and VIN saved, locate never starts. Empty = run everything.",
+  "dev.markets_on": "Off = no new uploads, fresh runs, resumes or re-runs in that market (no AI or Tavily tokens). Runs already working finish.",
+  "markets.default": "Market when no user pin, admin choice or country header decides (laptop: set in or us to test).",
+  "markets.country_map": "CloudFront-Viewer-Country → market, one per line as CC=market (e.g. US=us). Other countries get the default.",
+  "markets.in.extract_limits": "Car prices (listing / new price) outside listing_min … listing_max are dropped, in rupees.",
+  "markets.us.extract_limits": "Car prices (listing / new price) outside listing_min … listing_max are dropped, in dollars.",
+  "markets.us.odometer_min_confidence": "Verify's odometer reading counts only at this confidence or higher (used from stage U3).",
+  "markets.us.top_states": "State chips on the first screen, one per line (used from stage U1).",
+  "markets.us.state_templates_max": "At most this many {state} templates per run; the rest are US-wide (used from stage U4).",
   "models.verify_chain": "Tried top to bottom; the next model runs on an error, a bad answer or a timeout.",
   "models.photos_chain": "Empty = use the verify chain.",
   "models.locate": "Video call (Google SDK). The fallback model is tried on a 503 / 500 / 504 / 429.",
@@ -59,13 +73,44 @@ function isChain(key: string, value: unknown): value is ModelEntry[] {
 function Field({ path, name, value, saved, options, readOnly, onChange }: {
   path: string; name: string; value: unknown; saved: unknown; options: Loaded["options"]; readOnly: boolean; onChange: (value: unknown) => void;
 }) {
-  const choices = path === "dev.stop_after" ? ["", ...options.stop_after] : CHOICES[path];
+  const choices = path === "dev.stop_after" ? ["", ...options.stop_after]
+    : path === "dev.stop_after_us" ? ["", ...options.stop_after_us] : CHOICES[path];
   let control;
   if (choices) {
     control = (
       <select className={input} disabled={readOnly} value={(value as string) ?? ""} onChange={(e) => onChange(e.target.value || null)}>
-        {choices.map((c) => <option key={c} value={c}>{c || "(empty)"}</option>)}
+        {choices.map((c) => <option key={c} value={c}>{OPTION_LABELS[`${path}:${c}`] ?? (c || "(empty)")}</option>)}
       </select>
+    );
+  } else if (path === "markets.country_map" && value !== null && typeof value === "object") {
+    // stage M0: a map the owner edits as a whole, one CC=market per line
+    control = (
+      <textarea className={`${input} w-64 font-mono`} disabled={readOnly} rows={Math.max(2, Object.keys(value).length + 1)}
+        value={Object.entries(value as Record<string, string>).map(([k, v]) => `${k}=${v}`).join("\n")}
+        onChange={(e) => onChange(Object.fromEntries(e.target.value.split("\n").map((line) => line.split("=").map((s) => s.trim()))
+          .filter((pair) => pair.length === 2 && pair[0] && pair[1]).map(([k, v]) => [k.toUpperCase(), v])))} />
+    );
+  } else if (value !== null && typeof value === "object" && !Array.isArray(value) && !("provider" in value)
+             && Object.values(value).every((v) => v === null || ["string", "number", "boolean"].includes(typeof v))) {
+    // stage M0: a small group of plain values (dev.markets_on, markets.<market>.extract_limits): one control each
+    const group = value as Record<string, unknown>;
+    control = (
+      <div className="flex flex-wrap gap-4">
+        {Object.entries(group).map(([k, v]) => (
+          <label key={k} className="flex items-center gap-2 font-mono text-xs text-neutral-400">
+            {k}
+            {typeof v === "boolean" ? (
+              <input type="checkbox" disabled={readOnly} checked={v} onChange={(e) => onChange({ ...group, [k]: e.target.checked })} />
+            ) : typeof v === "number" ? (
+              <input className={`${input} w-36`} type="number" step="any" disabled={readOnly} value={v}
+                onChange={(e) => onChange({ ...group, [k]: e.target.value === "" ? "" : Number(e.target.value) })} />
+            ) : (
+              <input className={`${input} w-40`} disabled={readOnly} value={(v as string | null) ?? ""}
+                onChange={(e) => onChange({ ...group, [k]: e.target.value })} />
+            )}
+          </label>
+        ))}
+      </div>
     );
   } else if (isChain(name, value)) {
     control = <ChainEditor entries={value} providers={options.providers} onChange={onChange} />;
@@ -113,6 +158,9 @@ export function Config() {
   const [message, setMessage] = useState("");
   const [versions, setVersions] = useState<VersionRow[] | null>(null);
   const [shown, setShown] = useState(0); // bumped whenever the whole draft is replaced, so list editors start fresh
+  const marketView = useMarket(); // stage M0: the header switch picks the Markets tab (All = both tabs)
+  const [marketTab, setMarketTab] = useState<Market>(marketView === "us" ? "us" : "in");
+  useEffect(() => { if (marketView !== "all") setMarketTab(marketView); }, [marketView]);
 
   async function load() {
     const data = await api<Loaded>("/api/admin/config");
@@ -219,12 +267,18 @@ export function Config() {
           </ul>
           <div className="min-w-0 flex-1">
             {READ_ONLY.includes(section) && <p className="mb-2 text-xs text-neutral-500">Read-only.</p>}
-            {Object.entries(fields).map(([name, value]) => (
+            {Object.entries(fields).filter(([name]) => section !== "markets" || !MARKET_TABS.some((t) => t.id === name)).map(([name, value]) => (
               <Field key={`${shown}.${section}.${name}`} path={`${section}.${name}`} name={name} value={value}
                 saved={loaded.data[section]?.[name]} options={loaded.options}
                 readOnly={READ_ONLY.includes(section)}
                 onChange={(changed) => setDraft({ ...draft, [section]: { ...draft[section], [name]: changed } })} />
             ))}
+            {section === "markets" && (
+              <MarketTab draft={draft} saved={loaded.data} tab={marketTab} tabs={MARKET_TABS.filter((t) => marketView === "all" || t.id === marketView)}
+                onTab={setMarketTab} shown={shown} options={loaded.options}
+                onChange={(market, name, changed) => setDraft({ ...draft, markets: { ...draft.markets,
+                  [market]: { ...(draft.markets[market] as Record<string, unknown>), [name]: changed } } })} />
+            )}
           </div>
         </div>
         <div className="border-t border-neutral-800 px-4 py-3 md:px-6">
@@ -294,6 +348,32 @@ export function Config() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/** Stage M0: markets.in / markets.us as tabs; the header switch decides which tabs show (All = both). */
+function MarketTab({ draft, saved, tab, tabs, onTab, shown, options, onChange }: {
+  draft: Data; saved: Data; tab: Market; tabs: { id: Market; label: string }[]; onTab: (m: Market) => void; shown: number;
+  options: Loaded["options"]; onChange: (market: Market, name: string, value: unknown) => void;
+}) {
+  const current = tabs.some((t) => t.id === tab) ? tab : tabs[0].id;
+  const fields = (draft.markets?.[current] ?? {}) as Record<string, unknown>;
+  const savedFields = (saved.markets?.[current] ?? {}) as Record<string, unknown>;
+  return (
+    <div className="mt-4">
+      <div role="tablist" aria-label="Market settings" className="mb-2 flex gap-1">
+        {tabs.map((t) => (
+          <button key={t.id} role="tab" aria-selected={current === t.id} onClick={() => onTab(t.id)}
+            className={`rounded px-3 py-1 font-mono text-sm ${current === t.id ? "bg-neutral-800 text-white" : "text-neutral-400 hover:bg-neutral-900"}`}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+      {Object.entries(fields).map(([name, value]) => (
+        <Field key={`${shown}.markets.${current}.${name}`} path={`markets.${current}.${name}`} name={name} value={value}
+          saved={savedFields[name]} options={options} readOnly={false} onChange={(changed) => onChange(current, name, changed)} />
+      ))}
     </div>
   );
 }

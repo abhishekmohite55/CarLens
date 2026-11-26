@@ -1,18 +1,42 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../../shared/api";
+import { MarketTag, useMarket, withMarket } from "../market";
 import { Badge, Button, td, th, useLoad, when } from "../ui";
 
 type User = {
   id: number; email: string; role: string; status: string; tokens: number; has_password: boolean; google: boolean;
   locked: boolean; runs: number; sessions: number; created_at: string; last_login_at: string | null;
+  market: "in" | "us" | null; run_markets: string[]; // stage M0: admin's pin; markets of their runs
 };
 const FILTERS = ["", "approved", "rejected", "pending"] as const;
 
+/** Stage M0: the admin's pin on a user (empty = by location). Saved at once, one audit row per change. */
+function MarketPin({ user, onSet }: { user: User; onSet: (market: string | null) => void }) {
+  if (user.role === "admin") return <span className="text-neutral-500">—</span>;
+  return (
+    <select value={user.market ?? ""} onChange={(e) => onSet(e.target.value || null)} aria-label={`Market for ${user.email}`}
+      className="rounded bg-neutral-900 px-2 py-0.5 text-xs text-neutral-300 outline-none">
+      <option value="">By location</option>
+      <option value="in">India</option>
+      <option value="us">US</option>
+    </select>
+  );
+}
+
+/** Row tags while every market is shown: the pin, else the markets of the user's runs. */
+function UserTags({ user }: { user: User }) {
+  const markets = user.market ? [user.market] : user.run_markets;
+  return <>{markets.map((m) => <MarketTag key={m} market={m} />)}</>;
+}
+
 export function Users() {
   const [status, setStatus] = useState<(typeof FILTERS)[number]>("");
-  const load = useCallback(() => api<{ users: User[] }>(`/api/admin/users${status ? `?status=${status}` : ""}`), [status]);
+  const market = useMarket();
+  const load = useCallback(() => api<{ users: User[] }>(withMarket(`/api/admin/users${status ? `?status=${status}` : ""}`, market)), [status, market]);
   const { data, error, act } = useLoad(load);
   const post = (path: string, body?: unknown) => api(path, { method: "POST", body });
+  const setMarket = (user: User, value: string | null) =>
+    act(() => api(`/api/admin/users/${user.id}/market`, { method: "PATCH", body: { market: value } }));
 
   function resetPassword(user: User) {
     const password = window.prompt(`New password for ${user.email} (at least 10 characters). They are signed out everywhere.`);
@@ -77,13 +101,18 @@ export function Users() {
           <div key={u.id} className="rounded-2xl bg-card px-4 py-3 shadow-card">
             <div className="flex items-start justify-between gap-2">
               <span className="min-w-0 truncate text-sm text-neutral-200">
-                {u.email}{u.locked && <span className="ml-1.5 text-xs text-amber-400">locked</span>}
+                {u.email}<UserTags user={u} />{u.locked && <span className="ml-1.5 text-xs text-amber-400">locked</span>}
               </span>
               <Badge text={u.role === "admin" ? "admin" : u.status} />
             </div>
             <div className="mt-0.5 text-xs text-neutral-500">
               {u.runs} run{u.runs !== 1 ? "s" : ""} · last {when(u.last_login_at)}
             </div>
+            {u.role !== "admin" && (
+              <div className="mt-2 flex items-center gap-2 text-xs text-neutral-500">
+                market <MarketPin user={u} onSet={(m) => setMarket(u, m)} />
+              </div>
+            )}
             {u.role !== "admin" && (
               <div className="mt-2 flex items-center gap-1">
                 <span className="text-xs text-neutral-500">tokens</span>
@@ -109,14 +138,15 @@ export function Users() {
       <div className="hidden sm:block">
         <table className="w-full">
           <thead>
-            <tr>{["Email", "Sign-in", "Status", "Tokens", "Runs", "Last sign-in", ""].map((h) => <th key={h} className={th}>{h}</th>)}</tr>
+            <tr>{["Email", "Sign-in", "Status", "Market", "Tokens", "Runs", "Last sign-in", ""].map((h) => <th key={h} className={th}>{h}</th>)}</tr>
           </thead>
           <tbody>
             {data?.users.map((u) => (
               <tr key={u.id}>
-                <td className={td}>{u.email}{u.locked && <span className="ml-2 text-xs text-amber-400">locked</span>}</td>
+                <td className={td}>{u.email}<UserTags user={u} />{u.locked && <span className="ml-2 text-xs text-amber-400">locked</span>}</td>
                 <td className={td}>{[u.google && "Google", u.has_password && "password"].filter(Boolean).join(" + ")}</td>
                 <td className={td}><Badge text={u.role === "admin" ? "admin" : u.status} /></td>
+                <td className={td}><MarketPin user={u} onSet={(m) => setMarket(u, m)} /></td>
                 <td className={td}>
                   {u.role === "admin" ? "—" : (
                     <span className="flex items-center gap-1">

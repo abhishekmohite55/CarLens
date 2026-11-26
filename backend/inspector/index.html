@@ -49,22 +49,84 @@
   .locate-progress { font-size: 12px; color: #ffb020; margin-left: 8px; }
   .frames-thumb { max-height: 60px; cursor: pointer; border-radius: 2px; vertical-align: middle; }
   .frames-thumb:hover { opacity: 0.8; }
+  /* stage M0: market switch + US skeleton */
+  .mk-switch { display: inline-flex; border: 1px solid #444; border-radius: 3px; overflow: hidden; vertical-align: middle; margin-left: 12px; }
+  .mk-switch button { background: #222; color: #aaa; border-radius: 0; padding: 3px 12px; font-size: 12px; }
+  .mk-switch button.active { color: #fff; }
+  #mk-in.active { background: #f59e0b; color: #0a0a0a; } /* India saffron (owner, 26 Nov) */
+  #mk-us.active { background: #6366f1; } /* US indigo */
+  .mk-badge { display: inline-block; font-size: 10px; padding: 0 6px; border-radius: 8px; border: 1px solid #555; color: #aaa; margin-left: 4px; }
+  .mk-on { border-color: #8fd5b5; color: #8fd5b5; }
+  .mk-off { border-color: #e5484d; color: #e5484d; }
+  .skel { background: linear-gradient(90deg, #222 25%, #2e2e2e 50%, #222 75%); background-size: 200% 100%; animation: skel 1.4s ease-in-out infinite; border-radius: 3px; }
+  @keyframes skel { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+  .skel-line { height: 12px; margin: 6px 0; }
+  .skel-chip { display: inline-block; width: 34px; height: 18px; border-radius: 10px; margin: 0 4px 4px 0; }
+  .us-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .us-card { background: #151515; border: 1px dashed #444; border-radius: 4px; padding: 10px; }
+  .us-later { font-size: 11px; color: #777; margin-top: 4px; }
+  .side-node { border-style: dashed !important; }
+  input:disabled, select:disabled { opacity: 0.5; }
 </style>
 </head>
 <body>
-<h1>CarLens Inspector <span style="color:#555;font-size:12px">dev tool</span> <a href="/admin" style="font-size:12px;color:#8bf">account</a></h1>
+<h1>CarLens Inspector <span style="color:#555;font-size:12px">dev tool</span> <a href="/admin" style="font-size:12px;color:#8bf">account</a>
+  <span class="mk-switch" title="Market for new uploads from this page (admin only, stage M0)">
+    <button id="mk-in" onclick="setMarket('in')">India</button><button id="mk-us" onclick="setMarket('us')">US</button>
+  </span>
+</h1>
 
 <div class="section">
-  <label>Upload limits (from /api/config)</label>
-  <div id="limits" class="status">loading…</div>
+  <label>Upload limits and market (from /api/config)</label>
+  <div id="limits" class="status"><div class="skel skel-line" style="width:60%"></div></div>
+  <div id="market-info" class="status"><div class="skel skel-line" style="width:40%"></div></div>
 </div>
 
-<div class="section">
-  <label>Pick a video and upload</label>
+<div class="section" id="us-panel" style="display:none">
+  <label>US inspection — first screen (stage M0 skeleton: VIN lookup comes in U1, VIN / state / miles upload in U2)</label>
+  <div class="us-grid">
+    <div class="us-card">
+      <label>VIN (17 characters)</label>
+      <input type="text" id="us-vin" placeholder="1HGCM82633A004352" maxlength="17" disabled style="text-transform:uppercase">
+      <button id="us-vin-btn" style="margin-top:6px" disabled>VIN lookup</button>
+      <div class="us-later">Live check + vPIC lookup: stage U1</div>
+    </div>
+    <div class="us-card">
+      <label>Is this your car?</label>
+      <div class="skel skel-line" style="width:70%"></div>
+      <div class="skel skel-line" style="width:50%"></div>
+      <div class="skel skel-line" style="width:60%"></div>
+      <button disabled style="margin-top:6px">Yes</button> <button disabled style="margin-top:6px">Change VIN</button>
+      <div class="us-later">Car card from the VIN lookup: stage U1</div>
+    </div>
+    <div class="us-card">
+      <label>State (optional; empty = US-wide prices)</label>
+      <div id="us-state-chips"></div>
+      <input type="text" placeholder="Type a state…" disabled>
+      <div class="us-later">Top-9 chips + type-ahead over 50 states + DC: stage U1</div>
+    </div>
+    <div class="us-card">
+      <label>Miles (required)</label>
+      <input type="text" placeholder="e.g. 48,200" disabled>
+      <div class="us-later">Sent with the upload: stage U2</div>
+    </div>
+  </div>
+  <label style="margin-top:12px">Video</label>
+  <input type="file" id="us-file-input" accept="video/*">
+  <div class="progress-bar"><div class="progress-fill" id="us-prog"></div></div>
+  <div id="us-upload-status" class="status"></div>
+  <button id="us-upload-btn" onclick="doUpload('us')" disabled>Upload (US)</button>
+  <div class="us-later">With US off in dev.markets_on (or no US pipeline yet) the server refuses this upload: no run, no token.</div>
+  <label style="margin-top:12px">US pipeline</label>
+  <div class="node-grid" id="us-node-grid"></div>
+</div>
+
+<div class="section" id="in-upload">
+  <label>Pick a video and upload (India)</label>
   <input type="file" id="file-input" accept="video/*">
   <div class="progress-bar"><div class="progress-fill" id="prog"></div></div>
   <div id="upload-status" class="status"></div>
-  <button id="upload-btn" onclick="doUpload()" disabled>Upload</button>
+  <button id="upload-btn" onclick="doUpload('in')" disabled>Upload</button>
   <div id="run-id-display"></div>
 </div>
 
@@ -224,37 +286,100 @@ let pricingIsRunning = false;
 let reportNodeStatus = 'waiting';
 let reportIsRunning = false;
 
-// Load config on start
+// --- stage M0: market switch (admin only; sent as ?market= with the upload, remembered in this browser) ---
+const US_NODES = [
+  {id:"upload",      label:"Upload/VIN"},
+  {id:"vin_details", label:"Vehicle details (mcp.vin)", side:true},
+  {id:"locate",      label:"Locate (Gemini)"},
+  {id:"frames",      label:"Extract frames"},
+  {id:"verify",      label:"Verify (AI)"},
+  {id:"plan",        label:"Plan searches (LLM)"},
+  {id:"search",      label:"Search web (Tavily)"},
+  {id:"extract",     label:"Read prices (LLM)"},
+  {id:"pricing",     label:"Price (Python)"},
+  {id:"report",      label:"Report"},
+];
+const MARKET_KEY = 'carlens.inspector.market';
+let inspectorMarket = null;  // null until /api/config answers (then: saved choice, else the server's)
+
+function storedMarket() {
+  try { return localStorage.getItem(MARKET_KEY); } catch (e) { return null; }
+}
+
+function setMarket(m) {
+  inspectorMarket = m;
+  try { localStorage.setItem(MARKET_KEY, m); } catch (e) { /* private mode: not remembered */ }
+  document.getElementById('mk-in').classList.toggle('active', m === 'in');
+  document.getElementById('mk-us').classList.toggle('active', m === 'us');
+  document.getElementById('in-upload').style.display = m === 'in' ? '' : 'none';
+  document.getElementById('us-panel').style.display = m === 'us' ? '' : 'none';
+  if (inspectorMarket !== null && typeof loadConfig === 'function') loadConfig(false);
+}
+
+function drawUsSkeleton() {
+  document.getElementById('us-state-chips').innerHTML =
+    Array.from({length: 9}, () => '<span class="skel skel-chip"></span>').join('');
+  document.getElementById('us-node-grid').innerHTML = US_NODES.map(n =>
+    `<div class="node-cell node-waiting${n.side ? ' side-node' : ''}" title="${n.side ? 'side branch, runs next to locate → verify (U4)' : ''}">${n.label}</div>`
+  ).join('');
+}
+drawUsSkeleton();
+
+// Load config on start, then again every 10 s, on a switch click and when the tab comes back (stage M0: markets_on
+// changes in admin show here without a reload; the server re-reads its config at most 5 s late)
+function loadConfig(first) {
 fetch('/api/config').then(r => r.json()).then(cfg => {
   const u = cfg.upload;
   document.getElementById('limits').innerHTML =
     `allowed: <b>${u.allowed_types.join(', ')}</b> &nbsp; max size: <b>${u.max_size_mb} MB</b> &nbsp; max duration: <b>${Math.floor(u.max_duration_sec/60)}:${String(u.max_duration_sec%60).padStart(2,'0')}</b>`;
   document.getElementById('limits').className = 'status ok';
+  const on = cfg.markets_on || {};
+  const badge = (m, name) => `${name}<span class="mk-badge ${on[m] ? 'mk-on' : 'mk-off'}">${on[m] ? 'on' : 'off'}</span>`;
+  document.getElementById('market-info').innerHTML =
+    `server's market for you: <b>${cfg.market === 'us' ? 'US' : 'India'}</b> &nbsp; dev.markets_on: ${badge('in', 'India')} &nbsp; ${badge('us', 'US')}`;
+  document.getElementById('market-info').innerHTML += ` &nbsp; <span style="color:#666">checked ${new Date().toLocaleTimeString()}</span>`;
+  if (first) {
+    const saved = storedMarket();
+    setMarket(saved === 'in' || saved === 'us' ? saved : (cfg.market || 'in'));
+  }
 }).catch(e => {
   document.getElementById('limits').textContent = 'Error fetching /api/config: ' + e;
   document.getElementById('limits').className = 'status err';
+  document.getElementById('market-info').textContent = '';
+  if (first) setMarket(storedMarket() === 'us' ? 'us' : 'in');
 });
+}
+loadConfig(true);
+setInterval(() => { if (!document.hidden) loadConfig(false); }, 10000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) loadConfig(false); });
 
 // Enable upload button when file is selected
 document.getElementById('file-input').addEventListener('change', function() {
   document.getElementById('upload-btn').disabled = !this.files.length;
 });
+document.getElementById('us-file-input').addEventListener('change', function() {
+  document.getElementById('us-upload-btn').disabled = !this.files.length;
+});
 
-function doUpload() {
-  const fileInput = document.getElementById('file-input');
+function doUpload(market) {
+  market = market === 'us' ? 'us' : 'in';
+  const ids = market === 'us'
+    ? {file: 'us-file-input', btn: 'us-upload-btn', status: 'us-upload-status', prog: 'us-prog'}
+    : {file: 'file-input', btn: 'upload-btn', status: 'upload-status', prog: 'prog'};
+  const fileInput = document.getElementById(ids.file);
   if (!fileInput.files.length) return;
   const file = fileInput.files[0];
 
-  const btn = document.getElementById('upload-btn');
-  const status = document.getElementById('upload-status');
-  const prog = document.getElementById('prog');
+  const btn = document.getElementById(ids.btn);
+  const status = document.getElementById(ids.status);
+  const prog = document.getElementById(ids.prog);
   btn.disabled = true;
   status.textContent = 'Uploading…';
   status.className = 'status';
   prog.style.width = '0%';
 
   const xhr = new XMLHttpRequest();
-  xhr.open('POST', '/api/runs');
+  xhr.open('POST', '/api/runs?market=' + market);
 
   xhr.upload.onprogress = function(e) {
     if (e.lengthComputable) {
@@ -275,7 +400,7 @@ function doUpload() {
         loadRun(data.run_id);
       } else {
         const msg = data.error ? data.error.message : JSON.stringify(data);
-        status.textContent = msg;
+        status.textContent = data.error && data.error.code ? `${xhr.status} ${data.error.code}: ${msg}` : msg;
         status.className = 'status err';
         btn.disabled = false;
       }
@@ -287,7 +412,8 @@ function doUpload() {
   };
 
   xhr.onerror = function() {
-    status.textContent = 'Network error.';
+    // a refusal sent before the whole video arrived (e.g. 409 market_off) can show up as a network error
+    status.textContent = 'Network error. If this market is off in dev.markets_on, the server refused the upload early.';
     status.className = 'status err';
     btn.disabled = false;
   };

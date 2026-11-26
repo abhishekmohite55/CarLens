@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from ..config import get_config, pinned
+from ..config import get_config, market_config, pinned
 from ..settings_store import load_prompt
 from ..llm.chat import ask_chain
 from ..llm.tracing import langchain_callbacks
@@ -45,13 +45,14 @@ def make_plan(confirm: dict, findings: list[dict], emit, callbacks: list, metada
     """Everything plan does without a run folder. Used by the node and scripts/check_plan.py.
     Returns {"request": dict | None, "response": dict | None, "queries": dict}; request/response are None when no LLM call."""
     cfg = get_config()
+    market = market_config()  # templates of the run's market (stage M0)
     seed = random.randrange(1_000_000)
     listing, empty = listing_queries(confirm.get("car") or {}, {"city": confirm.get("city"), "state": confirm.get("state")},
-                                     cfg.plan.listing_templates, cfg.plan.listing_queries_per_run, random.Random(seed))
+                                     market.listing_templates, cfg.plan.listing_queries_per_run, random.Random(seed))
     damage = damage_findings(findings)
     tyres = tyres_to_judge(findings, cfg.plan.tyre_ok_score)
     new_price, _ = listing_queries(confirm.get("car") or {}, {"city": confirm.get("city"), "state": confirm.get("state")},
-                                   cfg.plan.new_price_templates, cfg.plan.new_price_queries_per_run, random.Random(seed))
+                                   market.new_price_templates, cfg.plan.new_price_queries_per_run, random.Random(seed))
     queries = {"listing": listing, "new_price": new_price, "listing_seed": seed, "llm_called": bool(damage or tyres),
                "parts": [], "tyres": [], "tyres_not_seen": tyres_not_seen(findings), "problems": []}
     if len(listing) < cfg.plan.listing_queries_per_run:

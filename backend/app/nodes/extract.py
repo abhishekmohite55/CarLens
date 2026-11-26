@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from ..config import get_config, pinned
+from ..config import get_config, market_config, pinned
 from ..settings_store import load_prompt
 from ..extract import car_line, check_figures, drop_outliers, group_summary, render_trimmed, trim_results
 from ..llm.chat import ask_chain
@@ -60,7 +60,8 @@ def make_extract(trimmed: dict, text: str, car: dict, emit, callbacks: list, met
     if answer["parsed"] is None:
         return {"request": request, "response": response, "figures": None}
 
-    limits = {"listing_min_inr": e.listing_min_inr, "listing_max_inr": e.listing_max_inr,
+    car_limits = market_config().extract_limits  # the run's market (stage M0); helper keys unchanged
+    limits = {"listing_min_inr": car_limits.listing_min, "listing_max_inr": car_limits.listing_max,
               "year_tolerance": cfg.pricing.year_tolerance, "outlier_factor": e.outlier_factor}
     kept, rejected = check_figures(answer["parsed"]["figures"], trimmed, car, limits)
     kept, outliers = drop_outliers(kept, e.outlier_factor)

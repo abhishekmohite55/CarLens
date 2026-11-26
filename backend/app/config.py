@@ -10,7 +10,9 @@ from typing import Optional
 
 import yaml
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from .market import MARKETS, move_market_keys
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent  # F:\CarLens
 
@@ -95,9 +97,8 @@ class PlanConfig(BaseModel):
     queries_per_part: int
     listing_queries_per_run: int
     tyre_ok_score: int
-    listing_templates: list[str]
     new_price_queries_per_run: int = 2
-    new_price_templates: list[str] = []
+    # listing_templates / new_price_templates: per market, markets.<market> (stage M0)
 
 
 class SearchConfig(BaseModel):
@@ -106,22 +107,18 @@ class SearchConfig(BaseModel):
     include_raw_content: bool
     include_domains: list[str]
     exclude_domains: list[str] = []
-    country: Optional[str] = None
-    workers: int
+    workers: int  # country: per market, markets.<market>.search_country (stage M0)
 
 
 class ExtractConfig(BaseModel):
     max_results_per_group: int
     max_snippet_chars: int
-    listing_min_inr: int
-    listing_max_inr: int
-    outlier_factor: float
+    outlier_factor: float  # listing limits: per market, markets.<market>.extract_limits (stage M0)
 
 
 class PricingConfig(BaseModel):
     year_tolerance: int
-    min_comparables: int
-    tyre_minor_wear_deduction_inr: int
+    min_comparables: int  # tyre deduction: per market, markets.<market>.tyre_minor_wear_deduction (stage M0)
     min_listings_with_year: int = 3
     max_from_top: int = 3
     min_listing_age: int = 2
@@ -133,7 +130,48 @@ class PathsConfig(BaseModel):
 
 
 class DevConfig(BaseModel):
-    stop_after: Optional[str] = None  # node name: the pipeline ends after it (platform step 2 testing); empty = all
+    stop_after: Optional[str] = None  # India: node name, the pipeline ends after it (platform step 2 testing); empty = all
+    stop_after_us: Optional[str] = None  # US (stage M0): "upload" (upload/vin: locate never starts) or a node; empty = all
+    markets_on: dict[str, bool] = {"in": True, "us": False}  # off = no new runs / resumes / re-runs in that market
+
+
+class ExtractLimits(BaseModel):
+    listing_min: int  # car prices (listing / new price) below this are dropped (the market's currency)
+    listing_max: int  # ... and above this
+
+
+class MarketConfig(BaseModel):
+    """Settings that differ per market (stage M0, docs/backend/07-us-market.md §9)."""
+    currency: str
+    distance_unit: str
+    search_country: Optional[str] = None  # Tavily boosts results from this country
+    listing_templates: list[str] = []
+    new_price_templates: list[str] = []
+    extract_limits: ExtractLimits
+    tyre_minor_wear_deduction: int
+
+
+class UsMarketConfig(MarketConfig):
+    currency: str = "USD"
+    distance_unit: str = "mi"
+    search_country: Optional[str] = "united states"
+    extract_limits: ExtractLimits = ExtractLimits(listing_min=1000, listing_max=300000)
+    tyre_minor_wear_deduction: int = 50
+    top_states: list[str] = ["CA", "TX", "FL", "NY", "PA", "IL", "OH", "GA", "NC"]
+    state_templates_max: int = Field(2, ge=0)
+    odometer_min_confidence: float = Field(0.8, ge=0, le=1)
+
+
+class MarketsConfig(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)  # "in" is a Python keyword
+
+    default: str = "in"
+    country_map: dict[str, str] = {"US": "us"}
+    in_: MarketConfig = Field(alias="in", serialization_alias="in")
+    us: UsMarketConfig = UsMarketConfig()
+
+    def of(self, market: str) -> MarketConfig:
+        return self.us if market == "us" else self.in_
 
 
 class AuthConfig(BaseModel):
@@ -169,6 +207,8 @@ class StorageConfig(BaseModel):
 
 
 class AppConfig(BaseModel):
+    model_config = ConfigDict(serialize_by_alias=True)  # stage M0: markets.in is saved as "in", not "in_"
+
     upload: UploadConfig
     models: ModelsConfig
     frames: FramesConfig
@@ -185,6 +225,13 @@ class AppConfig(BaseModel):
     access: AccessConfig = AccessConfig()
     storage: StorageConfig = StorageConfig()
     maintenance: MaintenanceConfig = MaintenanceConfig()
+    markets: MarketsConfig
+
+    @model_validator(mode="before")
+    @classmethod
+    def _old_market_keys(cls, data):
+        """Config versions saved before stage M0 keep loading: their India keys move under markets.in."""
+        return move_market_keys(data)
 
 
 # --- which config a caller gets (platform step 6.3, docs/platform/06-admin.md §6.1) ---
@@ -217,6 +264,20 @@ def pinned(fn):
 
 def current_run_id() -> str | None:
     return getattr(_pin, "run_id", None)
+
+
+def current_market() -> str:
+    """Market of the run this thread works on (stage M0); "in" outside a run (the behaviour before markets)."""
+    from . import settings_store  # imported here: settings_store imports this module
+
+    run_id = current_run_id()
+    market = settings_store.run_market(run_id) if run_id else None
+    return market if market in MARKETS else "in"
+
+
+def market_config(market: str | None = None) -> MarketConfig:
+    """markets.<market> of the config in use; the run's own market when none is given."""
+    return get_config().markets.of(market or current_market())
 
 
 def _from_version(version_id: int, data: dict) -> AppConfig:

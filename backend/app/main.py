@@ -50,9 +50,10 @@ from .db import get_engine
 from .results import FILES as RESULT_FILES, delete_results, load_result
 from .run_index import (FLAGGED_REFUSALS, RunRefused, admission_refusal, busy, busy_refusal, busy_runs, is_run_id,
                         log_upload_event, resume_allowed, close_open_rows, interrupted_nodes, latest_node_result, other_active_run, run_owner,
-                        user_runs, run_status)
+                        user_runs, run_status, market_off_refusal)
+from .market import market_is_on, resolve_market
 from .runs import append_event, events_path, failed_at, failure_count, run_dir
-from .settings_store import SettingsError, repin_run
+from .settings_store import SettingsError, repin_run, run_market
 from .storage import fetch_run, push_run
 from .health import check as health_check
 from .maintenance import refuse_late_confirm, refuse_new_work, state as maintenance_state
@@ -89,9 +90,29 @@ def run_access(run_id: str, user: SignedIn = Depends(require_approved)) -> Signe
     return user
 
 
+def visitor_market(request: Request, user: SignedIn, admin_choice: str | None) -> str:
+    """Stage M0 (07-us-market.md §3): the admin's pin on the user, the admin's own switch (admin only), the
+    CloudFront-Viewer-Country header through markets.country_map, markets.default."""
+    markets = get_config().markets
+    return resolve_market(user_market=user.market, is_admin=user.role == "admin", admin_choice=admin_choice,
+                          country=request.headers.get("CloudFront-Viewer-Country"),
+                          country_map=markets.country_map, default=markets.default)
+
+
+def refuse_market_off(market: str) -> None:
+    """Stage M0: dev.markets_on has this market off: no run starts (no token, no AI or Tavily call)."""
+    if not market_is_on(get_config().dev.markets_on, market):
+        raise market_off_refusal(market)
+
+
+def refuse_run_market_off(run_id: str) -> None:
+    """Route dependency (resume, dev re-runs): the run's own market must be on."""
+    refuse_market_off(run_market(run_id))
+
+
 _RUN = [Depends(run_access)]
 _NEW_WORK = [Depends(refuse_new_work)]  # step 9: refused while maintenance is on (deploy)
-_ADMIN_WORK = _ADMIN + _NEW_WORK
+_ADMIN_WORK = _ADMIN + _NEW_WORK + [Depends(refuse_run_market_off)]  # every _ADMIN_WORK route has {run_id}
 
 
 @app.exception_handler(SettingsError)
@@ -160,10 +181,13 @@ def api_health():
     return health_check()
 
 
-@app.get("/api/config", dependencies=_APPROVED)
-def api_config():
+@app.get("/api/config")
+def api_config(request: Request, market: str | None = None, user: SignedIn = Depends(require_approved)):
+    """market (query): the admin's own switch (inspector); ignored for everyone else (stage M0)."""
     cfg = get_config()
     return {
+        "market": visitor_market(request, user, market),  # stage M0
+        "markets_on": cfg.dev.markets_on,
         "upload": {
             "allowed_types": cfg.upload.allowed_types,
             "max_size_mb": cfg.upload.max_size_mb,
@@ -183,12 +207,17 @@ def _server_busy(max_active_runs: int) -> bool:
 
 
 @app.post("/api/runs", dependencies=_NEW_WORK)
-async def api_create_run(request: Request, background: BackgroundTasks, user: SignedIn = Depends(require_approved)):
+async def api_create_run(request: Request, background: BackgroundTasks, market: str | None = None,
+                         user: SignedIn = Depends(require_approved)):
     """Upload → new run. Users: 1 token, one run at a time, same video again asks first (05-login.md §7.2, §7.3).
     Hardening A2: no `video: UploadFile` parameter (FastAPI would read the whole body before any check). Admission
-    first (size, tokens, run in progress, server busy, uploads at once), then the form is read."""
+    first (size, tokens, run in progress, server busy, uploads at once), then the form is read.
+    Stage M0: the run's market is resolved first (market query = the admin's switch, ignored for users); a market
+    that is off is refused before anything is read or spent."""
     cfg = get_config()
     is_admin = user.role == "admin"
+    run_market_now = visitor_market(request, user, market)
+    refuse_market_off(run_market_now)
     if body_too_large(request.headers.get("content-length"), cfg.upload.max_size_mb):
         return JSONResponse(status_code=413, content={"error": {"code": "too_large", "message":
                             f"This file exceeds {cfg.upload.max_size_mb} MB. The limit is {cfg.upload.max_size_mb} MB."}})
@@ -205,7 +234,7 @@ async def api_create_run(request: Request, background: BackgroundTasks, user: Si
         video = form.get("video")
         if not isinstance(video, StarletteUploadFile):
             return JSONResponse(status_code=400, content={"error": {"code": "no_video", "message": "No video was sent."}})
-        out = await process_upload(video, user.id, is_admin=is_admin)
+        out = await process_upload(video, user.id, is_admin=is_admin, market=run_market_now)
         background.add_task(push_run, out["run_id"])  # the video to S3 (step 8.1)
         return out
     except DuplicateUpload as dup:
@@ -333,7 +362,8 @@ async def api_run_events(run_id: str, request: Request, after: int = 0):
 
     with _start_lock:
         # a run uploaded just before maintenance waits; it starts when the page is opened after the update
-        if run_id not in _started and not _has_locate_event(run_id) and not maintenance_state()["on"]:
+        if (run_id not in _started and not _has_locate_event(run_id) and not maintenance_state()["on"]
+                and market_is_on(get_config().dev.markets_on, run_market(run_id))):  # stage M0: market off waits
             _started.add(run_id)
             t = threading.Thread(target=run_graph, args=(run_id,), daemon=True)
             t.start()
@@ -398,7 +428,7 @@ def api_run_locate(run_id: str):
     return {"started": True}
 
 
-@app.post("/api/runs/{run_id}/resume", status_code=202, dependencies=_NEW_WORK)
+@app.post("/api/runs/{run_id}/resume", status_code=202, dependencies=_NEW_WORK + [Depends(refuse_run_market_off)])
 def api_resume(run_id: str, user: SignedIn = Depends(run_access)):
     """Start the pipeline again at the node the run stopped at, then carry on to the end. Free (no token)."""
     rd = _local_run(run_id, with_video=True)

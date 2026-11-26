@@ -10,6 +10,7 @@ import { Prompts } from "./pages/Prompts";
 import { Runs } from "./pages/Runs";
 import { Tables } from "./pages/Tables";
 import { Users } from "./pages/Users";
+import { MarketProvider, MarketSwitch } from "./market";
 import { ThemeSwitch } from "./theme";
 
 // Admin sections (docs/platform/06-admin.md §1). A section without a page shows "comes in stage …".
@@ -41,6 +42,7 @@ export function AdminApp() {
   }
 
   return (
+    <MarketProvider>
     <div className="min-h-screen bg-page font-admin text-ink">
       <header className="sticky top-0 z-30 bg-page/85 backdrop-blur-md">
         <div className="mx-auto flex max-w-[1440px] flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3 sm:px-6">
@@ -52,6 +54,7 @@ export function AdminApp() {
             <NavCapsule />
           </div>
           <div className="order-2 ml-auto flex items-center gap-2 text-sm text-ink-2 xl:order-3 xl:ml-0">
+            <MarketSwitch />
             <span className="hidden max-w-[16rem] truncate md:inline">{me.email}</span>
             <ThemeSwitch />
             <button onClick={signOut} className="rounded-full bg-card px-4 py-1.5 text-ink shadow-card transition-colors hover:bg-inset focus:outline-none focus-visible:ring-2 focus-visible:ring-accent">Sign out</button>
@@ -68,6 +71,7 @@ export function AdminApp() {
         </Routes>
       </main>
     </div>
+    </MarketProvider>
   );
 }
 

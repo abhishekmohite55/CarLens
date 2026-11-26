@@ -1,22 +1,26 @@
 import { useCallback } from "react";
 import { api } from "../../shared/api";
+import { MarketTag, useMarket, withMarket } from "../market";
 import { td, th, useLoad, when } from "../ui";
 
-type Entry = { id: number; at: string; admin: string | null; action: string; target: string | null; details: unknown };
+// market (stage M0): the run / user / prompt the row is about; null = not market-linked (config, deploys)
+type Entry = { id: number; at: string; admin: string | null; action: string; target: string | null; details: unknown; market: string | null };
 
 export function Audit() {
-  const load = useCallback(() => api<{ entries: Entry[] }>("/api/admin/audit"), []);
+  const market = useMarket();
+  const load = useCallback(() => api<{ entries: Entry[] }>(withMarket("/api/admin/audit", market)), [market]);
   const { data, error } = useLoad(load);
   return (
     <div>
       <h1 className="mb-6 font-display text-xl sm:text-3xl font-light tracking-tight text-ink">Audit log</h1>
+      {market !== "all" && <p className="-mt-4 mb-4 text-xs text-neutral-500">Rows not linked to a market (config, deploys) show under All only.</p>}
       {error && <p className="mb-3 text-sm text-red-400">{error}</p>}
       {/* Mobile cards */}
       <div className="sm:hidden space-y-2">
         {data?.entries.map((e) => (
           <div key={e.id} className="rounded-2xl bg-card px-4 py-3 shadow-card">
             <div className="flex items-baseline justify-between gap-2">
-              <span className="text-sm text-neutral-200">{e.action}</span>
+              <span className="text-sm text-neutral-200">{e.action}<MarketTag market={e.market} /></span>
               <span className="shrink-0 text-xs text-neutral-500">{when(e.at)}</span>
             </div>
             {(e.admin || e.target) && (
@@ -44,7 +48,7 @@ export function Audit() {
               <tr key={e.id}>
                 <td className={td}>{when(e.at)}</td>
                 <td className={td}>{e.admin ?? "—"}</td>
-                <td className={td}>{e.action}</td>
+                <td className={td}>{e.action}<MarketTag market={e.market} /></td>
                 <td className={td}>{e.target}</td>
                 <td className={`${td} font-mono text-xs text-neutral-400`}>{JSON.stringify(e.details)}</td>
               </tr>

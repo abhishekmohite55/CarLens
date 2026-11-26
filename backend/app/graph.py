@@ -11,7 +11,8 @@ from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 from sqlalchemy.engine import make_url
 
-from .config import get_config, pinned_run
+from .config import current_market, get_config, pinned_run
+from .market import past_stop, stop_after_for
 from .db import database_url
 from .nodes.locate import run_locate
 from .nodes.frames import run_frames
@@ -101,9 +102,11 @@ _RUNNERS = {"locate": run_locate, "frames": run_frames, "verify": run_verify,
 
 
 def _past_stop(node: str) -> bool:
-    """True when config.yaml dev.stop_after names a node at or before this one (read on every run)."""
-    stop = get_config().dev.stop_after
-    return stop in ORDER and ORDER.index(node) > ORDER.index(stop)
+    """True when the run's market's stop setting (dev.stop_after for India, dev.stop_after_us for US, stage M0) names
+    a node at or before this one (read on every run)."""
+    dev = get_config().dev
+    stop = stop_after_for(current_market(), dev.stop_after, getattr(dev, "stop_after_us", None))
+    return past_stop(node, stop, ORDER)
 
 
 def _after(state: GraphState, node: str, nxt: str) -> str:

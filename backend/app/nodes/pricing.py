@@ -5,7 +5,7 @@ import logging
 import threading
 from datetime import datetime
 
-from ..config import get_config, pinned
+from ..config import get_config, market_config, pinned
 from ..pricing import price_report
 from ..results import load_result, save_result
 from ..runs import append_event
@@ -25,10 +25,12 @@ def try_claim(run_id: str) -> bool:
 
 
 def pricing_settings() -> dict:
-    """The config.yaml `pricing:` values price_report needs. Shared with scripts/check_price.py."""
+    """The config.yaml `pricing:` values price_report needs (tyre deduction from the run's market, stage M0).
+    Shared with scripts/check_price.py."""
     p = get_config().pricing
     return {"min_listings_with_year": p.min_listings_with_year, "max_from_top": p.max_from_top,
-            "min_listing_age": p.min_listing_age, "tyre_minor_wear_deduction_inr": p.tyre_minor_wear_deduction_inr}
+            "min_listing_age": p.min_listing_age,
+            "tyre_minor_wear_deduction_inr": market_config().tyre_minor_wear_deduction}
 
 
 @pinned

@@ -89,7 +89,7 @@ def main() -> None:
 
     folder = CHECKS_DIR / args.folder
     frames = load_frames(folder, args.item_ids)
-    prompts_dir = PROJECT_ROOT / cfg.paths.prompts_dir
+    prompts_dir = PROJECT_ROOT / cfg.paths.prompts_dir / "in"  # stage M0: India prompts
     system_prompt = (prompts_dir / "verify.system.md").read_text(encoding="utf-8")
     user_prompt = (prompts_dir / "verify.user.md").read_text(encoding="utf-8").format(frame_count=len(frames))
 
