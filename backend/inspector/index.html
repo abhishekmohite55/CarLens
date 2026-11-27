@@ -597,7 +597,14 @@ function doUpload(market) {
 }
 
 // Stage U2: a US run says so above its node grid (VIN car, state, miles typed); confirm and photos show as skipped.
+const SIDE_NODES = [{id: 'vin_details', label: 'Vehicle details (mcp.vin)'}];  // stage U4: US side job
+
 function showRunMarket(meta) {
+  runCurrency = meta.market === 'us' ? 'USD' : 'INR';
+  if (meta.market === 'us' && !document.getElementById('node-vin_details')) {
+    const up = document.getElementById('node-upload');
+    if (up) up.insertAdjacentHTML('afterend', '<div class="node-cell node-waiting side-node" id="node-vin_details">Vehicle details (mcp.vin)</div>');
+  }
   let box = document.getElementById('run-market');
   if (!box) {
     box = document.createElement('div');
@@ -612,11 +619,29 @@ function showRunMarket(meta) {
     const el = document.getElementById('run-car');
     if (el && c && c.car) el.textContent = [c.car.year, c.car.make, c.car.model, c.car.variant].filter(Boolean).join(' ');
   }).catch(() => {});
+  loadVinDetails();
+}
+
+// Stage U4: vehicle details line under the market line (again when the side job ends).
+function loadVinDetails() {
+  const box = document.getElementById('run-market');
+  if (!box || runCurrency !== 'USD') return;
+  fetch(`/api/runs/${currentRunId}/files/00b_vin_details/response.json`).then(r => r.ok ? r.json() : null).then(d => {
+    let line = document.getElementById('run-details');
+    if (!line) { line = document.createElement('div'); line.id = 'run-details'; box.appendChild(line); }
+    const x = d && d.details;
+    line.innerHTML = !d ? 'Vehicle details: waiting…'
+      : !x.ok ? 'Vehicle details: <span class="warn">not available</span> (' + escHtml(x.error || 'empty answer') + ')'
+      : 'Vehicle details: recalls ' + (x.recalls ?? '—') + (x.open_recalls != null ? ' (' + x.open_recalls + ' open)' : '')
+        + ' · complaints ' + (x.complaints ?? '—') + ' · safety ' + (x.safety_overall ?? x.safety_frontal_driver ?? '—') + '★'
+        + ' · ' + (x.mpg_combined ?? '—') + ' mpg · ' + d.ms + ' ms';
+  }).catch(() => {});
 }
 
 function loadRun(runId) {
   if (!runId) return;
   currentRunId = runId;
+  runCurrency = 'INR';  // stage U5: set again from meta.json
   locateNodeStatus = 'waiting';
   nodeStartTs = {};
   document.getElementById('resume-box').style.display = 'none';
@@ -652,6 +677,7 @@ function loadRun(runId) {
     {path:'events.jsonl', label:'events.jsonl'},
     {path:'00_vin/request.json', label:'00_vin/request.json'},
     {path:'00_vin/response.json', label:'00_vin/response.json'},
+    {path:'00b_vin_details/response.json', label:'00b_vin_details/response.json'},
     {path:'01_locate/request.json', label:'01_locate/request.json'},
     {path:'01_locate/response.json', label:'01_locate/response.json'},
     {path:'02_frames/manifest.json', label:'02_frames/manifest.json'},
@@ -756,12 +782,13 @@ function loadRun(runId) {
           const cell = document.getElementById('node-' + ev.node);
           if (cell) {
             cell.className = 'node-cell node-' + statusMap[ev.type];
-            const n = NODES.find(x => x.id === ev.node);
+            const n = NODES.concat(SIDE_NODES).find(x => x.id === ev.node);
             if (ev.type === 'node_started') { nodeStartTs[ev.node] = Date.parse(ev.ts); cell.textContent = n.label; }
             else if (nodeStartTs[ev.node]) cell.textContent = n.label + ' · ' + ((Date.parse(ev.ts) - nodeStartTs[ev.node]) / 1000).toFixed(1) + ' s';
           }
         }
         if (ev.node === 'pipeline' && ev.type === 'run_done') showResumeBox(ev.data);
+        if (ev.node === 'vin_details' && ev.type !== 'node_started') loadVinDetails();  // stage U4
         if (ev.type === 'node_started') document.getElementById('resume-box').style.display = 'none';
         if (ev.node === 'locate') document.getElementById('locate-btn').disabled = ev.type === 'node_started';
         if (ev.node === 'locate') {
@@ -1558,7 +1585,11 @@ function doResume() {
 }
 
 // ---- Extract + pricing (Stage 7) ----
-const inr = v => v == null ? '-' : '₹' + Math.round(v).toLocaleString('en-IN');
+// Stage U5: amounts in the run's currency (set from meta.json when a run is loaded), never the visitor's.
+let runCurrency = 'INR';
+const cur = () => runCurrency === 'USD' ? '$' : '₹';
+const inr = v => v == null ? '-' : runCurrency === 'USD'
+  ? '$' + Math.round(v).toLocaleString('en-US') : '₹' + Math.round(v).toLocaleString('en-IN');
 const link = (url, text) => url ? '<a href="' + escHtml(url) + '" target="_blank" rel="noopener">' + escHtml(text) + '</a>' : escHtml(text);
 
 function updateRerunButton(node, prevStatus, prevLabel, status, running, label) {
@@ -1596,9 +1627,20 @@ function loadReport(runId, ev) {
       + ' · ' + (v.odometer_km != null ? v.odometer_km.toLocaleString('en-IN') + ' km (' + w(v.km_from) + ')' : 'km not read')
       + (v.changed.length ? '<br><span class="status">Changed by the user: ' + w(v.changed.join(', ')) + '</span>' : '') + '</div>';
     html += p.status === 'ok'
-      ? '<div style="font-size:22px;margin:8px 0"><b>' + inr(p.low) + ' – ' + inr(p.high) + '</b> <span class="status">after repairs</span></div>'
+      ? '<div style="font-size:22px;margin:8px 0"><b>' + inr(p.low) + ' – ' + inr(p.high) + '</b> <span class="status">after repairs' + (p.scope ? ' · ' + escHtml(p.scope) : '') + '</span></div>'
         + '<ul>' + p.how.map(x => '<li>' + escHtml(x) + '</li>').join('') + '</ul>'
       : '<div class="cf-note">Valuation unavailable: ' + escHtml(p.reason) + '</div>';
+    if (p.state) html += '<div class="cf-note">' + (p.state.status === 'ok'
+      ? '<b>' + escHtml(p.state.name) + ': ' + inr(p.state.low) + ' – ' + inr(p.state.high) + '</b> (' + p.state.listings + ' state listings)'
+      : escHtml(p.state.reason)) + '</div>';
+    if (r.us) {  // stage U5: VIN, miles, video vs VIN, recalls / safety
+      const u = r.us;
+      html += '<div class="cf-note"><b>VIN</b> ' + escHtml(v.vin || '') + ' · <b>Miles</b> ' + escHtml(u.miles.text)
+        + (u.vin_match ? '<br><b>Video vs VIN</b>: ' + escHtml(u.vin_match.result) + (u.vin_match.reason ? ' — ' + escHtml(u.vin_match.reason) : '') : '')
+        + '<br><b>Vehicle details</b>: ' + (u.vehicle_details.available ? u.vehicle_details.lines.map(escHtml).join(' · ') : 'Recall and safety data not available')
+        + (u.vehicle_details.recalls.length ? '<ul>' + u.vehicle_details.recalls.map(x => '<li>' + escHtml(x.component || '') + ': ' + escHtml(x.summary || '') + '</li>').join('') + '</ul>' : '')
+        + '</div>';
+    }
     html += '<b>Condition summary</b><ul>' + r.condition_summary.map(x => '<li>' + escHtml(x) + '</li>').join('') + '</ul>';
     if (r.damage.length) html += '<b>Damage</b><div style="display:flex;gap:12px;flex-wrap:wrap">' + r.damage.map(d =>
       '<div style="width:220px">' + (d.frame ? '<img src="' + file(d.frame) + '" style="width:210px">' : '')
@@ -1646,9 +1688,10 @@ function loadExtractFiles(runId, ev) {
         + '</table>';
       const row = x => '<tr><td>' + escHtml(x.source || '') + '</td><td>' + escHtml(x.group || '') + '</td><td>' + escHtml(x.type || '') + '</td><td>'
         + escHtml((x.price_text || []).join(' – ')) + '</td><td>' + (x.inr ? x.inr.map(inr).join(' – ') : '-') + '</td><td>'
-        + escHtml([x.year, x.km != null ? x.km + ' km' : null, x.variant, x.tyre_size].filter(v => v != null).join(' · ')) + '</td><td>'
+        + escHtml([x.year, x.km != null ? x.km + ' km' : null, x.miles != null ? x.miles + ' mi' : null, x.variant, x.valuation,
+                   x.query_group ? 'query: ' + x.query_group : null, x.tyre_size].filter(v => v != null).join(' · ')) + '</td><td>'
         + (x.reason ? escHtml(x.reason) : link(x.url, 'link')) + '</td></tr>';
-      const head = '<tr><th>S</th><th>group</th><th>type</th><th>price text</th><th>₹</th><th>year · km · variant · tyre</th><th>link / reason</th></tr>';
+      const head = '<tr><th>S</th><th>group</th><th>type</th><th>price text</th><th>' + cur() + '</th><th>year · km/mi · variant · tyre</th><th>link / reason</th></tr>';
       html += '<b>Kept (' + f.kept.length + ')</b><table>' + head + f.kept.map(row).join('') + '</table>';
       const dropped = f.rejected.concat(f.outliers);
       html += '<details><summary>Rejected + outliers (' + dropped.length + ')</summary><table>' + head + dropped.map(row).join('') + '</table></details>';
@@ -1671,7 +1714,7 @@ function loadPricing(runId, ev) {
       html += '<b>New price</b>: ' + (np ? inr(np.value) + ' (' + escHtml(np.type) + ', variant match: ' + escHtml(np.variant_match || String(np.variant_matched))
         + ', from ' + src(np.sources) + ')' : 'none found') + '<br>';
       if (p.listings_used) {
-        html += '<b>Listings used (' + p.listings_used.length + ')</b><table><tr><th>S</th><th>year</th><th>₹</th><th>age</th><th>kept / year</th></tr>'
+        html += '<b>Listings used (' + p.listings_used.length + ')</b><table><tr><th>S</th><th>year</th><th>' + cur() + '</th><th>age</th><th>kept / year</th></tr>'
           + p.listings_used.map(x => '<tr><td>' + link(urls[x.source], x.source) + '</td><td>' + x.year + '</td><td>' + inr(x.price) + '</td><td>' + x.age + '</td><td>' + x.rate.toFixed(3) + '</td></tr>').join('')
           + '</table>';
         html += '<details><summary>Listings dropped (' + p.listings_dropped.length + ')</summary><ul>'
@@ -1686,6 +1729,15 @@ function loadPricing(runId, ev) {
         html += '<div style="font-size:18px;margin-top:6px"><b>Price after repairs: ' + inr(p.after_repairs.median) + ' – ' + inr(p.after_repairs.max) + '</b></div>';
       } else {
         html += '<div class="cf-note">Valuation unavailable: ' + escHtml(p.reason) + '</div>';
+      }
+      if (p.currency === 'USD') {  // stage U5: state price next to the US-wide one; miles shown, not used yet
+        const st = p.state;
+        html += '<div class="cf-note">Above = <b>US-wide</b>. '
+          + (st ? (st.status === 'ok' ? '<b>' + escHtml(st.name) + ': ' + inr(st.after_repairs.median) + ' – ' + inr(st.after_repairs.max)
+                   + '</b> (' + (st.listings_used || []).length + ' state listings)' : escHtml(st.reason) + (st.detail ? ' (' + escHtml(st.detail) + ')' : ''))
+                : 'No state given: US-wide only.')
+          + (p.miles ? '<br>Miles: ' + (p.miles.used != null ? Number(p.miles.used).toLocaleString('en-US') : '—') + ' (' + escHtml(p.miles.source) + ') — ' + escHtml(p.miles.note) : '')
+          + '</div>';
       }
     }
     document.getElementById('pricing-content').innerHTML = html;

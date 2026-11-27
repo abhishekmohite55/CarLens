@@ -24,6 +24,7 @@ from .nodes.search import run_search
 from .nodes.extract import run_extract
 from .nodes.pricing import run_pricing
 from .nodes.report import run_report
+from .nodes.vin_details import start_vin_details
 from .runs import TERMINAL, append_event, node_result, read_events
 from .storage import push_run
 
@@ -192,11 +193,13 @@ def _start_state(run_id: str, start_at: str) -> dict:
 
 
 def run_graph(run_id: str) -> None:
+    start_vin_details(run_id)  # stage U4: US vehicle details next to locate → verify (no-op for India)
     _invoke(run_id, _start_state(run_id, "locate"))
 
 
 def resume_from(run_id: str, node: str) -> None:
     """Run the pipeline from `node` to the end (through the confirm pause when it is ahead)."""
+    start_vin_details(run_id)  # stage U4: only when a US run has no vehicle details yet
     _invoke(run_id, _start_state(run_id, node))
 
 

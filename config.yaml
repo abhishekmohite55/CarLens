@@ -142,8 +142,17 @@ markets: # stage M0 (docs/backend/07-us-market.md §3, §9): settings that diffe
     currency: USD
     distance_unit: mi
     search_country: united states
-    listing_templates: [] # US set comes in stage U4
-    new_price_templates: [] # MSRP / invoice, stage U4
+    listing_templates: # stage U4: at most state_templates_max with {state} per run, the rest US-wide; a template with an empty field is skipped
+      - "used {year} {make} {model} for sale {state}"
+      - "{year} {make} {model} {variant} price {state}"
+      - "used {year} {make} {model} {variant} price"
+      - "{year} {make} {model} private party value kbb edmunds"
+      - "used {year} {make} {model} for sale carfax cargurus"
+      - "{year} {make} {model} {variant} listings carmax carvana autotrader"
+    new_price_templates: # owner 28 Nov: the ORIGINAL MSRP of this model year and trim (it may not be sold new today); MSRP is national: no {state}
+      - "{year} {make} {model} {variant} original MSRP"
+      - "{year} {make} {model} {variant} price when new"
+      - "{year} {make} {model} MSRP all trims"
     extract_limits:
       listing_min: 1000
       listing_max: 300000
@@ -160,6 +169,9 @@ vin: # stage U1 (docs/backend/07-us-market.md §4): every VIN source sits behind
   provider: vpic # decodes the VIN on the first screen
   cache_days: 30 # same VIN again within this many days: the saved answer (car found or not found), no second call
   max_lookups_per_hour: 20 # real provider calls per user per hour (the admin has no limit)
+  details_provider: mcpvin # stage U4: recalls, complaints, safety ratings, EPA fuel economy for US runs; empty = none
+  details_wait_sec: 30 # plan waits at most this long for vehicle details, then plans without them
+  details_top_recalls: 5 # recalls listed in the report
   providers:
     vpic: # NHTSA vPIC, free, no key
       base_url: https://vpic.nhtsa.dot.gov/api/vehicles
@@ -177,6 +189,21 @@ vin: # stage U1 (docs/backend/07-us-market.md §4): every VIN source sits behind
         cylinders: EngineCylinders
         engine_layout: EngineConfiguration
         drive: DriveType
+    mcpvin: # mcp.vin REST, free, no key, 30 requests / minute per IP; vehicle details only (it decodes with vPIC too)
+      base_url: https://mcp.vin/api/vin
+      timeout_sec: 20 # longer: "Recall and safety data not available", the run goes on
+      key_env: ""
+      recalls_path: recalls.recalls
+      fields: # common name: dotted path in the mcp.vin answer
+        recalls: recalls.count
+        open_recalls: recall_status.open_count
+        complaints: complaints.count
+        safety_overall: safety_ratings.overall
+        safety_frontal_driver: safety_ratings.frontal_driver
+        mpg_city: fuel_economy.city_mpg
+        mpg_highway: fuel_economy.highway_mpg
+        mpg_combined: fuel_economy.combined_mpg
+        annual_fuel_cost: fuel_economy.annual_fuel_cost
 
 auth: # platform step 5 sign-in (docs/platform/05-login.md)
   session_hours: 24 # a sign-in lasts this long

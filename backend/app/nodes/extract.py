@@ -10,7 +10,8 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from ..config import get_config, market_config, pinned
 from ..settings_store import load_prompt
-from ..extract import car_line, check_figures, drop_outliers, group_summary, render_trimmed, trim_results
+from ..extract import (PRICE_RE, USD_PRICE_RE, car_line, check_figures, drop_outliers, group_summary, parse_inr,
+                       parse_usd, render_trimmed, trim_results)
 from ..llm.chat import ask_chain
 from ..llm.tracing import langchain_callbacks
 from ..photos import apply_photos
@@ -63,10 +64,12 @@ def make_extract(trimmed: dict, text: str, car: dict, emit, callbacks: list, met
     car_limits = market_config().extract_limits  # the run's market (stage M0); helper keys unchanged
     limits = {"listing_min_inr": car_limits.listing_min, "listing_max_inr": car_limits.listing_max,
               "year_tolerance": cfg.pricing.year_tolerance, "outlier_factor": e.outlier_factor}
-    kept, rejected = check_figures(answer["parsed"]["figures"], trimmed, car, limits)
+    usd = market_config().currency == "USD"  # stage U5: dollars for US runs
+    kept, rejected = check_figures(answer["parsed"]["figures"], trimmed, car, limits, parse_usd if usd else parse_inr)
     kept, outliers = drop_outliers(kept, e.outlier_factor)
     figures = {"answered_by": answer["answered_by"], "car": car, "summary": group_summary(kept),
-               "kept": kept, "rejected": rejected, "outliers": outliers}
+               "kept": kept, "rejected": rejected, "outliers": outliers,
+               **({"currency": "USD"} if usd else {})}  # US figures stay out of the shared price_figures table
     return {"request": request, "response": response, "figures": figures}
 
 
@@ -94,8 +97,9 @@ def _run_extract_inner(run_id: str) -> None:
     confirm = load_result(run_id, "04_confirm.json")
     confirm = apply_photos(confirm, [], load_photos_answer(run_id), get_config().photos.km_min_confidence)[0]  # photo km
     e = get_config().extract
+    usd = market_config().currency == "USD"  # stage U5: keep snippets with a $ amount for US runs
     trimmed = trim_results(results, load_result(run_id, "06_plan/queries.json"),
-                           e.max_results_per_group, e.max_snippet_chars)
+                           e.max_results_per_group, e.max_snippet_chars, USD_PRICE_RE if usd else PRICE_RE)
     text = render_trimmed(car_line(confirm), trimmed)
     trimmed["stats"]["chars_out"] = len(text)
 

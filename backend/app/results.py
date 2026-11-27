@@ -18,6 +18,7 @@ FILES: dict[str, tuple[str, str]] = {
     "meta.json": ("upload", "meta.json"),
     "00_vin/request.json": ("upload", "vin_request.json"),  # stage U2: US runs, copied from the saved VIN lookup
     "00_vin/response.json": ("upload", "vin_response.json"),
+    "00b_vin_details/response.json": ("vin_details", "response.json"),  # stage U4: mcp.vin vehicle details (US)
     "01_locate/request.json": ("locate", "request.json"),
     "01_locate/response.json": ("locate", "response.json"),
     "02_frames/manifest.json": ("frames", "manifest.json"),

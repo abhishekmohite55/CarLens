@@ -145,7 +145,10 @@ def search_rows(results: dict, car: dict) -> list[dict]:
 
 
 def _write_search(conn: Connection, run_id: str, results: Any) -> None:
-    """Upsert into search_results: kept across runs; a result seen again only gets a new last_seen_at (owner, 9 Nov)."""
+    """Upsert into search_results: kept across runs; a result seen again only gets a new last_seen_at (owner, 9 Nov).
+    Stage U4: US runs (currency USD) are left out until the tables get a currency column (docs/backend/08-us-db-notes.md)."""
+    if not _same_currency_tables(results):
+        return
     record = conn.execute(select(NodeResult.data).where(
         NodeResult.run_id == run_id, NodeResult.node == "confirm", NodeResult.name == "04_confirm.json")).scalar()
     rows = [{**r, "first_run_id": run_id} for r in search_rows(results, (record or {}).get("car") or {})]
@@ -191,7 +194,10 @@ def figure_rows(figures: dict, trimmed: dict, record: dict) -> list[dict]:
 
 
 def _write_figures(conn: Connection, run_id: str, figures: Any) -> None:
-    """Upsert into price_figures: kept across runs; the same listing again only gets a new last_seen_at (§4.6)."""
+    """Upsert into price_figures: kept across runs; the same listing again only gets a new last_seen_at (§4.6).
+    Stage U5: US runs (currency USD) are left out (see _write_search)."""
+    if not _same_currency_tables(figures):
+        return
     def saved(node: str, name: str) -> Any:
         return conn.execute(select(NodeResult.data).where(
             NodeResult.run_id == run_id, NodeResult.node == node, NodeResult.name == name)).scalar()
@@ -201,6 +207,16 @@ def _write_figures(conn: Connection, run_id: str, figures: Any) -> None:
         return
     stmt = pg_insert(PriceFigure).values(rows)
     conn.execute(stmt.on_conflict_do_update(constraint="uq_price_figures_listing", set_={"last_seen_at": func.now()}))
+
+
+def _same_currency_tables(data: Any) -> bool:
+    """The shared price tables hold rupees only until the final US migration adds a currency column."""
+    return (data or {}).get("currency", "INR") == "INR"
+
+
+def price_rows(price: dict) -> list[dict]:
+    """prices table (low_inr / high_inr): India runs only for now (stage U5; US numbers stay in price.json)."""
+    return [price_row(price)] if _same_currency_tables(price) else []
 
 
 def price_row(price: dict) -> dict:
@@ -250,7 +266,7 @@ WRITERS: dict[str, Callable[[Connection, str, Any], None]] = {
     "06_plan/queries.json": _replace(PlanQuery, plan_rows),
     "07_search/results.json": _write_search,
     "08_extract/figures.json": _write_figures,
-    "09_report/price.json": _replace(Price, lambda price: [price_row(price)]),
+    "09_report/price.json": _replace(Price, price_rows),
 }
 NODE_TABLES = {"locate": [LocateItem], "frames": [Frame], "verify": [VerifyFinding, VerifyVehicle],
                "confirm": [ConfirmedCar], "photos": [PhotoResult],

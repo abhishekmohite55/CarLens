@@ -10,11 +10,12 @@ class ProviderDown(Exception):
 
 
 def provider_module(name: str) -> ModuleType:
-    from . import vpic  # one import per provider; mcp.vin comes in stage U4
-    modules = {"vpic": vpic}
+    from . import mcpvin, vpic  # one import per provider
+    modules = {"vpic": vpic, "mcpvin": mcpvin}
     if name not in modules:
         raise ValueError(f"unknown VIN provider {name!r}")
     return modules[name]
 
 
-KNOWN = ("vpic",)
+KNOWN = ("vpic",)  # providers that decode a VIN (vin.provider)
+DETAILS = ("mcpvin",)  # providers of vehicle details (vin.details_provider, stage U4)

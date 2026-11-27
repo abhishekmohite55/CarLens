@@ -19,6 +19,16 @@ def inr(v) -> str:
     return "₹" + ",".join(([head] if head else []) + groups + [tail])
 
 
+def usd(v) -> str:
+    """Stage U5: 24995 -> '$24,995'."""
+    return f"${int(round(v)):,}"
+
+
+def money(v, currency: str = "INR") -> str:
+    """The run's currency, never the visitor's (07-us-market.md §13)."""
+    return usd(v) if currency == "USD" else inr(v)
+
+
 def _km(v) -> str:
     return inr(v)[1:] + " km"
 
@@ -29,7 +39,8 @@ def _words(s) -> str:
 
 def build_report(inp: dict) -> dict:
     """inp: confirm, verify (parsed answer), manifest, locate_items, queries, photos_answer, price, sources
-    (S-id -> {title, url}), km_min_confidence. Missing parts come in as None / {}."""
+    (S-id -> {title, url}), km_min_confidence; US runs (stage U5) also `us`: {miles (03_verify/miles.json),
+    vin_match (03_verify/vin_match.json), details (vehicle details or None)}. Missing parts come in as None / {}."""
     confirm = inp["confirm"]
     verify = inp.get("verify") or {}
     manifest = inp.get("manifest") or {}
@@ -40,6 +51,9 @@ def build_report(inp: dict) -> dict:
     findings = [{**f, "category": (items.get(f.get("item_id")) or {}).get("category")} for f in verify.get("findings") or []]
     confirm, findings, applied = apply_photos(confirm, findings, inp.get("photos_answer"), inp.get("km_min_confidence", 0.8))
     link = lambda sid: {"id": sid, **(sources.get(sid) or {})}
+    currency = (price or {}).get("currency", "INR")
+    fmt = lambda v: money(v, currency)  # noqa: E731
+    us = inp.get("us")
 
     car = confirm.get("car") or {}
     changed = confirm.get("changed") or []
@@ -106,16 +120,26 @@ def build_report(inp: dict) -> dict:
             "new_price": {**{x: np.get(x) for x in ("value", "type", "variant_match")}, "sources": [link(s) for s in np["sources"]]},
             "listings_used": [{"year": x["year"], "price": x["price"], "rate": round(x["rate"], 3), "source": link(x["source"])}
                               for x in price["listings_used"]],
-            "how": [f"New price {inr(np['value'])} ({_words(np['type'])}, variant match: {np.get('variant_match', 'n/a')}, "
-                    f"{len(np['sources'])} source(s))",
+            "how": [(f"Original MSRP {fmt(np['value'])} ({np.get('year') or 'year not stated'}, " if us else
+                     f"New price {fmt(np['value'])} (")
+                    + f"{_words(np['type'])}, variant match: {np.get('variant_match', 'n/a')}, {len(np['sources'])} source(s))",
                     f"{len(price['listings_used'])} listings 2+ years old: value kept per year median {k['median']:.3f}, "
                     f"top-3 average {k['max']:.3f}",
-                    f"Car age {price['car_age_years']} years: fair value {inr(fv['median'])} – {inr(fv['max'])}",
-                    f"Minus repairs {inr(repairs['total'])}: {inr(a['median'])} – {inr(a['max'])}",
-                    "Km is not used in the price"]}
+                    f"Car age {price['car_age_years']} years: fair value {fmt(fv['median'])} – {fmt(fv['max'])}",
+                    f"Minus repairs {fmt(repairs['total'])}: {fmt(a['median'])} – {fmt(a['max'])}",
+                    "Miles are not used in the price yet" if us else "Km is not used in the price"]}
     else:
         price_out = {"status": "unavailable",
                      "reason": (price or {}).get("reason") or "Pricing did not run for this run"}
+    if us:
+        price_out["currency"] = currency  # India's price block keeps its shape (₹ implied)
+        price_out["scope"] = "US-wide"
+        st = (price or {}).get("state")
+        if st:  # stage U5: the state price next to the US-wide one, or why not
+            price_out["state"] = ({"status": "ok", "name": st["name"], "low": st["after_repairs"]["median"],
+                                   "high": st["after_repairs"]["max"], "listings": len(st.get("listings_used") or [])}
+                                  if st.get("status") == "ok" else
+                                  {"status": "unavailable", "name": st.get("name"), "reason": st.get("reason")})
 
     summary = []
     if damage:
@@ -135,7 +159,48 @@ def build_report(inp: dict) -> dict:
         summary.append("Checked, no damage: " + ", ".join(no_damage) + ".")
     if rejected:
         summary.append(f"{len(rejected)} item(s) flagged in the video were not confirmed (e.g. reflections).")
-    summary.append(f"Odometer: {_km(confirm['odometer_km']) + ' (' + km_from + ')' if confirm.get('odometer_km') is not None else 'not read'}.")
+    if us:
+        us_out = _us_part(us, confirm)
+        summary += us_out.pop("summary")
+        vehicle.update(us_out.pop("vehicle"))
+        coverage["odometer"] = us_out["miles"]["text"]
+    else:
+        summary.append(f"Odometer: {_km(confirm['odometer_km']) + ' (' + km_from + ')' if confirm.get('odometer_km') is not None else 'not read'}.")
 
-    return {"vehicle": vehicle, "price": price_out, "condition_summary": summary, "damage": damage, "tyres": tyres,
-            "repairs": repairs, "coverage": coverage, "photos_applied": applied}
+    out = {"vehicle": vehicle, "price": price_out, "condition_summary": summary, "damage": damage, "tyres": tyres,
+           "repairs": repairs, "coverage": coverage, "photos_applied": applied}
+    if us:
+        out["us"] = us_out
+    return out
+
+
+def _us_part(us: dict, confirm: dict) -> dict:
+    """Stage U5: the US-only part of the report — VIN, miles used and why, video vs VIN, recalls / safety / mpg."""
+    from .vin.details import details_lines  # imported here: report stays importable without the vin package users
+
+    miles = us.get("miles") or {}
+    used, source = miles.get("miles_used", confirm.get("miles_user")), miles.get("source", "you")
+    if source == "odometer":
+        text = f"{used:,} mi (odometer; you typed {miles.get('miles_user'):,})"
+    elif miles.get("reading_miles") is not None:
+        text = f"{used:,} mi (you typed; odometer {miles['reading_miles']:,} mi, {miles.get('why')})"
+    else:
+        text = f"{used:,} mi (you typed; odometer not read)" if used is not None else "not known"
+    match = us.get("vin_match") or {}
+    details = us.get("details")
+    lines = details_lines(details)
+    summary = [f"Miles: {text}."]
+    if match.get("action") == "warn":
+        summary.append(f"Warning: the video may not show the car of this VIN ({match.get('reason') or 'mismatch'}).")
+    elif match.get("result") == "unsure":
+        summary.append("The car in the video could not be matched to the VIN (not enough seen).")
+    summary.append(" ".join(f"{x}." for x in lines) if lines else "Recall and safety data not available.")
+    return {"vehicle": {"vin": confirm.get("vin"), "state_code": confirm.get("state_code"), "miles_used": used,
+                        "miles_source": source},
+            "miles": {"used": used, "source": source, "user": miles.get("miles_user", confirm.get("miles_user")),
+                      "odometer": miles.get("reading_miles"), "odometer_unit": miles.get("unit"),
+                      "accepted": miles.get("accepted"), "why": miles.get("why"), "text": text},
+            "vin_match": {k: match.get(k) for k in ("result", "confidence", "reason", "action")} if match else None,
+            "vehicle_details": {"available": bool(lines), "lines": lines,
+                                "recalls": (details or {}).get("recall_list") or []},
+            "summary": summary}

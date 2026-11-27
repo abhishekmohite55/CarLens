@@ -1,0 +1,243 @@
+{
+ "valid": true,
+ "vin": "1HGCM82643A104332",
+ "vehicle": {
+  "year": 2003,
+  "make": "HONDA",
+  "make_id": 474,
+  "model": "Accord",
+  "model_id": 1861,
+  "trim": "EX-V6",
+  "body_class": "Coupe",
+  "doors": 2,
+  "vehicle_type": "PASSENGER CAR"
+ },
+ "recalls": {
+  "available": true,
+  "count": 24,
+  "recalls": [
+   {
+    "campaign_number": "19V182000",
+    "component": "AIR BAGS:FRONTAL:DRIVER SIDE:INFLATOR MODULE",
+    "summary": "Honda (American Honda Motor Co.) is recalling specific 2003 Acura 3.2CL, 2013-2016 ILX, 2013-2014 ILX Hybrid, 2003-2006 MDX, 2007-2016 RDX, 2002-2003 3.2TL, 2004-2006, and 2009-2014 TL, 2010-2013 ZDX and 2001-2007 and 2009 Honda Accord, 2001-2005 Civic, 2003-2005 Civic Hybrid, 2001-2005 Civic GX NGV, 2002-2007 and 2010-2011 CR-V, 2003-2011 Element, 2007 Fit, 2002-2004 Odyssey, 2003-2008 Pilot, and 2006-2014 Ridgeline vehicles.  The affected vehicles received a replacement driver air bag inflator as part of a previous Takata inflator recall remedy or a replacement driver air bag module containing the same inflator type as a service part.  Due to a manufacturing error, in the event of a crash necessitating deployment of the driver frontal air bag, these inflators may explode.",
+    "consequence": "An explosion of an inflator within the driver frontal air bag module may result in sharp metal fragments striking the driver, front seat passenger or other occupants resulting in serious injury or death.",
+    "remedy": "Honda will notify owners, and dealers will replace the driver's air bag inflator with an alternate inflator, free of charge.  The recall began April 10, 2019.  Honda owners may contact customer service at 1-888-234-2138.  Honda's number for this recall is O41.  Acura owners may contact customer service at 1-888-234-2138.  Acura's number for this recall is U40.",
+    "report_date": "06/03/2019",
+    "report_received_date": "2019-03-06",
+    "manufacturer": "Honda (American Honda Motor Co.)",
+    "park_it": false,
+    "park_outside": false,
+    "over_the_air_update": false,
+    "manufactured_from": "2002-06-06",
+    "manufactured_to": "2003-09-23",
+    "campaign_units_affected": 1101534
+   },
+   {
+    "campaign_number": "19E068000",
+    "component": "VEHICLE SPEED CONTROL:ACCELERATOR PEDAL",
+    "summary": "Dorman Products, Inc.  (Dorman) is recalling certain Accelerator Pedal Assemblies part numbers 699-114 and 825-5029-1, sold as replacement parts for 2003-2006 Acura MDX, 2004-2008 Acura TL and TSX, 2003-2007 Honda Accord, 2005-2006 Honda CR-V, 2007-2011 Honda Element, 2005-2008 Honda Pilot and 2006-2014 Honda Ridgeline vehicles.  The rotating portion of the accelerator pedal assembly may bind. As such, these vehicles fail to comply with the requirements of Federal Motor Vehicle Safety Standard (FMVSS) number 124, \"Accelerator Control Systems.\"",
+    "consequence": "If the accelerator pedal binds, the engine may not quickly return to idle after the pedal is no longer pressed, increasing the risk of a crash.",
+    "remedy": "Dorman will notify owners, and qualified service facilities will replace the affected accelerator pedal assemblies, free of charge.  The recall began December 9, 2019.  Owners may contact Dorman customer service at 1-800-523-2492, using option 5.  Dorman's number for this recall is AS1019XXXX.",
+    "report_date": "10/10/2019",
+    "report_received_date": "2019-10-10",
+    "manufacturer": "Dorman Products, Inc.",
+    "park_it": null,
+    "park_outside": null,
+    "over_the_air_update": null,
+    "manufactured_from": null,
+    "manufactured_to": null,
+    "campaign_units_affected": 3744
+   },
+   {
+    "campaign_number": "19V499000",
+    "component": "AIR BAGS:FRONTAL:DRIVER SIDE:INFLATOR MODULE",
+    "summary": "Honda (American Honda Motor Co.) is recalling certain 2003 Acura 3.2CL, 2002-2003 3.2TL, 2003-2006 MDX, 2001-2007 Honda Accord, 2001-2005 Civic, 2003-2005 Civic Hybrid, 2001-2005 Civic GX NGV, 2002-2006 CR-V, 2003-2011 Element, 2002-2004 Odyssey, 2003-2008 Pilot and 2006 Ridgeline vehicles.  \r\n\r\nThese vehicles are equipped with driver frontal air bag inflators assembled as a recall remedy part or replacement service part, that may explode due to propellant degradation occurring after long-term exposure to high absolute humidity, temperature and temperature cycling.",
+    "consequence": "An inflator explosion may result in sharp metal fragments striking the driver or other occupants resulting in serious injury or death.",
+    "remedy": "Honda will notify owners, and dealers will replace the driver frontal air bag inflator, free of charge.  The recall began August 12, 2019.  Owners may contact Honda customer service at 1-888-234-2138.  Honda's numbers for this recall are Q5A and Y58.",
+    "report_date": "27/06/2019",
+    "report_received_date": "2019-06-27",
+    "manufacturer": "Honda (American Honda Motor Co.)",
+    "park_it": false,
+    "park_outside": false,
+    "over_the_air_update": false,
+    "manufactured_from": "2002-07-15",
+    "manufactured_to": "2003-09-20",
+    "campaign_units_affected": 3947
+   }
+  ],
+  "scope": "make_model_year",
+  "vin_specific": false,
+  "note": "Campaigns for this make, model and year; applicability and repair status for this VIN are not determined.",
+  "verification_url": "https://www.nhtsa.gov/recalls",
+  "related_models": {
+   "available": true,
+   "scope": "make_related_model_year",
+   "vin_specific": false,
+   "count": 0,
+   "models": [],
+   "flat_file_only": {
+    "count": 0,
+    "campaigns": [],
+    "snapshot_latest_report_date": "2026-11-12",
+    "note": "Listed in NHTSA's recall flat file under the exact or a related model name for this make and year, but not returned by NHTSA's live recall lookup for that name (NHTSA sometimes files the same campaign under other text, such as GLE350 for GLE 350). Details are not loaded; look the campaign number up at NHTSA. They may or may not apply to this vehicle."
+   },
+   "checked_labels": [],
+   "unchecked_labels": [],
+   "decoded_name_in_recall_data": true,
+   "label_sources": {
+    "products_api": "partial_list",
+    "flat_file_index": {
+     "latest_report_date": "2026-11-12"
+    }
+   },
+   "note": "Campaigns NHTSA files for the same make and year under another model name that matches the decoded model (a longer name such as a hybrid or body-style label, a different spelling, or a family name). They may or may not apply to this vehicle; check the VIN with the manufacturer. Not VIN repair status."
+  },
+  "related_campaigns_found": false,
+  "count_note": null,
+  "build_dates": {
+   "available": true,
+   "source": "NHTSA recall flat file (BGMAN/ENDMAN)",
+   "snapshot_latest_report_date": "2026-11-12",
+   "campaigns": 24,
+   "campaigns_with_dates": 11,
+   "vin_specific": false,
+   "note": "Manufacturer-filed build-date range for the campaign rows of this make, model and year (NHTSA recall flat file, BGMAN/ENDMAN). It does not say whether this VIN is affected; the vehicle's build month is on the door-jamb label."
+  }
+ },
+ "complaints": {
+  "available": true,
+  "scope": "make_model_year",
+  "count": 2013,
+  "complaints": [
+   {
+    "odi_number": 11746949,
+    "date_of_incident": "06/18/2026",
+    "date_complaint_filed": "06/27/2026",
+    "component": "AIR BAGS",
+    "summary": "The vehicle was rear-ended on I-5 in Seattle Washington.  The impact drove the subject car into the car in front of it. The front passenger airbag deployed (no occupant). The front driver airbag did not deploy, resulting in the driver hitting their nose and forehead on the steering wheel.  The driver sustained relatively minor nose bruising and possibly a mild concussion. (Note, airbag recall had been performed on this vehicle)",
+    "crash": true,
+    "fire": false,
+    "injuries": 1,
+    "deaths": 0
+   }
+  ],
+  "summary": {
+   "crashes": 158,
+   "fires": 19,
+   "injuries": 157,
+   "deaths": 1
+  },
+  "returned": 25,
+  "truncated": true,
+  "top_components": [
+   {
+    "component": "POWER TRAIN",
+    "count": 926
+   },
+   {
+    "component": "AIR BAGS",
+    "count": 324
+   },
+   {
+    "component": "SERVICE BRAKES",
+    "count": 175
+   },
+   {
+    "component": "HYDRAULIC",
+    "count": 146
+   },
+   {
+    "component": "ELECTRICAL SYSTEM",
+    "count": 143
+   },
+   {
+    "component": "ENGINE AND ENGINE COOLING",
+    "count": 95
+   },
+   {
+    "component": "STEERING",
+    "count": 91
+   },
+   {
+    "component": "VEHICLE SPEED CONTROL",
+    "count": 81
+   },
+   {
+    "component": "STRUCTURE",
+    "count": 75
+   },
+   {
+    "component": "VISIBILITY",
+    "count": 65
+   }
+  ],
+  "note": "Showing the 25 most recent of 2013 complaints. Add ?complaints=all for every complaint, or use /api/vin/1HGCM82643A104332/complaints."
+ },
+ "safety_ratings": {
+  "rated": true,
+  "overall": null,
+  "frontal_driver": 5,
+  "frontal_passenger": 5,
+  "side_driver": null,
+  "side_passenger": null,
+  "rollover": null,
+  "side_pole": null
+ },
+ "fuel_economy": {
+  "available": true,
+  "vehicle_id": "18657",
+  "efids": [],
+  "matched_variant": "Accord · Automatic 5-spd, 6 cyl, 3.0 L",
+  "source_url": "https://www.fueleconomy.gov/feg/Find.do?action=sbs&id=18657",
+  "city_mpg": 19,
+  "highway_mpg": 27,
+  "combined_mpg": 22,
+  "annual_fuel_cost": 2850,
+  "co2_grams_per_mile": 403.95454545454544,
+  "fuel_type": "Regular",
+  "fuel_type2": null,
+  "is_ev": false,
+  "ev_range": 0,
+  "total_range": null,
+  "ev_charge_time_240v": 0,
+  "phev_combined": 0,
+  "cylinders": 6,
+  "displacement": 3,
+  "drive": "Front-Wheel Drive",
+  "transmission": "Automatic 5-spd",
+  "vehicle_class": "Midsize Cars",
+  "match": "exact",
+  "match_basis": [
+   "same model year, make and model name",
+   "3.0 L engine",
+   "gasoline powertrain",
+   "6 cylinders",
+   "front-wheel drive",
+   "automatic transmission",
+   "5 speeds"
+  ],
+  "summary": "22 mpg combined (19 city, 27 highway): EPA's 2003 Honda Accord, Automatic 5-spd, 6 cyl, 3.0 L.",
+  "epa_model": "Accord",
+  "atv_type": null,
+  "engine_note": null,
+  "unit": "mpg",
+  "data_source": "fueleconomy.gov vehicles.csv (file dated Wed, 04 Nov 2026 14:31:23 GMT), local index"
+ },
+ "recall_status": {
+  "vin": "1HGCM82643A104332",
+  "scope": "vin",
+  "vin_specific": true,
+  "verification_url": "https://mygarage.honda.com/s/recall-search?brand=honda&vin=1HGCM82643A104332",
+  "note": "The manufacturer did not confirm this full VIN. Counts and completed repairs remain unknown. Check the official source.",
+  "available": false,
+  "reason": "vin_not_confirmed",
+  "source": {
+   "provider": "Honda MyGarage VIN Recall Search",
+   "url": "https://mygarage.honda.com/s/sfsites/aura",
+   "reference_url": "https://mygarage.honda.com/s/recall-search?brand=honda"
+  },
+  "open_count": null,
+  "completed_count": null,
+  "recalls": []
+ }
+}

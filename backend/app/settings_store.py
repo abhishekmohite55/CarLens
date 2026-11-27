@@ -120,7 +120,10 @@ def check_config(data: Any, nodes: list[str], keep_origin: str | None = None) ->
             bad(f"markets.{market}.extract_limits", "listing_min must be above 0 and below listing_max")
     if cfg.markets.us.vin_mismatch_action not in ("stop", "warn"):
         bad("markets.us.vin_mismatch_action", "must be stop or warn")
-    from .vin.providers import KNOWN as VIN_PROVIDERS  # stage U1
+    from .vin.providers import DETAILS as DETAILS_PROVIDERS, KNOWN as VIN_PROVIDERS  # stage U1, U4
+    details = cfg.vin.details_provider
+    if details and (details not in DETAILS_PROVIDERS or details not in cfg.vin.providers):
+        bad("vin.details_provider", f"must be empty or one of {', '.join(DETAILS_PROVIDERS)} with an entry in vin.providers")
     if cfg.vin.provider not in VIN_PROVIDERS:
         bad("vin.provider", f"must be one of {', '.join(VIN_PROVIDERS)}")
     elif cfg.vin.provider not in cfg.vin.providers:

@@ -95,8 +95,10 @@ def _run_search_inner(run_id: str) -> None:
     totals = search_totals(done, urls, get_config().search.depth, elapsed)
     # also adds every result to search_results (by car, with dates) for reuse later
     settings = {**get_config().search.model_dump(), "country": market_config().search_country}  # as before stage M0
-    save_result(run_id, "07_search/results.json", {"settings": settings, "queries": done,
-                                                   "urls": urls, "totals": totals})
+    currency = market_config().currency
+    save_result(run_id, "07_search/results.json", {"settings": settings, "queries": done, "urls": urls, "totals": totals,
+                                                   # stage U4: US results stay out of the shared search_results table
+                                                   **({"currency": currency} if currency != "INR" else {})})
     files = ["07_search/results.json"]
 
     if totals["failed"] == totals["queries"]:

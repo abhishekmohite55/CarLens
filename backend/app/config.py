@@ -222,6 +222,14 @@ class VinProviderConfig(BaseModel):
     timeout_sec: float = Field(10, gt=0)
     key_env: str = ""  # name of the .env variable with the key; empty = no key (vPIC)
     fields: dict[str, str] = {}  # common name → the provider's key (or dotted path)
+    recalls_path: str = ""  # details providers (stage U4): dotted path of the recall list
+
+
+MCPVIN_FIELDS = {"recalls": "recalls.count", "open_recalls": "recall_status.open_count",
+                 "complaints": "complaints.count", "safety_overall": "safety_ratings.overall",
+                 "safety_frontal_driver": "safety_ratings.frontal_driver", "mpg_city": "fuel_economy.city_mpg",
+                 "mpg_highway": "fuel_economy.highway_mpg", "mpg_combined": "fuel_economy.combined_mpg",
+                 "annual_fuel_cost": "fuel_economy.annual_fuel_cost"}
 
 
 class VinConfig(BaseModel):
@@ -229,8 +237,13 @@ class VinConfig(BaseModel):
     provider: str = "vpic"
     cache_days: int = Field(30, ge=0)  # same VIN within this many days → the saved answer, no second call
     max_lookups_per_hour: int = Field(20, ge=1)  # real provider calls per user (the admin has no limit)
+    details_provider: str = "mcpvin"  # stage U4: recalls, complaints, safety, EPA; empty = no vehicle details
+    details_wait_sec: int = Field(30, ge=0)  # plan waits at most this long for vehicle details, then goes on
+    details_top_recalls: int = Field(5, ge=0)  # recalls listed in the report
     providers: dict[str, VinProviderConfig] = {
-        "vpic": VinProviderConfig(base_url="https://vpic.nhtsa.dot.gov/api/vehicles", fields=VPIC_FIELDS)}
+        "vpic": VinProviderConfig(base_url="https://vpic.nhtsa.dot.gov/api/vehicles", fields=VPIC_FIELDS),
+        "mcpvin": VinProviderConfig(base_url="https://mcp.vin/api/vin", timeout_sec=20, fields=MCPVIN_FIELDS,
+                                    recalls_path="recalls.recalls")}
 
 
 class AppConfig(BaseModel):
