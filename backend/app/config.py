@@ -78,6 +78,8 @@ class FramesConfig(BaseModel):
     workers: int
     max_long_edge_px: int
     jpeg_quality: int
+    extra_frames_for: list[str] = ["damage"]  # owner 27 Nov: these categories also get locate's frame + another angle
+    extra_min_gap_sec: float = Field(0.5, ge=0)  # "another angle" is at least this far from the other frames
 
 
 class ConfirmConfig(BaseModel):
@@ -160,6 +162,10 @@ class UsMarketConfig(MarketConfig):
     top_states: list[str] = ["CA", "TX", "FL", "NY", "PA", "IL", "OH", "GA", "NC"]
     state_templates_max: int = Field(2, ge=0)
     odometer_min_confidence: float = Field(0.8, ge=0, le=1)
+    vin_mismatch_action: str = "stop"  # owner 27 Nov: video not the VIN's car → stop after verify, or warn and go on
+    vin_mismatch_min_confidence: float = Field(0.8, ge=0, le=1)  # only a mismatch this sure counts
+    miles_min: int = Field(1, ge=0)  # stage U2: miles the user may type at upload
+    miles_max: int = Field(999_999, ge=1)
 
 
 class MarketsConfig(BaseModel):

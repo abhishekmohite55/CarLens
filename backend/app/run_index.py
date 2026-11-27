@@ -222,10 +222,11 @@ def user_runs(user_id: int | None, limit: int = 50) -> list[dict]:
                  "created_at": r.created_at.isoformat()} for r in conn.execute(q)]
 
 
-def user_run_with_video(user_id: int, sha256: str) -> str | None:
-    """The user's newest run of this video (same sha256), if any."""
+def user_run_with_video(user_id: int, sha256: str, market: str = "in") -> str | None:
+    """The user's newest run of this video (same sha256) in this market (stage U2), if any."""
     with require_engine().connect() as conn:
-        return conn.execute(select(Run.id).where(Run.user_id == user_id, Run.video_sha256 == sha256)
+        return conn.execute(select(Run.id).where(Run.user_id == user_id, Run.video_sha256 == sha256,
+                                                 Run.market == market)
                             .order_by(Run.created_at.desc()).limit(1)).scalar_one_or_none()
 
 

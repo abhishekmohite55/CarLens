@@ -22,6 +22,7 @@ from ..config import PROJECT_ROOT, get_config
 from ..market import market_is_on
 from ..results import save_result
 from ..run_index import create_run_row, drop_run_row, log_upload_event, market_off_refusal, user_run_with_video
+from ..us_start import confirm_from_vin
 from ..runs import append_event, create_run, run_dir
 from ..storage import fetch_run, has_video
 
@@ -151,7 +152,7 @@ async def receive_upload(video: UploadFile) -> Received:
     return Received(tmp_path, name, ext, size, sha.hexdigest(), round(duration_sec, 1))
 
 
-def start_run(rec: Received, user_id: int | None, spend_token: bool, market: str = "in") -> str:
+def start_run(rec: Received, user_id: int | None, spend_token: bool, market: str = "in", us: dict | None = None) -> str:
     """runs row (token taken for users), then the run folder, the video, meta.json and the upload events.
     Raises RunRefused (the file is left where it is; the caller cleans up). If anything fails after the row exists,
     the row is removed, the token given back and the video put back where it was (fix 20 Nov)."""
@@ -161,14 +162,14 @@ def start_run(rec: Received, user_id: int | None, spend_token: bool, market: str
                             max_active_runs=get_config().access.max_active_runs if spend_token else None,
                             market=market)
     try:
-        _fill_run(run_id, rec, market)
+        _fill_run(run_id, rec, market, us)
     except BaseException:
         _undo_run(run_id, rec, user_id if spend_token else None)
         raise
     return run_id
 
 
-def _fill_run(run_id: str, rec: Received, market: str = "in") -> None:
+def _fill_run(run_id: str, rec: Received, market: str = "in", us: dict | None = None) -> None:
     run_path = create_run(run_id)
     dest = run_path / f"video.{rec.ext}"
     shutil.move(str(rec.path), str(dest))
@@ -184,14 +185,33 @@ def _fill_run(run_id: str, rec: Received, market: str = "in") -> None:
         "market": market,  # stage M0
         "created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
+    if us:  # stage U2: what the user typed (the car comes from the saved VIN lookup)
+        meta.update({k: us["fields"][k] for k in ("vin", "state_code", "state", "miles_user")})
     save_result(run_id, "meta.json", meta)
+    car_label = _start_us(run_id, us, meta["created_at"]) if us else None  # before the events: a failure undoes the run
 
     # Append events (written before they would ever be streamed)
     mb_label = f"{size_bytes / (1024 * 1024):.0f} MB"
     m, s = divmod(int(rec.duration_sec), 60)
     append_event(run_id, "upload", "node_started", {"label": "Upload & check"})
     append_event(run_id, "upload", "packet", {"from": "upload", "to": "locate", "label": f"{mb_label} video"})
-    append_event(run_id, "upload", "node_done", {"summary": f"{rec.name}, {mb_label}, {m} min {s} s"})
+    summary = f"{rec.name}, {mb_label}, {m} min {s} s"
+    if car_label:  # stage U2
+        summary += f"; car from VIN: {car_label}"
+    append_event(run_id, "upload", "node_done", {"summary": summary})
+
+
+def _start_us(run_id: str, us: dict, at: str) -> str:
+    """Stage U2: 00_vin/ from the saved lookup and 04_confirm.json from the VIN car, so the run needs no confirm pause.
+    Returns the car as one line for the upload summary."""
+    lookup = us["lookup"]
+    save_result(run_id, "00_vin/request.json", {"node": "vin", "vin": lookup["vin"], "provider": lookup["provider"],
+                                               "lookup_id": lookup["lookup_id"], "looked_up_at": lookup["saved_at"]})
+    save_result(run_id, "00_vin/response.json", {"provider": lookup["provider"], "ms": lookup["ms"],
+                                                "car": lookup["car"], "raw": lookup["raw"]})
+    save_result(run_id, "04_confirm.json", confirm_from_vin(us["fields"], lookup["car"], at))
+    car = lookup["car"]
+    return " ".join(str(car[k]) for k in ("year", "make", "model") if car.get(k)) + f" ({lookup['vin']})"
 
 
 def _undo_run(run_id: str, rec: Received, refund_user: int | None) -> None:
@@ -210,24 +230,26 @@ def _undo_run(run_id: str, rec: Received, refund_user: int | None) -> None:
         log.exception("could not remove the runs row %s", run_id)
 
 
-async def process_upload(video: UploadFile, user_id: int, is_admin: bool, market: str = "in") -> dict:
+async def process_upload(video: UploadFile, user_id: int, is_admin: bool, market: str = "in",
+                         us: dict | None = None) -> dict:
     """Upload → new run. Users: same video again raises DuplicateUpload; one run at a time and 1 token (RunRefused).
-    The admin has no limits (dev re-runs). market (stage M0): the run's market, resolved by the caller."""
+    The admin has no limits (dev re-runs). market (stage M0): the run's market, resolved by the caller.
+    us (stage U2): {"fields": checked VIN / state / miles, "lookup": the saved VIN lookup} for a US run."""
     await run_in_threadpool(clean_old_pending)
     rec = await receive_upload(video)
     try:
-        return await run_in_threadpool(_place_upload, rec, user_id, is_admin, market)
+        return await run_in_threadpool(_place_upload, rec, user_id, is_admin, market, us)
     finally:
         rec.path.unlink(missing_ok=True)  # moved on success or when kept; removed on a refusal or a reused video
 
 
-def _place_upload(rec: Received, user_id: int, is_admin: bool, market: str = "in") -> dict:
+def _place_upload(rec: Received, user_id: int, is_admin: bool, market: str = "in", us: dict | None = None) -> dict:
     if not is_admin:
-        old_run = user_run_with_video(user_id, rec.sha256)
+        old_run = user_run_with_video(user_id, rec.sha256, market)  # stage U2: a repeat only within the market
         if old_run:
             log_upload_event(user_id, "upload_same_video", {"run_id": old_run})  # hardening A2: admin sees repeats
-            raise DuplicateUpload(old_run, keep_pending(rec, user_id, old_run, market))
-    return {"run_id": start_run(rec, user_id, spend_token=not is_admin, market=market)}
+            raise DuplicateUpload(old_run, keep_pending(rec, user_id, old_run, market, us))
+    return {"run_id": start_run(rec, user_id, spend_token=not is_admin, market=market, us=us)}
 
 
 # --- same video again: the upload waits in runs/_pending/<id>/ while the user chooses (05-login.md §7.3) ---
@@ -257,7 +279,8 @@ def _user_pending(user_id: int) -> list[tuple[Path, dict]]:
     return out
 
 
-def keep_pending(rec: Received, user_id: int, source_run: str | None = None, market: str = "in") -> str:
+def keep_pending(rec: Received, user_id: int, source_run: str | None = None, market: str = "in",
+                 us: dict | None = None) -> str:
     """Same video again (hardening A2, owner 20 Nov): one kept upload per user. The new copy is not stored when the
     earlier run still has the video (here or in S3): the note points to that run and "fresh run" copies from it.
     The same video again only refreshes the note's timer; another video replaces the user's older note."""
@@ -271,7 +294,7 @@ def keep_pending(rec: Received, user_id: int, source_run: str | None = None, mar
     d = _pending_root() / pending_id
     d.mkdir(parents=True)
     info = {"user_id": user_id, "name": rec.name, "ext": rec.ext, "size": rec.size, "sha256": rec.sha256,
-            "duration_sec": rec.duration_sec, "kept_at": time.time(), "market": market}
+            "duration_sec": rec.duration_sec, "kept_at": time.time(), "market": market, "us": us}
     if source_run and has_video(source_run):
         info["source_run"] = source_run  # the caller deletes the new copy
     else:
@@ -325,7 +348,8 @@ def start_pending(pending_id: str, user_id: int) -> dict:
         if not path.exists() and info.get("source_run"):
             path = _copy_source_video(claimed, info["source_run"])
         rec = Received(path, info["name"], path.suffix.lstrip("."), info["size"], info["sha256"], info["duration_sec"])
-        run_id = start_run(rec, user_id, spend_token=True, market=market)  # RunRefused leaves the kept file for another try
+        run_id = start_run(rec, user_id, spend_token=True, market=market,
+                           us=info.get("us"))  # RunRefused leaves the kept file for another try
     except BaseException:
         try:
             claimed.rename(d)

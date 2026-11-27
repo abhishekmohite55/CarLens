@@ -62,6 +62,8 @@ frames:
   workers: 0 # parallel items; 0 = CPU count
   max_long_edge_px: 1280 # saved JPEG (sharpest frame only)
   jpeg_quality: 90
+  extra_frames_for: [damage] # owner 27 Nov: these items also send locate's exact frame + another angle to verify (up to 3); [] = sharpest only
+  extra_min_gap_sec: 0.5 # "another angle" = sharpest frame at least this far (seconds) from the other frames
 
 confirm:
   expand_below_confidence: 0.6 # open the form if make, model or year is missing or below this (variant is optional)
@@ -149,6 +151,10 @@ markets: # stage M0 (docs/backend/07-us-market.md §3, §9): settings that diffe
     top_states: [CA, TX, FL, NY, PA, IL, OH, GA, NC] # state chips on the first screen (U1)
     state_templates_max: 2 # at most this many {state} templates per run, the rest US-wide (U4)
     odometer_min_confidence: 0.8 # verify's odometer reading counts only at this confidence or higher (U3)
+    vin_mismatch_action: stop # video does not look like the VIN's car: stop (after verify, before any search cost) or warn (go on, report says so)
+    vin_mismatch_min_confidence: 0.8 # only a mismatch at least this sure counts; unsure never stops a run
+    miles_min: 1 # miles the user types at upload: at least this (U2)
+    miles_max: 999999 # ... and at most this
 
 vin: # stage U1 (docs/backend/07-us-market.md §4): every VIN source sits behind backend/app/vin/
   provider: vpic # decodes the VIN on the first screen

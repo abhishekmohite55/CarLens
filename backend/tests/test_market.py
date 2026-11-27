@@ -164,3 +164,7 @@ def test_fill_defaults_reaches_market_fields():
     assert data["markets"]["us"] == {"currency": "USD", "odometer_min_confidence": 0.8}
     assert data["markets"]["country_map"] == {"US": "us"}  # the owner's map is never topped up
     assert added == ["markets.us.odometer_min_confidence"]
+
+
+def test_unknown_stop_stops_everything():  # stage U2: e.g. vin_details before U4 builds it
+    assert all(past_stop(node, "vin_details", ORDER) for node in ORDER)

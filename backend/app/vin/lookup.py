@@ -90,3 +90,17 @@ def lookup_vin(vin_text: str, user_id: int | None, vin_cfg, is_admin: bool = Fal
     if answer is None:
         raise VinError(503, "vin_unavailable", UNAVAILABLE)
     return _finish({**answer, "lookup_id": saved_id, "reused": False, "ms": ms})
+
+
+def found_lookup(vin: str, provider: str, cache_days: int) -> dict | None:
+    """Stage U2: the newest saved lookup of this VIN that found the car, within cache_days; None when there is none
+    (the upload then asks to look the VIN up first). The server uses this row, never car values from the browser."""
+    since = datetime.now(timezone.utc) - timedelta(days=max(cache_days, 0))
+    with require_engine().connect() as conn:
+        row = conn.execute(select(VinLookup).where(
+            VinLookup.vin == vin, VinLookup.provider == provider, VinLookup.ok.is_(True),
+            VinLookup.created_at > since).order_by(VinLookup.id.desc()).limit(1)).first()
+    if row is None:
+        return None
+    return {"lookup_id": row.id, "vin": row.vin, "provider": row.provider, "car": row.car, "raw": row.raw,
+            "ms": row.ms, "saved_at": row.created_at.isoformat()}

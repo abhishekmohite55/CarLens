@@ -16,12 +16,16 @@ from .node_tables import NODE_TABLES, WRITERS
 # Run-folder path → (node, name) row in node_results. One node more per stage 2.x.
 FILES: dict[str, tuple[str, str]] = {
     "meta.json": ("upload", "meta.json"),
+    "00_vin/request.json": ("upload", "vin_request.json"),  # stage U2: US runs, copied from the saved VIN lookup
+    "00_vin/response.json": ("upload", "vin_response.json"),
     "01_locate/request.json": ("locate", "request.json"),
     "01_locate/response.json": ("locate", "response.json"),
     "02_frames/manifest.json": ("frames", "manifest.json"),
     "03_verify/ocr.json": ("verify", "ocr.json"),
     "03_verify/request.json": ("verify", "request.json"),
     "03_verify/response.json": ("verify", "response.json"),
+    "03_verify/miles.json": ("verify", "miles.json"),  # stage U3: US miles rule (which miles pricing uses)
+    "03_verify/vin_match.json": ("verify", "vin_match.json"),  # owner 27 Nov: does the video show the VIN's car
     "04_confirm_payload.json": ("confirm", "04_confirm_payload.json"),
     "04_confirm.json": ("confirm", "04_confirm.json"),
     "05_photos/request.json": ("photos", "request.json"),

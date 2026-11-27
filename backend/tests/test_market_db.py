@@ -84,15 +84,21 @@ def test_run_keeps_its_market_and_prompts_of_that_market(db_engine):
     us = create_run_row(sha256="2" * 64, original_filename="b.mp4", size_bytes=1, duration_sec=1.0, market="us")
     assert settings_store.run_market(india) == "in" and settings_store.run_market(us) == "us"
     assert "verify.user.md" in settings_store.active_prompt_ids("in")
-    assert settings_store.active_prompt_ids("us") == {}  # prompts/us/ is empty in stage M0
-    assert settings_store.pinned_ids(us)[1] is None
+    us_prompts = settings_store.active_prompt_ids("us")  # stage U3: locate + verify only so far
+    assert {"locate.system.md", "verify.system.md"} <= set(us_prompts) and "photos.system.md" not in us_prompts
+    assert set(us_prompts.values()).isdisjoint(settings_store.active_prompt_ids("in").values())
+    assert settings_store.pinned_ids(us)[1] == us_prompts  # a US run is pinned to US prompts only
 
 
 def test_prompts_listed_per_market(admin):
     india = admin.get("/api/admin/prompts?market=in").json()["prompts"]
     assert india and {p["market"] for p in india} == {"in"}
-    assert admin.get("/api/admin/prompts?market=us").json()["prompts"] == []
-    assert admin.get("/api/admin/prompts/verify.user.md?market=us").status_code == 422  # no US copy yet
+    us = admin.get("/api/admin/prompts?market=us").json()["prompts"]
+    assert us and {p["market"] for p in us} == {"us"}
+    assert admin.get("/api/admin/prompts/photos.user.md?market=us").status_code == 422  # no US photos prompt
+    us_verify = admin.get("/api/admin/prompts/verify.system.md?market=us").json()["text"]
+    in_verify = admin.get("/api/admin/prompts/verify.system.md?market=in").json()["text"]
+    assert "United States" in us_verify and "India" in in_verify
 
 
 def test_us_upload_refused_before_anything_is_read_or_spent(env):

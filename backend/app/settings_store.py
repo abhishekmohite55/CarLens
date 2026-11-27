@@ -27,7 +27,7 @@ CHECK_EVERY_SEC = 5  # how often the active version is looked up again
 PROVIDERS = ("google_genai", "openrouter")
 # Prompts filled with str.format: only these {fields} may appear; write {{ and }} for literal braces.
 FORMAT_FIELDS = {
-    "verify.user.md": {"frame_count"},
+    "verify.user.md": {"frame_count", "vin_car"},  # vin_car: US prompt only (owner 27 Nov: video vs VIN check)
     "photos.user.md": {"photo_count"},
     "extract_prices.user.md": {"trimmed_text"},
     "plan_searches.user.md": {"car_json", "damage_count", "damage_json", "tyre_count", "tyres_json", "queries_per_part"},
@@ -118,6 +118,8 @@ def check_config(data: Any, nodes: list[str], keep_origin: str | None = None) ->
         limits = cfg.markets.of(market).extract_limits
         if not 0 < limits.listing_min < limits.listing_max:
             bad(f"markets.{market}.extract_limits", "listing_min must be above 0 and below listing_max")
+    if cfg.markets.us.vin_mismatch_action not in ("stop", "warn"):
+        bad("markets.us.vin_mismatch_action", "must be stop or warn")
     from .vin.providers import KNOWN as VIN_PROVIDERS  # stage U1
     if cfg.vin.provider not in VIN_PROVIDERS:
         bad("vin.provider", f"must be one of {', '.join(VIN_PROVIDERS)}")

@@ -126,7 +126,7 @@
   <div class="progress-bar"><div class="progress-fill" id="us-prog"></div></div>
   <div id="us-upload-status" class="status"></div>
   <button id="us-upload-btn" onclick="doUpload('us')" disabled>Upload (US)</button>
-  <div class="us-later">With US off in dev.markets_on (or no US pipeline yet) the server refuses this upload: no run, no token.</div>
+  <div class="us-later">Sends VIN, state and miles with the video. US off in dev.markets_on → refused (no run, no token). dev.stop_after_us decides where the run stops.</div>
   <label style="margin-top:12px">US pipeline</label>
   <div class="node-grid" id="us-node-grid"></div>
 </div>
@@ -381,6 +381,7 @@ function showCar(answer, message, cls) {
   document.getElementById('us-car-yes').disabled = !usCar;
   document.getElementById('us-car-change').disabled = !usCar;
   document.getElementById('us-car-status').textContent = '';
+  updateUsUpload();
 }
 
 function esc(s) { return String(s).replace(/[&<>"]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch])); }
@@ -412,9 +413,10 @@ async function doVinLookup() {
 function confirmCar(yes) {
   if (yes && usCar) {
     usCarConfirmed = true;
-    document.getElementById('us-car-status').textContent = 'Car confirmed (upload with the VIN comes in U2).';
+    document.getElementById('us-car-status').textContent = 'Car confirmed: it goes with the upload.';
     document.getElementById('us-car-status').className = 'status ok';
     document.getElementById('us-car-yes').disabled = true;
+    updateUsUpload();
   } else {
     showCar(null);
     const input = document.getElementById('us-vin');
@@ -467,6 +469,7 @@ document.getElementById('us-miles').addEventListener('input', function() {
   const v = milesValue(this.value);
   box.textContent = !this.value.trim() ? 'Required.' : v === null ? 'Digits only (thousands commas allowed), e.g. 48,200.' : `${v.toLocaleString('en-US')} miles`;
   box.className = 'status ' + (v === null ? (this.value.trim() ? 'err' : 'warn') : 'ok');
+  updateUsUpload();
 });
 
 function drawUsSkeleton() {
@@ -511,9 +514,25 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) load
 document.getElementById('file-input').addEventListener('change', function() {
   document.getElementById('upload-btn').disabled = !this.files.length;
 });
-document.getElementById('us-file-input').addEventListener('change', function() {
-  document.getElementById('us-upload-btn').disabled = !this.files.length;
-});
+document.getElementById('us-file-input').addEventListener('change', updateUsUpload);
+
+// Stage U2: Upload (US) needs a video, Yes on the car card and valid miles; VIN / state / miles go in the address.
+function updateUsUpload() {
+  const hasFile = document.getElementById('us-file-input').files.length > 0;
+  const miles = milesValue(document.getElementById('us-miles').value);
+  const why = !usCarConfirmed ? 'Look up the VIN and answer Yes on the car first.'
+    : miles === null ? 'Enter the miles.' : !hasFile ? 'Pick the video.' : '';
+  document.getElementById('us-upload-btn').disabled = !!why;
+  document.getElementById('us-upload-btn').title = why;
+  const status = document.getElementById('us-upload-status');
+  if (!status.dataset.busy) { status.textContent = why; status.className = 'status warn'; }
+}
+
+function usUploadQuery() {
+  const p = new URLSearchParams({market: 'us', vin: usCar ? usCar.vin : '', miles: document.getElementById('us-miles').value.trim()});
+  if (usState) p.set('state', usState);
+  return p.toString();
+}
 
 function doUpload(market) {
   market = market === 'us' ? 'us' : 'in';
@@ -533,7 +552,7 @@ function doUpload(market) {
   prog.style.width = '0%';
 
   const xhr = new XMLHttpRequest();
-  xhr.open('POST', '/api/runs?market=' + market);
+  xhr.open('POST', '/api/runs?' + (market === 'us' ? usUploadQuery() : 'market=in'));
 
   xhr.upload.onprogress = function(e) {
     if (e.lengthComputable) {
@@ -577,6 +596,24 @@ function doUpload(market) {
   xhr.send(fd);
 }
 
+// Stage U2: a US run says so above its node grid (VIN car, state, miles typed); confirm and photos show as skipped.
+function showRunMarket(meta) {
+  let box = document.getElementById('run-market');
+  if (!box) {
+    box = document.createElement('div');
+    box.id = 'run-market';
+    box.className = 'status';
+    box.style.margin = '0 0 8px';
+    document.getElementById('node-grid').before(box);
+  }
+  if (meta.market !== 'us') { box.innerHTML = 'Market: <b>India</b>'; return; }
+  box.innerHTML = `Market: <b style="color:#818cf8">US</b> · VIN <b>${escHtml(meta.vin || '—')}</b> · state ${escHtml(meta.state || 'none (US-wide)')} · you typed ${meta.miles_user != null ? Number(meta.miles_user).toLocaleString('en-US') : '—'} miles · <span id="run-car">car …</span>`;
+  fetch(`/api/runs/${currentRunId}/files/04_confirm.json`).then(r => r.ok ? r.json() : null).then(c => {
+    const el = document.getElementById('run-car');
+    if (el && c && c.car) el.textContent = [c.car.year, c.car.make, c.car.model, c.car.variant].filter(Boolean).join(' ');
+  }).catch(() => {});
+}
+
 function loadRun(runId) {
   if (!runId) return;
   currentRunId = runId;
@@ -613,12 +650,16 @@ function loadRun(runId) {
   links.innerHTML = [
     {path:'meta.json', label:'meta.json'},
     {path:'events.jsonl', label:'events.jsonl'},
+    {path:'00_vin/request.json', label:'00_vin/request.json'},
+    {path:'00_vin/response.json', label:'00_vin/response.json'},
     {path:'01_locate/request.json', label:'01_locate/request.json'},
     {path:'01_locate/response.json', label:'01_locate/response.json'},
     {path:'02_frames/manifest.json', label:'02_frames/manifest.json'},
     {path:'03_verify/ocr.json', label:'03_verify/ocr.json'},
     {path:'03_verify/request.json', label:'03_verify/request.json'},
     {path:'03_verify/response.json', label:'03_verify/response.json'},
+    {path:'03_verify/miles.json', label:'03_verify/miles.json'},
+    {path:'03_verify/vin_match.json', label:'03_verify/vin_match.json'},
     {path:'04_confirm_payload.json', label:'04_confirm_payload.json'},
     {path:'04_confirm.json', label:'04_confirm.json'},
     {path:'05_photos/request.json', label:'05_photos/request.json'},
@@ -672,7 +713,11 @@ function loadRun(runId) {
   fetch(`/api/runs/${runId}/files/meta.json`)
     .then(r => r.text())
     .then(t => {
-      try { document.getElementById('meta-json').textContent = JSON.stringify(JSON.parse(t), null, 2); }
+      try {
+        const meta = JSON.parse(t);
+        document.getElementById('meta-json').textContent = JSON.stringify(meta, null, 2);
+        showRunMarket(meta);
+      }
       catch { document.getElementById('meta-json').textContent = t; }
     })
     .catch(() => { document.getElementById('meta-json').textContent = '(not yet available)'; });
@@ -1005,11 +1050,19 @@ function renderFramesManifest(runId, manifest) {
       + '<td>' + (tm.total || 0).toFixed(2) + '</td>'
       + '<td>' + (best.t || 0).toFixed(3) + '</td>'
       + '<td>' + (best.sharpness || 0).toFixed(0) + '</td>'
-      + '<td><img src="' + imgUrl + '" class="frames-thumb" '
-      + 'onclick="window.open(\'' + imgUrl + '\',\'_blank\')" loading="lazy"></td>'
-      + '</tr>';
+      + '<td><img src="' + imgUrl + '" class="frames-thumb" title="sharpest" '
+      + 'onclick="window.open(\'' + imgUrl + '\',\'_blank\')" loading="lazy">'
+      + (item.extra || []).map(x => {  // owner 27 Nov: locate's own moment + another angle (damage)
+          const u = '/api/runs/' + runId + '/files/02_frames/' + encodeURIComponent(x.file);
+          return ' <img src="' + u + '" class="frames-thumb" style="outline:1px dashed ' + (x.kind === 'locate' ? '#ffb020' : '#818cf8') + '" '
+            + 'title="' + escHtml(x.kind) + ' · ' + x.t.toFixed(2) + ' s · sharpness ' + Math.round(x.sharpness || 0) + '" '
+            + 'onclick="window.open(\'' + u + '\',\'_blank\')" loading="lazy">';
+        }).join('')
+      + (item.extra_error ? ' <span class="warn" title="' + escHtml(item.extra_error) + '">extra frames failed</span>' : '')
+      + '</td></tr>';
   }
   html += '</table>';
+  html += '<div class="status">Damage items: first = sharpest, <span style="color:#ffb020">dashed amber</span> = locate\'s own moment, <span style="color:#818cf8">dashed indigo</span> = another angle.</div>';
   document.getElementById('frames-manifest-content').innerHTML = html;
 }
 
@@ -1129,7 +1182,29 @@ function renderVerifyContent(runId, ocr, req, res) {
 
   // Read tab
   html += '<div id="verify-tab-read" class="tab-panel">';
-  if (parsed) {
+  if (parsed && 'odometer' in parsed && !('vehicle' in parsed)) {  // stage U3: US answer (car from the VIN)
+    const odo = parsed.odometer || {};
+    html += `<b>Odometer:</b> ${odo.value != null ? Number(odo.value).toLocaleString('en-US') : '—'} ${escHtml(odo.unit || '?')} <span style="color:#aaa">(conf ${odo.confidence??'—'})</span><br>`;
+    html += `<b>Tyres assessed:</b> ${parsed.tyres_assessed} &nbsp; <b>Odometer found:</b> ${parsed.odometer_found}<br>`;
+    html += '<div id="verify-miles" class="cf-note" style="margin-top:8px">Miles used: loading…</div>';
+    html += '<div id="verify-vin-match" class="cf-note">Video vs VIN: loading…</div>';
+    fetch(`/api/runs/${currentRunId}/files/03_verify/vin_match.json`).then(r => r.ok ? r.json() : null).then(m => {
+      const box = document.getElementById('verify-vin-match');
+      if (!box) return;
+      if (!m) { box.textContent = 'Video vs VIN: not available (03_verify/vin_match.json missing).'; return; }
+      const colour = m.result === 'match' ? '#6f9' : m.result === 'mismatch' ? '#f66' : '#fb0';
+      box.innerHTML = `<b>Video vs VIN:</b> <b style="color:${colour}">${escHtml(m.result)}</b> (conf ${m.confidence ?? '—'})`
+        + ` · action <b>${escHtml(m.action)}</b>${m.counted ? '' : ' (not counted)'}`
+        + (m.reason ? `<br>${escHtml(m.reason)}` : '') + (m.frame ? ` <span style="color:#888">[${escHtml(m.frame)}]</span>` : '');
+    }).catch(() => {});
+    fetch(`/api/runs/${currentRunId}/files/03_verify/miles.json`).then(r => r.ok ? r.json() : null).then(m => {
+      const box = document.getElementById('verify-miles');
+      if (!box) return;
+      box.innerHTML = m
+        ? `<b>Miles used: ${m.miles_used.toLocaleString('en-US')}</b> (source: <b>${escHtml(m.source)}</b>) · you typed ${m.miles_user.toLocaleString('en-US')} · odometer ${m.reading_miles != null ? m.reading_miles.toLocaleString('en-US') + ' mi' : '—'} · ${escHtml(m.why)}`
+        : 'Miles used: not available (03_verify/miles.json missing).';
+    }).catch(() => {});
+  } else if (parsed) {
     const plate = parsed.plate || {};
     const badge = parsed.badge || {};
     const odo = parsed.odometer_km || {};

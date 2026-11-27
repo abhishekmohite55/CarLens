@@ -52,8 +52,9 @@ from .run_index import (FLAGGED_REFUSALS, RunRefused, admission_refusal, busy, b
                         log_upload_event, resume_allowed, close_open_rows, interrupted_nodes, latest_node_result, other_active_run, run_owner,
                         user_runs, run_status, market_off_refusal)
 from .market import US_STATES, market_is_on, resolve_market, state_guess
-from .vin.lookup import VinError, lookup_vin
-from .runs import append_event, events_path, failed_at, failure_count, run_dir
+from .us_start import UsFieldError, check_us_fields
+from .vin.lookup import VinError, found_lookup, lookup_vin
+from .runs import append_event, events_path, failed_at, failure_count, node_result, run_dir
 from .settings_store import SettingsError, repin_run, run_market
 from .storage import fetch_run, push_run
 from .health import check as health_check
@@ -109,6 +110,30 @@ def refuse_market_off(market: str) -> None:
 def refuse_run_market_off(run_id: str) -> None:
     """Route dependency (resume, dev re-runs): the run's own market must be on."""
     refuse_market_off(run_market(run_id))
+
+
+def refuse_us_run(run_id: str) -> None:
+    """Route dependency (stage U2): confirm and extra photos are India only; a US run takes its car from the VIN."""
+    if run_market(run_id) == "us":
+        raise RunRefused(409, "not_for_us", "US runs have no confirm step or extra photos: the car comes from the VIN.")
+
+
+def us_upload_start(params, cfg) -> dict | JSONResponse:
+    """Stage U2: VIN / state / miles of a US upload (query string, checked before the video is read) and the saved
+    VIN lookup that found the car. The server never takes car values from the browser."""
+    try:
+        fields = check_us_fields(params.get("vin"), params.get("state"), params.get("miles"),
+                                 miles_min=cfg.markets.us.miles_min, miles_max=cfg.markets.us.miles_max)
+    except UsFieldError as exc:
+        return JSONResponse(status_code=422, content={"error": {"code": exc.code, "message": exc.message}})
+    lookup = found_lookup(fields["vin"], cfg.vin.provider, cfg.vin.cache_days)
+    if lookup is None:
+        return JSONResponse(status_code=422, content={"error": {"code": "vin_lookup_missing", "message":
+                            "Look up the VIN first and answer Yes on the car, then upload."}})
+    return {"fields": fields, "lookup": lookup}
+
+
+_NOT_US = [Depends(refuse_us_run)]
 
 
 _RUN = [Depends(run_access)]
@@ -240,6 +265,11 @@ async def api_create_run(request: Request, background: BackgroundTasks, market: 
     is_admin = user.role == "admin"
     run_market_now = visitor_market(request, user, market)
     refuse_market_off(run_market_now)
+    us_start = None
+    if run_market_now == "us":  # stage U2: ?vin=&state=&miles= checked before anything is read or spent
+        us_start = await run_in_threadpool(us_upload_start, request.query_params, cfg)
+        if isinstance(us_start, JSONResponse):
+            return us_start
     if body_too_large(request.headers.get("content-length"), cfg.upload.max_size_mb):
         return JSONResponse(status_code=413, content={"error": {"code": "too_large", "message":
                             f"This file exceeds {cfg.upload.max_size_mb} MB. The limit is {cfg.upload.max_size_mb} MB."}})
@@ -256,7 +286,7 @@ async def api_create_run(request: Request, background: BackgroundTasks, market: 
         video = form.get("video")
         if not isinstance(video, StarletteUploadFile):
             return JSONResponse(status_code=400, content={"error": {"code": "no_video", "message": "No video was sent."}})
-        out = await process_upload(video, user.id, is_admin=is_admin, market=run_market_now)
+        out = await process_upload(video, user.id, is_admin=is_admin, market=run_market_now, us=us_start)
         background.add_task(push_run, out["run_id"])  # the video to S3 (step 8.1)
         return out
     except DuplicateUpload as dup:
@@ -467,6 +497,10 @@ def api_resume(run_id: str, user: SignedIn = Depends(run_access)):
         return JSONResponse(status_code=409, content={
             "error": {"code": "not_failed", "message": "Nothing to resume: the last run did not stop on a failure."}
         })
+    stopped = (node_result(run_id, node) or {}).get("data") or {}
+    if stopped.get("code") == "vin_mismatch":  # owner 27 Nov: a resume would only check the same video again
+        return JSONResponse(status_code=409, content={"error": {"code": "vin_mismatch", "message": stopped.get(
+            "error") or "The video does not look like the car of this VIN. Start a new run."}})
     if user.role != "admin":  # hardening A7: Resume stays free, but not endless, and waits when the server is full
         access = get_config().access
         if not resume_allowed(failure_count(run_id), access.free_resumes_per_run):
@@ -579,7 +613,7 @@ def _release_photo(run_id: str) -> None:
 _PHOTO_CLOSED = {"error": {"code": "not_waiting", "message": "Photos can only be changed while confirm is waiting."}}
 
 
-@app.post("/api/runs/{run_id}/confirm/start", dependencies=_ADMIN_WORK)
+@app.post("/api/runs/{run_id}/confirm/start", dependencies=_ADMIN_WORK + _NOT_US)
 def api_confirm_start(run_id: str):
     """Dev (used by /inspector): show the confirm step on a run whose graph already ended after verify.
     Admin only (hardening A1): it clears confirm and photos, and the confirm that follows reruns paid steps."""
@@ -602,7 +636,7 @@ def api_confirm_start(run_id: str):
     return {"started": True}
 
 
-@app.post("/api/runs/{run_id}/confirm", dependencies=_RUN + [Depends(refuse_late_confirm)])
+@app.post("/api/runs/{run_id}/confirm", dependencies=_RUN + [Depends(refuse_late_confirm)] + _NOT_US)
 def api_confirm(run_id: str, answer: ConfirmAnswer, user: SignedIn = Depends(run_access)):
     rd = _local_run(run_id)
     if not rd.exists():
@@ -659,7 +693,7 @@ def _photo_guard(run_id: str, slot: str):
     return rd, None
 
 
-@app.post("/api/runs/{run_id}/photos/{slot}", dependencies=_RUN)
+@app.post("/api/runs/{run_id}/photos/{slot}", dependencies=_RUN + _NOT_US)
 async def api_upload_photo(run_id: str, slot: str, photo: UploadFile = File(...)):
     """Stage 6: one extra photo per slot (front_left, front_right, rear_left, rear_right, odometer); replaces the old one."""
     if not _claim_photo(run_id):
@@ -677,7 +711,7 @@ async def api_upload_photo(run_id: str, slot: str, photo: UploadFile = File(...)
         _release_photo(run_id)
 
 
-@app.delete("/api/runs/{run_id}/photos/{slot}", dependencies=_RUN)
+@app.delete("/api/runs/{run_id}/photos/{slot}", dependencies=_RUN + _NOT_US)
 def api_delete_photo(run_id: str, slot: str):
     if not _claim_photo(run_id):
         return JSONResponse(status_code=409, content=_PHOTO_CLOSED)

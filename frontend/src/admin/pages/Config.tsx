@@ -29,6 +29,7 @@ const CHOICES: Record<string, string[]> = {
   "models.extract_reasoning_effort": ["", "none", "minimal", "low", "medium", "high"],
   "search.depth": ["basic", "advanced"],
   "markets.default": ["in", "us"],
+  "markets.us.vin_mismatch_action": ["stop", "warn"],
 };
 const HINTS: Record<string, string> = {
   "dev.stop_after": "India pipeline: it ends after this step. Empty = run everything.",
@@ -41,6 +42,8 @@ const HINTS: Record<string, string> = {
   "markets.us.odometer_min_confidence": "Verify's odometer reading counts only at this confidence or higher (used from stage U3).",
   "markets.us.top_states": "State chips on the first screen, one per line (used from stage U1).",
   "markets.us.state_templates_max": "At most this many {state} templates per run; the rest are US-wide (used from stage U4).",
+  "markets.us.vin_mismatch_action": "Video does not look like the VIN's car (confident mismatch): stop the run after verify (before any search cost), or warn and go on.",
+  "markets.us.vin_mismatch_min_confidence": "Only a mismatch at least this sure counts. Unsure answers never stop a run.",
   "vin.provider": "The VIN service that decodes the VIN on the US first screen.",
   "vin.cache_days": "The same VIN again within this many days gets the saved answer (no second call). 0 = always call.",
   "vin.max_lookups_per_hour": "Real VIN service calls per user per hour. The admin has no limit.",

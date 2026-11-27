@@ -78,12 +78,14 @@ def stop_after_for(market: str, stop_after_in: str | None, stop_after_us: str | 
 
 
 def past_stop(node: str, stop: str | None, order: tuple[str, ...]) -> bool:
-    """True when `node` must not run because the pipeline stops before it. "upload" stops before every graph node."""
+    """True when `node` must not run because the pipeline stops before it. "upload" stops before every graph node.
+    A stop this graph does not have (e.g. vin_details before stage U4 builds it) also stops everything: a wrong stop
+    must never spend tokens."""
     if not stop:
         return False
-    if stop == "upload":
+    if stop == "upload" or stop not in order:
         return True
-    return stop in order and node in order and order.index(node) > order.index(stop)
+    return node in order and order.index(node) > order.index(stop)
 
 
 def checked_market(value: str | None) -> str | None:
