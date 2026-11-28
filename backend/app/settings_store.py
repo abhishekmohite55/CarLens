@@ -30,6 +30,7 @@ FORMAT_FIELDS = {
     "verify.user.md": {"frame_count", "vin_car"},  # vin_car: US prompt only (owner 27 Nov: video vs VIN check)
     "photos.user.md": {"photo_count"},
     "extract_prices.user.md": {"trimmed_text"},
+    "extract_labels.user.md": {"car_text", "trimmed_text"},  # stage E1: labelled extract
     "plan_searches.user.md": {"car_json", "damage_count", "damage_json", "tyre_count", "tyres_json", "queries_per_part"},
 }
 
@@ -118,6 +119,11 @@ def check_config(data: Any, nodes: list[str], keep_origin: str | None = None) ->
         limits = cfg.markets.of(market).extract_limits
         if not 0 < limits.listing_min < limits.listing_max:
             bad(f"markets.{market}.extract_limits", "listing_min must be above 0 and below listing_max")
+        mc = cfg.markets.of(market)
+        if mc.extract_mode not in ("classic", "labels"):
+            bad(f"markets.{market}.extract_mode", "must be classic or labels")
+        if not 0 <= mc.light_repair_band.min < mc.light_repair_band.max:
+            bad(f"markets.{market}.light_repair_band", "min must be 0 or more and below max")
     if cfg.markets.us.vin_mismatch_action not in ("stop", "warn"):
         bad("markets.us.vin_mismatch_action", "must be stop or warn")
     from .vin.providers import DETAILS as DETAILS_PROVIDERS, KNOWN as VIN_PROVIDERS  # stage U1, U4
@@ -437,11 +443,19 @@ def list_prompts(market: str | None = None) -> list[dict]:
                                        PromptVersion.note, User.email)
                                 .outerjoin(User, User.id == PromptVersion.created_by)
                                 .where(PromptVersion.id.in_(list(ids.values()))).order_by(PromptVersion.name)).all()
+        files = _prompt_files(m)
         # "number" = this prompt's own version number (1, 2, 3 ...); "id" = the row, used for rollback
+        # file_differs (owner 28 Nov): prompts/<market>/<name> is not the active text, so "Import file" would change it
         out += [{"name": r.name, "market": m, "id": r.id, "number": counts[r.name],
                  "saved_at": r.created_at.isoformat(), "saved_by": r.email, "note": r.note,
-                 "placeholders": sorted(FORMAT_FIELDS.get(r.name, []))} for r in rows]
+                 "placeholders": sorted(FORMAT_FIELDS.get(r.name, [])),
+                 "file_differs": r.name in files and not same_text(files[r.name], prompt_text(r.id))} for r in rows]
     return out
+
+
+def same_text(a: str | None, b: str | None) -> bool:
+    """Prompt texts equal apart from line endings (files on Windows have CRLF, the seed may not)."""
+    return (a or "").replace("\r\n", "\n").strip() == (b or "").replace("\r\n", "\n").strip()
 
 
 def get_prompt(name: str, version_id: int | None = None, market: str = "in") -> dict:
@@ -498,8 +512,34 @@ def rollback_prompt(admin_id: int, name: str, version_id: int, market: str = "in
 
 
 def import_prompt(admin_id: int, name: str, market: str = "in") -> int:
+    """The prompt's file as a new version — only when it differs from the active text (owner 28 Nov: a click with
+    nothing new changes nothing). Returns the active version's row id (new or unchanged)."""
+    return import_prompt_file(admin_id, name, market)["id"]
+
+
+def import_prompt_file(admin_id: int, name: str, market: str = "in") -> dict:
+    """{id, changed}: the file saved as a new version when it differs from the active text, else the active row."""
     files = _prompt_files(market)
     if name not in files:
         raise SettingsError([{"field": name, "message": f"no such file in prompts/{market}/"}])
-    return save_prompt(admin_id, name, files[name], f"import from prompts/{market}/", action="import_prompt",
-                       market=market)
+    active = active_prompt_ids(market).get(name)
+    if active is not None and same_text(files[name], prompt_text(active)):
+        return {"id": active, "changed": False}
+    new_id = save_prompt(admin_id, name, files[name], f"import from prompts/{market}/", action="import_prompt",
+                         market=market)
+    return {"id": new_id, "changed": True}
+
+
+def import_all_prompts(admin_id: int, market: str | None = None) -> list[dict]:
+    """Owner 28 Nov: every file in prompts/<market>/ (every market when None) imported in one go — only files that
+    differ from their active version get a new version. A file with no version yet is seeded first (as on listing).
+    Returns one line per file: {market, name, changed, from, to} (version numbers)."""
+    out = []
+    for m in ([market] if market else list(MARKETS)):
+        ids = active_prompt_ids(m)  # seeds files that have no version yet
+        for name in sorted(_prompt_files(m)):
+            before = prompt_number(name, ids[name], m) if name in ids else None
+            result = import_prompt_file(admin_id, name, m)
+            out.append({"market": m, "name": name, "changed": result["changed"], "from": before,
+                        "to": prompt_number(name, result["id"], m)})
+    return out

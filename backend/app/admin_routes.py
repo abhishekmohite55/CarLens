@@ -174,6 +174,13 @@ def prompts(market: str | None = None, admin: SignedIn = Depends(require_admin))
     return {"prompts": settings_store.list_prompts(checked_market(market))}
 
 
+@router.post("/prompts/import-all")
+def import_all_prompts(market: str | None = None, admin: SignedIn = Depends(require_admin)):
+    """Owner 28 Nov: every prompt file of the market (or all markets); only changed files get a new version."""
+    results = settings_store.import_all_prompts(admin.id, checked_market(market))
+    return {"results": results, "changed": sum(1 for r in results if r["changed"])}
+
+
 @router.get("/prompts/{name}")
 def prompt(name: str, version: int | None = None, market: str | None = None,
            admin: SignedIn = Depends(require_admin)):
@@ -198,8 +205,8 @@ def rollback_prompt(name: str, version_id: int, market: str | None = None,
 @router.post("/prompts/{name}/import")
 def import_prompt(name: str, market: str | None = None, admin: SignedIn = Depends(require_admin)):
     m = _one_market(market)
-    new_id = settings_store.import_prompt(admin.id, name, m)
-    return {"version": settings_store.prompt_number(name, new_id, m)}
+    result = settings_store.import_prompt_file(admin.id, name, m)  # owner 28 Nov: no new version when unchanged
+    return {"version": settings_store.prompt_number(name, result["id"], m), "changed": result["changed"]}
 
 
 # --- dashboard and tables (stage 6.4) ---

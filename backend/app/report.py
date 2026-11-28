@@ -164,6 +164,7 @@ def build_report(inp: dict) -> dict:
         summary += us_out.pop("summary")
         vehicle.update(us_out.pop("vehicle"))
         coverage["odometer"] = us_out["miles"]["text"]
+        coverage["plate"] = vehicle["plate_from"] = "not used (US: car from the VIN)"
     else:
         summary.append(f"Odometer: {_km(confirm['odometer_km']) + ' (' + km_from + ')' if confirm.get('odometer_km') is not None else 'not read'}.")
 

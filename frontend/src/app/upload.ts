@@ -33,11 +33,12 @@ export type UploadAnswer =
   | { kind: "same"; oldRunId: string; pendingId: string }
   | { kind: "refused"; status: number; code: string; message: string };
 
-/** XMLHttpRequest, because fetch cannot report upload progress (UP-4). */
-export function sendVideo(file: File, onProgress: (sent: number) => void): Promise<UploadAnswer> {
+/** XMLHttpRequest, because fetch cannot report upload progress (UP-4).
+ * query: "?vin=…&state=…&miles=…" for a US upload (07-us-market.md §5), "?market=…" for the admin's switch. */
+export function sendVideo(file: File, onProgress: (sent: number) => void, query = ""): Promise<UploadAnswer> {
   return new Promise((resolve) => {
     const xhr = new XMLHttpRequest();
-    xhr.open("POST", "/api/runs");
+    xhr.open("POST", `/api/runs${query}`);
     xhr.upload.onprogress = (e) => onProgress(e.loaded);
     xhr.onload = () => {
       let data: Record<string, any> = {};

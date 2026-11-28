@@ -120,6 +120,8 @@ def test_repair_cost_by_action():
     assert moderate["cost"] == (325 + 550) / 2
     replace = repair_cost(scratch + [_fig("rear_bumper", 200, ftype="labour", source="D")], "replace", "severe")
     assert replace["cost"] == 941 + 200 and replace["basis"].startswith("part + labour")
+    minor_replace = repair_cost(scratch + [_fig("rear_bumper", 200, ftype="labour", source="D")], "replace", "minor")
+    assert minor_replace["cost"] == 225  # minor damage is repaired, never replaced (owner 28 Nov)
     only_parts = repair_cost([_fig("x", 400, ftype="part_price")], "repair", "minor")
     assert only_parts["basis"] == "estimate: mixed prices"
     assert repair_cost([], "repair", "minor") is None

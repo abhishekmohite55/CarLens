@@ -79,12 +79,13 @@ def yearly_rates(figures: list[dict], msrp: float, current_year: int, min_age: i
 
 
 def repair_cost(figs: list[dict], action: str | None, severity: str | None) -> dict | None:
-    """One part's cost from its figures, by what verify said to do. None when it has no figures at all."""
+    """One part's cost from its figures, by what verify said to do. None when it has no figures at all.
+    Owner 28 Nov: cosmetic / minor damage is always repaired (buffing, touch up, PDR, chip repair), never replaced."""
     if not figs:
         return None
     by = lambda *types: [f for f in figs if f.get("type") in types]  # noqa: E731
     jobs, parts, labour = by("repair_total"), by("part_price"), by("labour")
-    if action == "replace":
+    if action == "replace" and severity not in LIGHT:
         if parts and labour:
             return {"cost": median(mid(f) for f in parts) + median(mid(f) for f in labour),
                     "basis": "part + labour (median of each)", "used": parts + labour}

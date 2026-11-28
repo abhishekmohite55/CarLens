@@ -142,6 +142,11 @@ class ExtractLimits(BaseModel):
     listing_max: int  # ... and above this
 
 
+class PriceBand(BaseModel):
+    min: int  # owner 28 Nov: a cosmetic / minor repair price counts only when its midpoint is in [min, max]
+    max: int
+
+
 class MarketConfig(BaseModel):
     """Settings that differ per market (stage M0, docs/backend/07-us-market.md §9)."""
     currency: str
@@ -151,6 +156,10 @@ class MarketConfig(BaseModel):
     new_price_templates: list[str] = []
     extract_limits: ExtractLimits
     tyre_minor_wear_deduction: int
+    # stage E1 (owner 28 Nov): "labels" = the extract LLM labels every price and app/extract_rules.py keeps or rejects
+    # it; "classic" = the extract before E1 (model-name check + outliers). India stays classic until validated.
+    extract_mode: str = "classic"
+    light_repair_band: PriceBand = PriceBand(min=500, max=5000)
 
 
 class UsMarketConfig(MarketConfig):
@@ -159,6 +168,8 @@ class UsMarketConfig(MarketConfig):
     search_country: Optional[str] = "united states"
     extract_limits: ExtractLimits = ExtractLimits(listing_min=1000, listing_max=300000)
     tyre_minor_wear_deduction: int = 50
+    extract_mode: str = "labels"
+    light_repair_band: PriceBand = PriceBand(min=50, max=400)
     top_states: list[str] = ["CA", "TX", "FL", "NY", "PA", "IL", "OH", "GA", "NC"]
     state_templates_max: int = Field(2, ge=0)
     odometer_min_confidence: float = Field(0.8, ge=0, le=1)

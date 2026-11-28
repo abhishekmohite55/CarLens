@@ -10,6 +10,9 @@ import { Footer } from "./Footer";
 import { useSession } from "./session";
 import { ThemeToggle } from "./theme";
 import { ACTIVE, checkFile, durationText, sendVideo, sizeText, type Limits, type RunRow } from "./upload";
+import { adminMarket, setAdminMarket, type Market, type UsConfig } from "./market";
+import { UsStart, type UsFields } from "./UsStart";
+import { Logo } from "./MarketTag";
 
 type Stage =
   | { kind: "ready" }
@@ -62,19 +65,40 @@ export function Home() {
   const [dragging, setDragging] = useState(false);
   const [choosing, setChoosing] = useState(false); // same-video answer on its way: one click only (fix 20 Nov)
   const picker = useRef<HTMLInputElement>(null);
+  // US market (07-us-market.md §5, §13): the server says which market this visitor is in; an admin can switch.
+  const isAdmin = me?.role === "admin";
+  const [market, setMarket] = useState<Market>("in");
+  const [marketKnown, setMarketKnown] = useState(false); // the logo's IN / US tag shows once /api/config answered
+  const [marketOpen, setMarketOpen] = useState(true);
+  const [usConfig, setUsConfig] = useState<UsConfig | null>(null);
+  const [usFields, setUsFields] = useState<UsFields | null>(null);
+  const [switchTo, setSwitchTo] = useState<Market | null>(() => (isAdmin ? adminMarket() : null));
+  const us = market === "us";
 
   const loadRuns = useCallback(async () => setRuns((await api<{ runs: RunRow[] }>("/api/runs")).runs), []);
   useEffect(() => {
-    api<{ upload: Limits; maintenance?: boolean }>("/api/config")
+    api<{ upload: Limits; maintenance?: boolean; market?: Market; markets_on?: Record<string, boolean>; us?: UsConfig }>(
+      `/api/config${isAdmin && switchTo ? `?market=${switchTo}` : ""}`)
       .then((c) => {
         setLimits(c.upload);
+        const m: Market = c.market === "us" ? "us" : "in";
+        setMarket(m);
+        setMarketKnown(true);
+        setMarketOpen(c.markets_on?.[m] !== false);
+        setUsConfig(c.us ?? null);
         if (c.maintenance) setProblem("CarLens is being updated. Try again in a few minutes."); // step 9 deploy
       })
       .catch(() => setProblem("Could not load the upload limits."));
     loadRuns().catch(() => setRuns([]));
-  }, [loadRuns]);
-
-  const isAdmin = me?.role === "admin";
+  }, [loadRuns, isAdmin, switchTo]);
+  const pickMarket = (m: Market) => {
+    setAdminMarket(m);
+    setSwitchTo(m);
+    setUsFields(null);
+    setStage({ kind: "ready" });
+    setProblem("");
+  };
+  const onUsReady = useCallback((f: UsFields | null) => setUsFields(f), []);
   const runsLeft = me?.tokens ?? 0;
   const active = runs?.find((r) => ACTIVE.includes(r.status));
   const blocked = !isAdmin && stage.kind === "ready" && (active || runsLeft <= 0);
@@ -99,8 +123,20 @@ export function Home() {
         return;
       }
     }
+    if (us && !usFields) {
+      setProblem("Confirm your car and type its miles first.");
+      return;
+    }
+    const query = new URLSearchParams();
+    if (isAdmin) query.set("market", market); // the admin's switch; the server ignores it for everyone else
+    if (us && usFields) {
+      query.set("vin", usFields.vin);
+      if (usFields.state) query.set("state", usFields.state);
+      query.set("miles", String(usFields.miles));
+    }
+    const qs = query.toString() ? `?${query}` : "";
     setStage({ kind: "uploading", file, sent: 0 });
-    const answer = await sendVideo(file, (sent) => setStage({ kind: "uploading", file, sent }));
+    const answer = await sendVideo(file, (sent) => setStage({ kind: "uploading", file, sent }), qs);
     if (answer.kind === "run") {
       await refresh();
       navigate(`/run/${answer.runId}`);
@@ -207,8 +243,9 @@ export function Home() {
             </p>
           </div>
           <p className="text-small opacity-80">{isAdmin ? "Admin account: no run limit." : `This uses 1 of your ${runsLeft} runs.`}</p>
+          {us && !usFields && <p className="text-small opacity-90">Confirm your car and type its miles above to upload.</p>}
           <div className="flex flex-wrap gap-2">
-            <button onClick={() => upload(file)} className={onCanvas}>Upload video</button>
+            <button onClick={() => upload(file)} disabled={us && !usFields} className={onCanvas}>Upload video</button>
             <button onClick={() => setStage({ kind: "ready" })} className={quiet}>Choose another</button>
           </div>
         </div>
@@ -253,8 +290,18 @@ export function Home() {
       onDragOver={(e) => { e.preventDefault(); if (stage.kind === "ready" && !blocked) setDragging(true); }}
       onDragLeave={(e) => { if (!e.relatedTarget) setDragging(false); }} onDrop={onDrop}>
       <header className="flex items-center justify-between gap-3 px-4 pt-4 sm:px-8 sm:pt-6">
-        <span className="text-heading">CarLens</span>
+        <Logo market={marketKnown ? market : undefined} />
         <div className="flex items-center gap-1 sm:gap-2">
+          {isAdmin && (
+            <span className="flex rounded-full bg-surface p-0.5 shadow-panel" title="Market for your next upload (admin only)">
+              {(["in", "us"] as const).map((m) => (
+                <button key={m} onClick={() => pickMarket(m)}
+                  className={`text-small rounded-full px-3 py-1 ${market === m ? "bg-ink text-canvas" : "text-ink-2 hover:text-ink"}`}>
+                  {m === "in" ? "India" : "US"}
+                </button>
+              ))}
+            </span>
+          )}
           <span className="text-small hidden text-ink-3 sm:inline">{me?.email}</span>
           <button onClick={async () => { await signOut(); navigate("/"); }} className="text-label rounded-full px-4 py-2 text-ink-2 hover:text-ink">
             Sign out
@@ -265,6 +312,15 @@ export function Home() {
 
       <main className="mx-auto max-w-2xl px-4 pb-24 sm:px-8">
         <section className="flex min-h-[22rem] flex-col items-center justify-center gap-5 pt-10">
+          {us && !marketOpen && (
+            <p role="alert" className="text-body rounded-input bg-warn-soft px-4 py-3 text-center text-warn-text">
+              US inspections are paused right now. Please come back later.
+            </p>
+          )}
+          {/* Stays mounted while the video uploads, so a refused upload keeps the VIN, car, state and miles. */}
+          {us && marketOpen && usConfig && !blocked && stage.kind !== "same" && (
+            <UsStart key={market} config={usConfig} onReady={onUsReady} disabled={stage.kind === "uploading"} />
+          )}
           {lens}
           {stage.kind === "uploading" && (
             <p className="text-body tabular-nums text-ink-2">

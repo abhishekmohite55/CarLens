@@ -138,6 +138,8 @@ markets: # stage M0 (docs/backend/07-us-market.md §3, §9): settings that diffe
       listing_min: 100000
       listing_max: 10000000
     tyre_minor_wear_deduction: 5000 # fixed deduction per tyre the plan LLM marks minor_wear (from config, not the internet)
+    extract_mode: classic # classic = extract as before E1; labels = the LLM labels every price, code keeps or rejects it (stage E1). Switch to labels once an India run is checked
+    light_repair_band: { min: 500, max: 5000 } # labels mode: a cosmetic / minor repair price counts only when its midpoint is in this range (₹)
   us:
     currency: USD
     distance_unit: mi
@@ -157,6 +159,8 @@ markets: # stage M0 (docs/backend/07-us-market.md §3, §9): settings that diffe
       listing_min: 1000
       listing_max: 300000
     tyre_minor_wear_deduction: 50
+    extract_mode: labels # labels = the LLM labels every price (trim, match, work...) with confidence; code keeps or rejects it (stage E1, owner 28 Nov)
+    light_repair_band: { min: 50, max: 400 } # labels mode: a cosmetic / minor repair price counts only when its midpoint is in this range ($)
     top_states: [CA, TX, FL, NY, PA, IL, OH, GA, NC] # state chips on the first screen (U1)
     state_templates_max: 2 # at most this many {state} templates per run, the rest US-wide (U4)
     odometer_min_confidence: 0.8 # verify's odometer reading counts only at this confidence or higher (U3)
