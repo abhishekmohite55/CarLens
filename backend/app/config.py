@@ -10,7 +10,9 @@ from typing import Optional
 
 import yaml
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from .market import MARKETS, move_market_keys
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent  # F:\CarLens
 
@@ -76,6 +78,8 @@ class FramesConfig(BaseModel):
     workers: int
     max_long_edge_px: int
     jpeg_quality: int
+    extra_frames_for: list[str] = ["damage"]  # owner 27 Nov: these categories also get locate's frame + another angle
+    extra_min_gap_sec: float = Field(0.5, ge=0)  # "another angle" is at least this far from the other frames
 
 
 class ConfirmConfig(BaseModel):
@@ -95,9 +99,8 @@ class PlanConfig(BaseModel):
     queries_per_part: int
     listing_queries_per_run: int
     tyre_ok_score: int
-    listing_templates: list[str]
     new_price_queries_per_run: int = 2
-    new_price_templates: list[str] = []
+    # listing_templates / new_price_templates: per market, markets.<market> (stage M0)
 
 
 class SearchConfig(BaseModel):
@@ -106,22 +109,18 @@ class SearchConfig(BaseModel):
     include_raw_content: bool
     include_domains: list[str]
     exclude_domains: list[str] = []
-    country: Optional[str] = None
-    workers: int
+    workers: int  # country: per market, markets.<market>.search_country (stage M0)
 
 
 class ExtractConfig(BaseModel):
     max_results_per_group: int
     max_snippet_chars: int
-    listing_min_inr: int
-    listing_max_inr: int
-    outlier_factor: float
+    outlier_factor: float  # listing limits: per market, markets.<market>.extract_limits (stage M0)
 
 
 class PricingConfig(BaseModel):
     year_tolerance: int
-    min_comparables: int
-    tyre_minor_wear_deduction_inr: int
+    min_comparables: int  # tyre deduction: per market, markets.<market>.tyre_minor_wear_deduction (stage M0)
     min_listings_with_year: int = 3
     max_from_top: int = 3
     min_listing_age: int = 2
@@ -133,7 +132,67 @@ class PathsConfig(BaseModel):
 
 
 class DevConfig(BaseModel):
-    stop_after: Optional[str] = None  # node name: the pipeline ends after it (platform step 2 testing); empty = all
+    stop_after: Optional[str] = None  # India: node name, the pipeline ends after it (platform step 2 testing); empty = all
+    stop_after_us: Optional[str] = None  # US (stage M0): "upload" (upload/vin: locate never starts) or a node; empty = all
+    markets_on: dict[str, bool] = {"in": True, "us": False}  # off = no new runs / resumes / re-runs in that market
+
+
+class ExtractLimits(BaseModel):
+    listing_min: int  # car prices (listing / new price) below this are dropped (the market's currency)
+    listing_max: int  # ... and above this
+
+
+class PriceBand(BaseModel):
+    min: int  # owner 28 Nov: a cosmetic / minor repair price counts only when its midpoint is in [min, max]
+    max: int
+
+
+class MarketConfig(BaseModel):
+    """Settings that differ per market (stage M0, docs/backend/07-us-market.md §9)."""
+    currency: str
+    distance_unit: str
+    search_country: Optional[str] = None  # Tavily boosts results from this country
+    listing_templates: list[str] = []
+    new_price_templates: list[str] = []
+    extract_limits: ExtractLimits
+    tyre_minor_wear_deduction: int
+    # stage E1 (owner 28 Nov): "labels" = the extract LLM labels every price and app/extract_rules.py keeps or rejects
+    # it; "classic" = the extract before E1 (model-name check + outliers). India stays classic until validated.
+    extract_mode: str = "classic"
+    light_repair_band: PriceBand = PriceBand(min=500, max=5000)
+    moderate_repair_band: Optional[PriceBand] = None  # stage E2: a moderate repair's midpoint must be in it; None = no band
+
+
+class UsMarketConfig(MarketConfig):
+    currency: str = "USD"
+    distance_unit: str = "mi"
+    search_country: Optional[str] = "united states"
+    extract_limits: ExtractLimits = ExtractLimits(listing_min=1000, listing_max=300000)
+    tyre_minor_wear_deduction: int = 50
+    extract_mode: str = "labels"
+    light_repair_band: PriceBand = PriceBand(min=50, max=400)
+    moderate_repair_band: Optional[PriceBand] = PriceBand(min=150, max=1000)
+    miles_per_mile: float = Field(0.05, ge=0)  # stage E2: $ a listing moves per mile it differs from the car; 0 = off
+    min_range_pct: float = Field(0.06, ge=0, le=1)  # stage E2: the price range is at least this share of its middle
+    top_states: list[str] = ["CA", "TX", "FL", "NY", "PA", "IL", "OH", "GA", "NC"]
+    state_templates_max: int = Field(2, ge=0)
+    odometer_min_confidence: float = Field(0.8, ge=0, le=1)
+    vin_mismatch_action: str = "stop"  # owner 27 Nov: video not the VIN's car → stop after verify, or warn and go on
+    vin_mismatch_min_confidence: float = Field(0.8, ge=0, le=1)  # only a mismatch this sure counts
+    miles_min: int = Field(1, ge=0)  # stage U2: miles the user may type at upload
+    miles_max: int = Field(999_999, ge=1)
+
+
+class MarketsConfig(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)  # "in" is a Python keyword
+
+    default: str = "in"
+    country_map: dict[str, str] = {"US": "us"}
+    in_: MarketConfig = Field(alias="in", serialization_alias="in")
+    us: UsMarketConfig = UsMarketConfig()
+
+    def of(self, market: str) -> MarketConfig:
+        return self.us if market == "us" else self.in_
 
 
 class AuthConfig(BaseModel):
@@ -168,7 +227,43 @@ class StorageConfig(BaseModel):
     local_keep_days: int = Field(7, ge=1)  # finished runs untouched this long lose their server copy (S3 keeps it)
 
 
+VPIC_FIELDS = {"make": "Make", "model": "Model", "year": "ModelYear", "trim": "Trim", "series": "Series",
+               "fuel": "FuelTypePrimary", "body": "BodyClass", "displacement_l": "DisplacementL",
+               "cylinders": "EngineCylinders", "engine_layout": "EngineConfiguration", "drive": "DriveType"}
+
+
+class VinProviderConfig(BaseModel):
+    base_url: str
+    timeout_sec: float = Field(10, gt=0)
+    key_env: str = ""  # name of the .env variable with the key; empty = no key (vPIC)
+    fields: dict[str, str] = {}  # common name → the provider's key (or dotted path)
+    recalls_path: str = ""  # details providers (stage U4): dotted path of the recall list
+
+
+MCPVIN_FIELDS = {"recalls": "recalls.count", "open_recalls": "recall_status.open_count",
+                 "complaints": "complaints.count", "safety_overall": "safety_ratings.overall",
+                 "safety_frontal_driver": "safety_ratings.frontal_driver", "mpg_city": "fuel_economy.city_mpg",
+                 "mpg_highway": "fuel_economy.highway_mpg", "mpg_combined": "fuel_economy.combined_mpg",
+                 "annual_fuel_cost": "fuel_economy.annual_fuel_cost"}
+
+
+class VinConfig(BaseModel):
+    """VIN lookup (stage U1, docs/backend/07-us-market.md §4): the provider and how to read it."""
+    provider: str = "vpic"
+    cache_days: int = Field(30, ge=0)  # same VIN within this many days → the saved answer, no second call
+    max_lookups_per_hour: int = Field(20, ge=1)  # real provider calls per user (the admin has no limit)
+    details_provider: str = "mcpvin"  # stage U4: recalls, complaints, safety, EPA; empty = no vehicle details
+    details_wait_sec: int = Field(30, ge=0)  # plan waits at most this long for vehicle details, then goes on
+    details_top_recalls: int = Field(5, ge=0)  # recalls listed in the report
+    providers: dict[str, VinProviderConfig] = {
+        "vpic": VinProviderConfig(base_url="https://vpic.nhtsa.dot.gov/api/vehicles", fields=VPIC_FIELDS),
+        "mcpvin": VinProviderConfig(base_url="https://mcp.vin/api/vin", timeout_sec=20, fields=MCPVIN_FIELDS,
+                                    recalls_path="recalls.recalls")}
+
+
 class AppConfig(BaseModel):
+    model_config = ConfigDict(serialize_by_alias=True)  # stage M0: markets.in is saved as "in", not "in_"
+
     upload: UploadConfig
     models: ModelsConfig
     frames: FramesConfig
@@ -185,6 +280,14 @@ class AppConfig(BaseModel):
     access: AccessConfig = AccessConfig()
     storage: StorageConfig = StorageConfig()
     maintenance: MaintenanceConfig = MaintenanceConfig()
+    markets: MarketsConfig
+    vin: VinConfig = VinConfig()
+
+    @model_validator(mode="before")
+    @classmethod
+    def _old_market_keys(cls, data):
+        """Config versions saved before stage M0 keep loading: their India keys move under markets.in."""
+        return move_market_keys(data)
 
 
 # --- which config a caller gets (platform step 6.3, docs/platform/06-admin.md §6.1) ---
@@ -217,6 +320,20 @@ def pinned(fn):
 
 def current_run_id() -> str | None:
     return getattr(_pin, "run_id", None)
+
+
+def current_market() -> str:
+    """Market of the run this thread works on (stage M0); "in" outside a run (the behaviour before markets)."""
+    from . import settings_store  # imported here: settings_store imports this module
+
+    run_id = current_run_id()
+    market = settings_store.run_market(run_id) if run_id else None
+    return market if market in MARKETS else "in"
+
+
+def market_config(market: str | None = None) -> MarketConfig:
+    """markets.<market> of the config in use; the run's own market when none is given."""
+    return get_config().markets.of(market or current_market())
 
 
 def _from_version(version_id: int, data: dict) -> AppConfig:

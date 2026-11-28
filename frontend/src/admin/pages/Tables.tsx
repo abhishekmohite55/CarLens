@@ -1,10 +1,12 @@
 // Table browser (docs/platform/06-admin.md §6.7): every table read-only; changes go through the other pages.
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../../shared/api";
+import { useMarket, withMarket } from "../market";
 import { Button, td, th, useLoad } from "../ui";
 
-type TableInfo = { name: string; rows: number; columns: string[] };
-type Page = { table: string; columns: string[]; page: number; page_size: number; total: number; rows: Record<string, unknown>[] };
+// market_split (stage M0): the table can be filtered by market (market or run_id column, or users)
+type TableInfo = { name: string; rows: number; columns: string[]; market_split: boolean };
+type Page = { table: string; columns: string[]; page: number; page_size: number; total: number; rows: Record<string, unknown>[]; market_split: boolean };
 
 const input = "rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-sm";
 
@@ -15,7 +17,8 @@ function show(value: unknown): string {
 }
 
 export function Tables() {
-  const loadList = useCallback(() => api<{ tables: TableInfo[] }>("/api/admin/tables"), []);
+  const market = useMarket();
+  const loadList = useCallback(() => api<{ tables: TableInfo[] }>(withMarket("/api/admin/tables", market)), [market]);
   const { data: list, error: listError } = useLoad(loadList);
   const [table, setTable] = useState<string | null>(null);
   const [page, setPage] = useState(1);
@@ -33,11 +36,12 @@ export function Tables() {
     if (sort) params.set("sort", sort);
     if (search) params.set("search", search);
     if (column) { params.set("column", column); params.set("value", value); }
+    if (market !== "all") params.set("market", market);
     const timer = window.setTimeout(() => {
       api<Page>(`/api/admin/tables/${table}?${params}`).then((p) => { setData(p); setError(""); }).catch((e) => setError(e.message));
     }, 300); // typing in the search box: one request after a pause
     return () => window.clearTimeout(timer);
-  }, [table, page, sort, desc, search, column, value]);
+  }, [table, page, sort, desc, search, column, value, market]);
 
   function open(name: string) {
     setTable(name); setPage(1); setSort(null); setDesc(true); setSearch(""); setColumn(""); setValue(""); setData(null);
@@ -74,6 +78,9 @@ export function Tables() {
       <div className="min-w-0 flex-1">
         <h1 className="mb-1 text-xl font-semibold">{table ?? "Tables"}</h1>
         <p className="mb-3 text-xs text-neutral-500">Read-only. Secret columns show •••. Long values are cut.</p>
+        {data && market !== "all" && !data.market_split && (
+          <p className="mb-3 text-xs text-amber-400">This table is not split by market: every row is shown.</p>
+        )}
         {table && data && (
           <>
             <div className="mb-3 flex flex-wrap items-center gap-2">

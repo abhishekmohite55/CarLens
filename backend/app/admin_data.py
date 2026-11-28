@@ -10,13 +10,15 @@ import shutil
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import String, Table, Text, cast, delete, false, func, insert, or_, select, text, update
+from sqlalchemy import String, Table, Text, cast, delete, distinct, false, func, insert, or_, select, text, update
 from sqlalchemy.engine import Connection
+from sqlalchemy.orm import aliased
 
 from .auth import AuthError, hash_password
 from .config import get_config
 from .db import require_engine
 from .storage import delete_run_files
+from .market import MARKETS
 from .models import AuditLog, Base, NodeRun, Run, RunEvent, Session, User
 from .users import MIN_PASSWORD
 
@@ -36,25 +38,39 @@ def new_tokens(current: int, set_to: int | None, add: int | None) -> int:
     return max(0, current + (add or 0))
 
 
+# --- market filter (stage M0): None = every market ---
+
+def _user_in_market(market: str):
+    """Owner's rule (26 Nov): a user belongs to a market when pinned to it, or when they have a run in it."""
+    return or_(User.market == market, User.id.in_(select(Run.user_id).where(Run.market == market)))
+
+
 # --- users ---
 
-def list_users(status: str | None = None) -> list[dict[str, Any]]:
+def list_users(status: str | None = None, market: str | None = None) -> list[dict[str, Any]]:
     now = datetime.now(timezone.utc)
     runs = select(Run.user_id, func.count().label("n")).group_by(Run.user_id).subquery()
     sessions = (select(Session.user_id, func.count().label("n")).where(Session.expires_at > now)
                 .group_by(Session.user_id).subquery())
-    q = (select(User, func.coalesce(runs.c.n, 0).label("runs"), func.coalesce(sessions.c.n, 0).label("sessions"))
+    run_markets = (select(Run.user_id, func.array_agg(distinct(Run.market)).label("markets"))
+                   .group_by(Run.user_id).subquery())
+    q = (select(User, func.coalesce(runs.c.n, 0).label("runs"), func.coalesce(sessions.c.n, 0).label("sessions"),
+                run_markets.c.markets.label("run_markets"))
          .outerjoin(runs, runs.c.user_id == User.id).outerjoin(sessions, sessions.c.user_id == User.id)
+         .outerjoin(run_markets, run_markets.c.user_id == User.id)
          .order_by(User.created_at.desc()))
     if status:
         q = q.where(User.status == status)
+    if market:
+        q = q.where(_user_in_market(market))
     with require_engine().connect() as conn:
         rows = conn.execute(q).all()
     return [{"id": r.id, "email": r.email, "role": r.role, "status": r.status, "tokens": r.tokens,
              "has_password": r.password_hash is not None, "google": r.google_sub is not None,
              "locked": bool(r.locked_until and r.locked_until > now), "runs": r.runs, "sessions": r.sessions,
              "created_at": _iso(r.created_at), "approved_at": _iso(r.approved_at),
-             "last_login_at": _iso(r.last_login_at)} for r in rows]
+             "last_login_at": _iso(r.last_login_at),
+             "market": r.market, "run_markets": sorted(r.run_markets or [])} for r in rows]
 
 
 def _user(conn: Connection, user_id: int):
@@ -92,6 +108,16 @@ def change_tokens(admin_id: int, user_id: int, set_to: int | None, add: int | No
     return tokens
 
 
+def set_market(admin_id: int, user_id: int, market: str | None) -> None:
+    """Stage M0: pin a user to a market (in / us); None = by location again."""
+    if market is not None and market not in MARKETS:
+        raise AuthError(400, "bad_market", f"Market must be one of {', '.join(MARKETS)}, or empty.")
+    with require_engine().begin() as conn:
+        user = _user(conn, user_id)
+        conn.execute(update(User).where(User.id == user_id).values(market=market))
+        _audit(conn, admin_id, "set_market", f"user {user_id}", {"from": user.market, "to": market, "market": market})
+
+
 def reset_password(admin_id: int, user_id: int, password: str) -> None:
     """New password set by the owner; the lockout is cleared and the user is signed out everywhere."""
     if len(password) < MIN_PASSWORD:
@@ -123,19 +149,22 @@ def delete_user(admin_id: int, user_id: int) -> None:
 
 # --- runs ---
 
-def list_runs(status: str | None = None, limit: int = 200) -> list[dict[str, Any]]:
+def list_runs(status: str | None = None, limit: int = 200, market: str | None = None) -> list[dict[str, Any]]:
     # last step that finished, for "stopped after …" (owner, 12 Nov)
     last_step = (select(NodeRun.node).where(NodeRun.run_id == Run.id, NodeRun.status == "done")
                  .order_by(NodeRun.finished_at.desc()).limit(1).scalar_subquery())
     q = (select(Run.id, Run.original_filename, Run.status, Run.failed_at, Run.error, Run.created_at, Run.updated_at,
-                Run.git_commit, User.email, last_step.label("last_step")).outerjoin(User, User.id == Run.user_id)
-         .order_by(Run.created_at.desc()).limit(limit))
+                Run.git_commit, Run.market, User.email, last_step.label("last_step"))
+         .outerjoin(User, User.id == Run.user_id).order_by(Run.created_at.desc()).limit(limit))
     if status:
         q = q.where(Run.status == status)
+    if market:
+        q = q.where(Run.market == market)
     with require_engine().connect() as conn:
         return [{"run_id": r.id, "file": r.original_filename, "status": r.status, "failed_at": r.failed_at,
                  "error": r.error, "user": r.email, "last_step": r.last_step, "created_at": _iso(r.created_at),
-                 "updated_at": _iso(r.updated_at), "git_commit": r.git_commit} for r in conn.execute(q)]
+                 "updated_at": _iso(r.updated_at), "git_commit": r.git_commit, "market": r.market}
+                for r in conn.execute(q)]
 
 
 def step_status(node: str, status: str, finished_at: datetime | None) -> str:
@@ -179,7 +208,7 @@ def mark_run_failed(admin_id: int, run_id: str) -> None:
         conn.execute(update(Run).where(Run.id == run_id).values(
             status="failed", failed_at=run.failed_at or "admin", error="Marked failed by the admin",
             updated_at=datetime.now(timezone.utc)))
-        _audit(conn, admin_id, "mark_run_failed", f"run {run_id}", {"was": run.status})
+        _audit(conn, admin_id, "mark_run_failed", f"run {run_id}", {"was": run.status, "market": run.market})
 
 
 def delete_run(admin_id: int, run_id: str, run_folder, forget_checkpoint) -> None:
@@ -192,7 +221,7 @@ def delete_run(admin_id: int, run_id: str, run_folder, forget_checkpoint) -> Non
         conn.execute(delete(RunEvent).where(RunEvent.run_id == run_id))  # no foreign key on run_events
         conn.execute(delete(Run).where(Run.id == run_id))  # node_runs, node_results, node tables: ON DELETE CASCADE
         _audit(conn, admin_id, "delete_run", f"run {run_id}",
-               {"file": run.original_filename, "status": run.status, "user_id": run.user_id})
+               {"file": run.original_filename, "status": run.status, "user_id": run.user_id, "market": run.market})
     forget_checkpoint(run_id)
     shutil.rmtree(run_folder, ignore_errors=True)
     delete_run_files(run_id)  # S3 copy (step 8.1)
@@ -200,14 +229,30 @@ def delete_run(admin_id: int, run_id: str, run_folder, forget_checkpoint) -> Non
 
 # --- audit log ---
 
-def list_audit(action: str | None = None, limit: int = 200) -> list[dict[str, Any]]:
-    q = (select(AuditLog.id, AuditLog.at, AuditLog.action, AuditLog.target, AuditLog.details, User.email)
+def _audit_market():
+    """Stage M0: the market an audit row belongs to: details.market (prompts, run actions, set_market), else the run it
+    names (target "run <id>" or details.run_id), else the user's pin (target "user <id>"); NULL = not market-linked
+    (config, deploys) — shown only when every market is shown."""
+    named = aliased(User)  # not the outer query's User (the admin who acted)
+    target_run = (select(Run.market).where(or_(AuditLog.target == func.concat("run ", Run.id),
+                                               Run.id == AuditLog.details["run_id"].astext))
+                  .correlate(AuditLog).limit(1).scalar_subquery())
+    target_user = (select(named.market).where(AuditLog.target == func.concat("user ", cast(named.id, Text)))
+                   .correlate(AuditLog).limit(1).scalar_subquery())
+    return func.coalesce(AuditLog.details["market"].astext, target_run, target_user)
+
+
+def list_audit(action: str | None = None, limit: int = 200, market: str | None = None) -> list[dict[str, Any]]:
+    row_market = _audit_market().label("market")
+    q = (select(AuditLog.id, AuditLog.at, AuditLog.action, AuditLog.target, AuditLog.details, User.email, row_market)
          .outerjoin(User, User.id == AuditLog.admin_id).order_by(AuditLog.at.desc(), AuditLog.id.desc()).limit(limit))
     if action:
         q = q.where(AuditLog.action == action)
+    if market:
+        q = q.where(_audit_market() == market)
     with require_engine().connect() as conn:
         return [{"id": r.id, "at": _iso(r.at), "admin": r.email, "action": r.action, "target": r.target,
-                 "details": r.details} for r in conn.execute(q)]
+                 "details": r.details, "market": r.market} for r in conn.execute(q)]
 
 
 # --- dashboard (stage 6.4, 06-admin.md §6.6) ---
@@ -216,23 +261,38 @@ AI_NODES = ("verify", "photos", "plan", "extract")
 TAVILY_FREE_CREDITS = 1000  # Tavily free plan per month (basic search = 1 credit per query)
 
 
-def dashboard(days: int = 30, flag_window_min: int = 60, flag_count: int = 3) -> dict[str, Any]:
+# Stage M0 dashboard filter: :market NULL = every market. RUN_OF(col) keeps rows whose run is in the market;
+# USER_OF(col) keeps users of the market (pinned to it, or with a run in it).
+_ALL = "CAST(:market AS text) IS NULL"
+
+
+def _run_of(col: str) -> str:
+    return f"({_ALL} OR {col} IN (SELECT id FROM runs WHERE market = :market))"
+
+
+def _user_of(col: str) -> str:
+    return (f"({_ALL} OR {col} IN (SELECT id FROM users WHERE market = :market)"
+            f" OR {col} IN (SELECT user_id FROM runs WHERE market = :market))")
+
+
+def dashboard(days: int = 30, flag_window_min: int = 60, flag_count: int = 3, market: str | None = None) -> dict[str, Any]:
     """Numbers for the admin dashboard over the last `days` days (status counts and access: now).
-    flagged (hardening A2): users with flag_count or more same-video / refused uploads in the last flag_window_min."""
+    flagged (hardening A2): users with flag_count or more same-video / refused uploads in the last flag_window_min.
+    market (stage M0): only runs (and users) of that market; None = all."""
     days = max(1, min(days, 365))
     problems: list[dict[str, str]] = []  # step 9.3: a part that fails is reported, the rest still loads
 
     def rows(part: str, sql: str, **params) -> list[dict]:
         try:
             with require_engine().connect() as conn:
-                return [dict(r._mapping) for r in conn.execute(text(sql), {"days": days, **params})]
+                return [dict(r._mapping) for r in conn.execute(text(sql), {"days": days, "market": market, **params})]
         except Exception as exc:  # noqa: BLE001
             problems.append({"part": part, "error": str(exc).splitlines()[0][:300]})
             return []
 
     runs_per_day = rows("runs_per_day", """
         SELECT (created_at AT TIME ZONE 'Asia/Kolkata')::date::text AS day, status, count(*) AS n
-        FROM runs WHERE created_at > now() - make_interval(days => :days)
+        FROM runs WHERE created_at > now() - make_interval(days => :days) AND (""" + _ALL + """ OR market = :market)
         GROUP BY 1, 2 ORDER BY 1""")
     steps = rows("steps", """
         SELECT node,
@@ -241,10 +301,11 @@ def dashboard(days: int = 30, flag_window_min: int = 60, flag_count: int = 3) ->
                round(avg(extract(epoch FROM finished_at - started_at)) FILTER (WHERE status = 'done')::numeric, 1) AS avg_sec,
                round(max(extract(epoch FROM finished_at - started_at)) FILTER (WHERE status = 'done')::numeric, 1) AS max_sec
         FROM node_runs WHERE started_at > now() - make_interval(days => :days) AND node NOT IN ('upload', 'confirm')
+          AND """ + _run_of("run_id") + """
         GROUP BY node""")
     last_errors = rows("last_errors", """
         SELECT node, run_id, error, finished_at::text AS at FROM node_runs
-        WHERE status = 'failed' AND started_at > now() - make_interval(days => :days)
+        WHERE status = 'failed' AND started_at > now() - make_interval(days => :days) AND """ + _run_of("run_id") + """
         ORDER BY finished_at DESC NULLS LAST LIMIT 10""")
     models = rows("models", """
         SELECT node, data->'answered_by'->>'model' AS model,
@@ -252,41 +313,48 @@ def dashboard(days: int = 30, flag_window_min: int = 60, flag_count: int = 3) ->
                count(*) FILTER (WHERE jsonb_array_length(coalesce(data->'attempts', '[]')) > 1) AS after_fallback
         FROM node_results
         WHERE name = 'response.json' AND node = ANY(:nodes) AND saved_at > now() - make_interval(days => :days)
+          AND """ + _run_of("run_id") + """
         GROUP BY 1, 2 ORDER BY 1, 3 DESC""", nodes=list(AI_NODES))
     tavily_rows = rows("tavily", """
         SELECT coalesce(sum((SELECT count(*) FROM plan_queries q WHERE q.run_id = n.run_id)), 0)
         FROM node_runs n
         WHERE n.node = 'search' AND n.status = 'done'
-          AND n.started_at >= date_trunc('month', now() AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata'""")
+          AND n.started_at >= date_trunc('month', now() AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata'
+          AND """ + _run_of("n.run_id"))
     tavily = next(iter(tavily_rows[0].values()), 0) if tavily_rows else 0
     access_rows = rows("access", """
         SELECT count(*) FILTER (WHERE status = 'pending' AND role = 'user') AS pending,
                count(*) FILTER (WHERE status = 'approved' AND role = 'user') AS approved,
                count(*) FILTER (WHERE locked_until > now()) AS locked
-        FROM users""")
+        FROM users WHERE """ + _user_of("id"))
     access = access_rows[0] if access_rows else {"pending": 0, "approved": 0, "locked": 0}
     tokens = rows("tokens", """
         SELECT u.email, u.tokens AS tokens_left, count(r.id) AS runs
-        FROM users u LEFT JOIN runs r ON r.user_id = u.id
-        WHERE u.role = 'user' AND u.status = 'approved'
+        FROM users u LEFT JOIN runs r ON r.user_id = u.id AND (""" + _ALL + """ OR r.market = :market)
+        WHERE u.role = 'user' AND u.status = 'approved' AND """ + _user_of("u.id") + """
         GROUP BY u.id ORDER BY runs DESC, u.email LIMIT 50""")
     prices = rows("prices", """
         SELECT coalesce(p.status, 'none') AS status, count(*) AS n FROM prices p JOIN runs r ON r.id = p.run_id
-        WHERE r.created_at > now() - make_interval(days => :days) GROUP BY 1""")
+        WHERE r.created_at > now() - make_interval(days => :days) AND (""" + _ALL + """ OR r.market = :market)
+        GROUP BY 1""")
     now_runs = rows("now_runs", """
-        SELECT r.id AS run_id, r.status, r.original_filename AS file, u.email AS user, r.updated_at::text AS since
+        SELECT r.id AS run_id, r.status, r.original_filename AS file, u.email AS user, r.updated_at::text AS since,
+               r.market
         FROM runs r LEFT JOIN users u ON u.id = r.user_id
-        WHERE r.status IN ('uploaded', 'running', 'awaiting_confirm') ORDER BY r.updated_at DESC LIMIT 50""")
+        WHERE r.status IN ('uploaded', 'running', 'awaiting_confirm') AND (""" + _ALL + """ OR r.market = :market)
+        ORDER BY r.updated_at DESC LIMIT 50""")
     flagged = rows("flagged", """
         SELECT u.id AS user_id, u.email, count(*) AS n,
                count(*) FILTER (WHERE a.action = 'upload_same_video') AS same_video,
                count(*) FILTER (WHERE a.action = 'upload_refused') AS refused
         FROM audit_log a JOIN users u ON u.id = (a.details->>'user_id')::bigint
         WHERE a.action IN ('upload_same_video', 'upload_refused') AND a.at > now() - make_interval(mins => :mins)
+          AND """ + _user_of("u.id") + """
         GROUP BY u.id, u.email HAVING count(*) >= :flag_count ORDER BY n DESC LIMIT 20""",
                    mins=max(1, flag_window_min), flag_count=max(1, flag_count))
     langfuse = os.environ.get("LANGFUSE_HOST", "").strip() or None
-    return {"days": days, "runs_per_day": runs_per_day, "steps": steps, "last_errors": last_errors, "models": models,
+    return {"days": days, "market": market, "runs_per_day": runs_per_day, "steps": steps, "last_errors": last_errors,
+            "models": models,
             "tavily": {"queries_this_month": int(tavily), "free_credits": TAVILY_FREE_CREDITS,
                        "note": "approximate: search runs this month x their plan queries (1 credit each, basic)"},
             "access": access, "tokens": tokens, "prices": prices, "in_progress": now_runs, "langfuse_url": langfuse,
@@ -308,11 +376,36 @@ def _table(name: str) -> Table:
     return table
 
 
-def list_tables() -> list[dict[str, Any]]:
+def _market_filter(name: str, table: Table, market: str | None):
+    """Stage M0: the WHERE for one market, or None when the table is not split by market (or every market is shown).
+    runs / prompt_versions: their market column; users: pinned or with a run in it; tables with run_id: their run's."""
+    if market is None:
+        return None
+    cols = table.columns
+    if name == "users":
+        return _user_in_market(market)
+    if "market" in cols:
+        return cols["market"] == market
+    if "run_id" in cols:
+        return cols["run_id"].in_(select(Run.id).where(Run.market == market))
+    return None
+
+
+def _split_by_market(name: str, table: Table) -> bool:
+    return name == "users" or "market" in table.columns or "run_id" in table.columns
+
+
+def list_tables(market: str | None = None) -> list[dict[str, Any]]:
+    out = []
     with require_engine().connect() as conn:
-        return [{"name": name, "rows": conn.execute(select(func.count()).select_from(t)).scalar_one(),
-                 "columns": [c.name for c in t.columns]}
-                for name, t in sorted(Base.metadata.tables.items())]
+        for name, t in sorted(Base.metadata.tables.items()):
+            q = select(func.count()).select_from(t)
+            where = _market_filter(name, t, market)
+            if where is not None:
+                q = q.where(where)
+            out.append({"name": name, "rows": conn.execute(q).scalar_one(), "columns": [c.name for c in t.columns],
+                        "market_split": _split_by_market(name, t)})
+    return out
 
 
 def _cell(table: str, column: str, value: Any) -> Any:
@@ -328,11 +421,15 @@ def _cell(table: str, column: str, value: Any) -> Any:
 
 
 def table_rows(name: str, page: int = 1, sort: str | None = None, desc: bool = True, search: str | None = None,
-               column: str | None = None, value: str | None = None) -> dict[str, Any]:
-    """One page of a table. sort / column must be real column names (checked); search looks in every text column."""
+               column: str | None = None, value: str | None = None, market: str | None = None) -> dict[str, Any]:
+    """One page of a table. sort / column must be real column names (checked); search looks in every text column.
+    market (stage M0): only rows of that market, for tables split by market (others: every row)."""
     table = _table(name)
     cols = {c.name: c for c in table.columns}
     q = select(table)
+    where = _market_filter(name, table, market)
+    if where is not None:
+        q = q.where(where)
     if search:
         texts = [c for c in table.columns if isinstance(c.type, (Text, String)) and (name, c.name) not in SECRET_COLUMNS]
         q = q.where(or_(*[c.ilike(f"%{search}%") for c in texts])) if texts else q.where(false())
@@ -350,4 +447,5 @@ def table_rows(name: str, page: int = 1, sort: str | None = None, desc: bool = T
         total = conn.execute(select(func.count()).select_from(q.subquery())).scalar_one()
         rows = conn.execute(q.limit(PAGE_SIZE).offset((page - 1) * PAGE_SIZE)).all()
     return {"table": name, "columns": list(cols), "page": page, "page_size": PAGE_SIZE, "total": total,
+            "market_split": _split_by_market(name, table),
             "rows": [{k: _cell(name, k, v) for k, v in r._mapping.items()} for r in rows]}

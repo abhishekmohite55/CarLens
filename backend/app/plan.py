@@ -66,9 +66,24 @@ def listing_queries(car: dict, place: dict, templates: list[str], count: int,
     return rng.sample(filled, min(count, len(filled))), sorted(empty)
 
 
-def build_user_prompt(template: str, confirm: dict, damage: list[dict], tyres: list[dict], queries_per_part: int) -> str:
+def market_listing_queries(car: dict, place: dict, templates: list[str], count: int, state_max: int,
+                           rng: random.Random) -> tuple[list[str], dict[str, str], list[str]]:
+    """US (stage U4, 07-us-market.md §8): one mixed set of listing queries — at most state_max from templates with
+    {state}, the rest US-wide; no extra searches. Returns (queries, {query: "state" | "us"}, empty fields).
+    No state given → the {state} templates are skipped (as listing_queries does) and every query is US-wide."""
+    state_t = [t for t in templates if "{state}" in t]
+    us_t = [t for t in templates if "{state}" not in t]
+    state_q, empty_s = listing_queries(car, place, state_t, min(max(state_max, 0), count), rng)
+    us_q, empty_u = listing_queries(car, place, us_t, count - len(state_q), rng)
+    groups = {**{q: "state" for q in state_q}, **{q: "us" for q in us_q if q not in state_q}}
+    return state_q + [q for q in us_q if q not in state_q], groups, sorted(set(empty_s) | set(empty_u))
+
+
+def build_user_prompt(template: str, confirm: dict, damage: list[dict], tyres: list[dict], queries_per_part: int,
+                      extra: dict | None = None) -> str:
+    """extra (stage U4, US): more about the car for the plan model (miles used, VIN, vehicle details lines)."""
     car = {**(confirm.get("car") or {}), "city": confirm.get("city"), "state": confirm.get("state"),
-           "odometer_km": confirm.get("odometer_km")}
+           "odometer_km": confirm.get("odometer_km"), **(extra or {})}
     dump = lambda v: json.dumps(v, indent=2, ensure_ascii=False)
     return template.format(car_json=dump(car), damage_count=len(damage), damage_json=dump(damage),
                            tyre_count=len(tyres), tyres_json=dump(tyres), queries_per_part=queries_per_part)

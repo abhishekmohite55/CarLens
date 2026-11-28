@@ -14,9 +14,11 @@ import { SPOTS, VIEWS, type Spot } from "./car";
 import { Lens } from "./Lens";
 import { springs, swap } from "./motion";
 import {
-  apply, diaryLine, emptyRun, LOCATE_STAGES, LOOKING_FOR, pinsFor, question, spotFor, STEP_NAME, STEPS,
+  apply, diaryLine, emptyRun, LOCATE_STAGES, LOOKING_FOR, LOOKING_FOR_US, pinsFor, question, spotFor, STEP_NAME, STEPS,
   type Moment, type Run, type RunEvent, type Verdicts,
 } from "./runState";
+import { money, type Market } from "./market";
+import { Logo } from "./MarketTag";
 import { durationText } from "./upload";
 import {
   allQueries, PriceList, QueryList, SearchRows, Ticker, Typing,
@@ -171,6 +173,27 @@ function RunView({ id }: { id: string }) {
   const [verdicts, setVerdicts] = useState<Verdicts>();
   const s = run.steps;
   const [sentConfirm, setSentConfirm] = useState(false); // confirmed here; the next events are on their way
+  // US run (07-us-market.md §13): the run's own market from meta.json; the car, VIN, state and miles from the VIN start.
+  const [us, setUs] = useState(false);
+  const [runMarket, setRunMarket] = useState<Market>(); // the logo's IN / US tag: this run's market
+  const [usFacts, setUsFacts] = useState<string[]>();
+  useEffect(() => {
+    void getJson(`/api/runs/${id}/files/meta.json`).then((meta) => {
+      if (meta) setRunMarket(meta.market === "us" ? "us" : "in");
+      if (meta?.market !== "us") return;
+      setUs(true);
+      void getJson(`/api/runs/${id}/files/04_confirm.json`).then((c) => {
+        const car = c?.car ?? {};
+        const miles = meta.miles_user ?? c?.miles_user;
+        setUsFacts([
+          [car.year, car.make, car.model, car.variant].filter(Boolean).join(" ") || undefined,
+          meta.vin ? `VIN ${meta.vin}` : undefined,
+          meta.state || c?.state || "US-wide",
+          miles != null ? `${Number(miles).toLocaleString("en-US")} mi` : undefined,
+        ].filter(Boolean) as string[]);
+      });
+    });
+  }, [id]);
 
   // Moments once locate is done; verdicts once verify is done (read from the run's saved results).
   useEffect(() => {
@@ -239,7 +262,8 @@ function RunView({ id }: { id: string }) {
   const queries = plan ? allQueries(plan) : [];
   const searchedSoFar = Number(/^(\d+)\//.exec(s.search.progress ?? "")?.[1] ?? 0);
   const planGoal = useCycle(2200, current === "plan" && live);
-  const goals = ["used listings", "today's new price", "repair costs", "tyre prices"];
+  const goals = us ? ["used listings", "the original MSRP", "repair costs", "tire prices"]
+    : ["used listings", "today's new price", "repair costs", "tyre prices"];
   const webStep = ["plan", "search", "extract"].includes(current ?? "") || (!!plan && !pricingStarted);
   const extra: Record<string, string> = {};
   if (plan) extra.plan = plan.llm_called ? `Wrote ${queries.length} searches.` : `Wrote ${queries.length} searches. No damage to price, so no AI was needed.`;
@@ -262,7 +286,10 @@ function RunView({ id }: { id: string }) {
   // The tab says what is happening, because people leave it during a run.
   useEffect(() => {
     const lakh = (v: number) => (v / 100000).toFixed(2);
-    document.title = report?.price.status === "ok" ? `₹${lakh(report.price.low)}–${lakh(report.price.high)} lakh — CarLens`
+    const usd = report?.price.currency === "USD";
+    document.title = report?.price.status === "ok"
+      ? usd ? `${money(report.price.low, "USD")}–${money(report.price.high, "USD")} — CarLens`
+        : `₹${lakh(report.price.low)}–${lakh(report.price.high)} lakh — CarLens`
       : report ? "Report ready — CarLens"
       : waiting ? "Waiting for you — CarLens"
       : run.ended?.status === "failed" ? `Stopped at ${STEP_NAME[run.ended.failedAt ?? ""] ?? "a step"} — CarLens`
@@ -350,13 +377,14 @@ function RunView({ id }: { id: string }) {
   if (current === "upload") stageLine = "Checking the video";
   if (current === "locate") {
     const reached = LOCATE_STAGES.filter(([re]) => re.test(step?.progress ?? "")).pop();
-    stageLine = /Asking/i.test(step?.progress ?? "") ? LOOKING_FOR[lookingFor % LOOKING_FOR.length] : reached?.[1] ?? "Getting the video ready";
+    const looking = us ? LOOKING_FOR_US : LOOKING_FOR;
+    stageLine = /Asking/i.test(step?.progress ?? "") ? looking[lookingFor % looking.length] : reached?.[1] ?? "Getting the video ready";
   }
   if (current === "frames") {
     const m = /^(\d+) \/ (\d+)/.exec(step?.progress ?? "");
     stageLine = m ? `Checking frames around each moment, ${m[1]} of ${m[2]}` : "Checking frames around each moment";
   }
-  if (current === "verify") stageLine = checking ? question(checking) : run.plate ? "Reading the plate" : "Getting the frames ready";
+  if (current === "verify") stageLine = checking ? question(checking, us) : run.plate && !us ? "Reading the plate" : "Getting the frames ready";
   if (current === "photos") stageLine = "Scoring your photos";
   if (current === "plan") stageLine = "Choosing what to search for";
   if (current === "search") stageLine = queries.length ? `Searching the web, ${searchedSoFar} of ${queries.length}` : "Searching the web";
@@ -369,7 +397,7 @@ function RunView({ id }: { id: string }) {
   return (
     <div className="min-h-svh bg-canvas text-ink">
       <header className="flex items-center justify-between gap-3 px-4 pt-4 sm:px-8 sm:pt-6">
-        <Link to="/home" className="text-heading">CarLens</Link>
+        <Logo market={runMarket} />
         <Link to="/home" className="text-label rounded-full px-4 py-2 text-ink-2 hover:text-ink">My runs</Link>
       </header>
 
@@ -414,7 +442,7 @@ function RunView({ id }: { id: string }) {
               ))}
             </ol>
           )}
-          {current === "verify" && run.plate && !verdicts && <div className="mb-4"><Plate text={run.plate} /></div>}
+          {current === "verify" && run.plate && !us && !verdicts && <div className="mb-4"><Plate text={run.plate} /></div>}
           <AnimatePresence mode="wait" initial={false}>
             {stageLine && !waiting && !run.ended && (
               <motion.p key={stageLine} {...swap} transition={{ duration: 0.2 }} className="text-body-l text-ink-2">{stageLine}</motion.p>
@@ -444,10 +472,10 @@ function RunView({ id }: { id: string }) {
 
         {report && <ReportBody report={report} runId={id} flash={flash} />}
 
-        {/* The shelf: facts the pipeline has learned (Scene 8). */}
-        {verdicts && !report && (
+        {/* The shelf: facts the pipeline has learned (Scene 8). US: the VIN car, state and miles from the start. */}
+        {(us ? usFacts : verdicts) && !report && (
           <div className="mt-6 flex flex-wrap justify-center gap-2">
-            {[verdicts.car, verdicts.plate, verdicts.km !== undefined ? `${verdicts.km.toLocaleString("en-IN")} km` : undefined]
+            {(us ? usFacts ?? [] : [verdicts?.car, verdicts?.plate, verdicts?.km !== undefined ? `${verdicts.km.toLocaleString("en-IN")} km` : undefined])
               .filter(Boolean).map((fact, i) => (
                 <motion.span key={fact} className={chip} initial={{ opacity: 0, y: -16 }} animate={{ opacity: 1, y: 0 }}
                   transition={{ ...springs.settle, delay: i * 0.12 }}>{fact}</motion.span>

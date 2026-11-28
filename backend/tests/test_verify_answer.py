@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app.nodes.verify import normalise_answer, validate_answer
 
-PROMPT = Path(__file__).parent.parent.parent / "prompts" / "verify.system.md"
+PROMPT = Path(__file__).parent.parent.parent / "prompts" / "in" / "verify.system.md"
 
 
 def _prompt_example() -> dict:

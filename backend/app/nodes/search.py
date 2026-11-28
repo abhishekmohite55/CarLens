@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from tavily import TavilyClient
 
-from ..config import get_config, pinned
+from ..config import get_config, market_config, pinned
 from ..results import load_result, save_result
 from ..runs import append_event
 from ..search import dedupe_urls, flatten_queries, search_totals
@@ -33,6 +33,7 @@ def try_claim(run_id: str) -> bool:
 def search_all(items: list[dict], client: TavilyClient, emit=None) -> tuple[list[dict], float]:
     """Run items in parallel (search.workers). One failed query never stops the others. emit runs on this thread."""
     s = get_config().search
+    country = market_config().search_country  # the run's market (stage M0)
 
     def one(item: dict) -> dict:
         start = time.perf_counter()
@@ -40,7 +41,7 @@ def search_all(items: list[dict], client: TavilyClient, emit=None) -> tuple[list
             r = client.search(item["query"], search_depth=s.depth, max_results=s.max_results,
                               include_raw_content=s.include_raw_content,
                               include_domains=s.include_domains or None,
-                              exclude_domains=s.exclude_domains or None, country=s.country)
+                              exclude_domains=s.exclude_domains or None, country=country)
             results = [{k: x.get(k) for k in RESULT_KEYS if k in x} for x in r.get("results") or []]
             return {**item, "seconds": round(time.perf_counter() - start, 2), "error": None, "results": results}
         except Exception as exc:
@@ -93,8 +94,11 @@ def _run_search_inner(run_id: str) -> None:
     urls = dedupe_urls(done)
     totals = search_totals(done, urls, get_config().search.depth, elapsed)
     # also adds every result to search_results (by car, with dates) for reuse later
-    save_result(run_id, "07_search/results.json", {"settings": get_config().search.model_dump(), "queries": done,
-                                                   "urls": urls, "totals": totals})
+    settings = {**get_config().search.model_dump(), "country": market_config().search_country}  # as before stage M0
+    currency = market_config().currency
+    save_result(run_id, "07_search/results.json", {"settings": settings, "queries": done, "urls": urls, "totals": totals,
+                                                   # stage U4: US results stay out of the shared search_results table
+                                                   **({"currency": currency} if currency != "INR" else {})})
     files = ["07_search/results.json"]
 
     if totals["failed"] == totals["queries"]:

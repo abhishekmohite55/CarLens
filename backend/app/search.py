@@ -3,8 +3,11 @@ from __future__ import annotations
 
 
 def flatten_queries(q: dict) -> list[dict]:
-    """queries.json into one list: listing, new price, then each part, then each tyre marked replace."""
-    out = [{"kind": "listing", "for": None, "query": x} for x in q.get("listing") or []]
+    """queries.json into one list: listing, new price, then each part, then each tyre marked replace.
+    Stage U4: a US listing query also carries its group ("state" / "us", from query_groups)."""
+    groups = q.get("query_groups") or {}
+    out = [{"kind": "listing", "for": None, "query": x, **({"group": groups[x]} if x in groups else {})}
+           for x in q.get("listing") or []]
     out += [{"kind": "new_price", "for": None, "query": x} for x in q.get("new_price") or []]
     out += [{"kind": "part", "for": p.get("part"), "query": x} for p in q.get("parts") or [] for x in p.get("queries") or []]
     out += [{"kind": "tyre", "for": t.get("item_id"), "query": x} for t in q.get("tyres") or [] for x in t.get("queries") or []]

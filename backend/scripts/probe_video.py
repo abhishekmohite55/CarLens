@@ -188,7 +188,7 @@ def probe_variants(video_path: Path, model: str, variants_str: str) -> dict:
 
     from app.timecode import seconds_to_mmss
     user_prompt = (
-        (prompts_dir / "locate.user.md").read_text(encoding="utf-8")
+        (prompts_dir / "in" / "locate.user.md").read_text(encoding="utf-8")
         .replace("{duration_sec}", str(duration_sec))
         .replace("{duration_mmss}", seconds_to_mmss(duration_sec))
     )
@@ -203,7 +203,7 @@ def probe_variants(video_path: Path, model: str, variants_str: str) -> dict:
             "response_schema": None,
         },
         "current": {
-            "system_prompt_path": prompts_dir / "locate.system.md",
+            "system_prompt_path": prompts_dir / "in" / "locate.system.md",
             "response_schema": _RESPONSE_SCHEMA,
         },
     }
@@ -396,9 +396,9 @@ def probe_fast(video_path: Path, model: str) -> dict:
     duration_sec = round(frame_count / fps_cap, 1) if fps_cap > 0 else 0.0
 
     prompts_dir = APP_ROOT / cfg.paths.prompts_dir
-    system_prompt = (prompts_dir / "locate.system.md").read_text(encoding="utf-8")
+    system_prompt = (prompts_dir / "in" / "locate.system.md").read_text(encoding="utf-8")
     user_prompt = (
-        (prompts_dir / "locate.user.md").read_text(encoding="utf-8")
+        (prompts_dir / "in" / "locate.user.md").read_text(encoding="utf-8")
         .replace("{duration_sec}", str(duration_sec))
         .replace("{duration_mmss}", seconds_to_mmss(duration_sec))
     )

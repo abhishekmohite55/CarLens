@@ -46,6 +46,7 @@ class SignedIn:
     role: str
     status: str
     tokens: int
+    market: str | None = None  # stage M0: the admin's pin on this user (in / us); empty = by location
 
 
 # --- pure helpers ---
@@ -131,14 +132,14 @@ def signed_in_user(request: Request) -> SignedIn | None:
     now = datetime.now(timezone.utc)
     with require_engine().begin() as conn:
         row = conn.execute(
-            select(User.id, User.email, User.role, User.status, User.tokens, Session.expires_at)
+            select(User.id, User.email, User.role, User.status, User.tokens, User.market, Session.expires_at)
             .join(Session, Session.user_id == User.id).where(Session.key_hash == key_hash(key))).first()
         if row is None:
             return None
         if row.expires_at <= now:
             conn.execute(delete(Session).where(Session.key_hash == key_hash(key)))
             return None
-    return SignedIn(row.id, row.email, row.role, row.status, row.tokens)
+    return SignedIn(row.id, row.email, row.role, row.status, row.tokens, row.market)
 
 
 # --- route guards (FastAPI dependencies) ---

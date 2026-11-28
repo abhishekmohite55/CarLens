@@ -7,6 +7,7 @@ import { Link } from "react-router";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api } from "../../shared/api";
 import { HealthBanner } from "../AdminApp";
+import { useMarket, withMarket } from "../market";
 import { useTheme, type Theme } from "../theme";
 import { useLoad, when } from "../ui";
 
@@ -411,7 +412,8 @@ function Users({ tokens }: { tokens: Dash["tokens"] }) {
 export function Dashboard() {
   const { theme } = useTheme();
   const [days, setDays] = useState(30);
-  const load = useCallback(() => api<Dash>(`/api/admin/dashboard?days=${days}`), [days]);
+  const market = useMarket(); // stage M0: header switch; numbers of that market only
+  const load = useCallback(() => api<Dash>(withMarket(`/api/admin/dashboard?days=${days}`, market)), [days, market]);
   const { data: d, error } = useLoad(load);
 
   return (

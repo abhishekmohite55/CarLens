@@ -56,6 +56,7 @@ class Run(Base):
     user_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("users.id"), index=True)  # step 5; NULL before
     config_version_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("config_versions.id"))  # step 6.3
     prompt_version_ids: Mapped[Any | None] = mapped_column(JSONB)  # step 6.3: {"verify.system.md": 7, ...}
+    market: Mapped[str] = mapped_column(Text, default="in", server_default="in", index=True)  # stage M0: in / us, never changes
     created_at: Mapped[datetime] = _now()
     updated_at: Mapped[datetime] = _now()
 
@@ -283,6 +284,7 @@ class User(Base):
     role: Mapped[str] = mapped_column(Text, default="user")  # admin / user
     status: Mapped[str] = mapped_column(Text, default="pending")  # pending / approved / rejected
     tokens: Mapped[int] = mapped_column(Integer, default=0)  # runs left (1 token = 1 run)
+    market: Mapped[str | None] = mapped_column(Text)  # stage M0: admin's pin (in / us); empty = by location
     totp_secret: Mapped[str | None] = mapped_column(Text)  # authenticator setup key, admin only
     failed_logins: Mapped[int] = mapped_column(Integer, default=0)
     locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -328,9 +330,11 @@ class ConfigVersion(Base):
 
 
 class PromptVersion(Base):
-    __tablename__ = "prompt_versions"  # newest row per name = active (stage 6.3)
+    __tablename__ = "prompt_versions"  # newest row per name = active (stage 6.3); per market from stage M0
+    __table_args__ = (Index("ix_prompt_versions_market_name", "market", "name"),)
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     name: Mapped[str] = mapped_column(Text, index=True)
+    market: Mapped[str] = mapped_column(Text, default="in", server_default="in")  # stage M0: prompts/<market>/
     created_at: Mapped[datetime] = _now()
     created_by: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="SET NULL"))
     note: Mapped[str | None] = mapped_column(Text)
@@ -345,3 +349,20 @@ class AppState(Base):
     maintenance: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
     maintenance_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     maintenance_by: Mapped[str | None] = mapped_column(Text)
+
+
+# --- VIN lookups (stage U1, docs/backend/07-us-market.md §4.3) ---
+
+class VinLookup(Base):
+    __tablename__ = "vin_lookups"  # one row per provider call; reused for the same VIN within vin.cache_days
+    __table_args__ = (Index("ix_vin_lookups_vin_provider", "vin", "provider"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    vin: Mapped[str] = mapped_column(Text)
+    provider: Mapped[str] = mapped_column(Text)  # vpic (U1); mcpvin (U4)
+    ok: Mapped[bool] = mapped_column(Boolean, default=False)  # make, model and year found
+    error: Mapped[str | None] = mapped_column(Text)  # not_found / unavailable
+    car: Mapped[Any | None] = mapped_column(JSONB)  # common shape "car" (make, model, variant, year, ...)
+    raw: Mapped[Any | None] = mapped_column(JSONB)  # the provider's whole answer ({"failure": ...} when down)
+    ms: Mapped[int | None] = mapped_column(Integer)
+    user_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="SET NULL"), index=True)
+    created_at: Mapped[datetime] = _now()

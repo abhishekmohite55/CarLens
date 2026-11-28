@@ -11,7 +11,8 @@ from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 from sqlalchemy.engine import make_url
 
-from .config import get_config, pinned_run
+from .config import current_market, get_config, pinned_run
+from .market import past_stop, stop_after_for
 from .db import database_url
 from .nodes.locate import run_locate
 from .nodes.frames import run_frames
@@ -23,6 +24,7 @@ from .nodes.search import run_search
 from .nodes.extract import run_extract
 from .nodes.pricing import run_pricing
 from .nodes.report import run_report
+from .nodes.vin_details import start_vin_details
 from .runs import TERMINAL, append_event, node_result, read_events
 from .storage import push_run
 
@@ -101,9 +103,11 @@ _RUNNERS = {"locate": run_locate, "frames": run_frames, "verify": run_verify,
 
 
 def _past_stop(node: str) -> bool:
-    """True when config.yaml dev.stop_after names a node at or before this one (read on every run)."""
-    stop = get_config().dev.stop_after
-    return stop in ORDER and ORDER.index(node) > ORDER.index(stop)
+    """True when the run's market's stop setting (dev.stop_after for India, dev.stop_after_us for US, stage M0) names
+    a node at or before this one (read on every run)."""
+    dev = get_config().dev
+    stop = stop_after_for(current_market(), dev.stop_after, getattr(dev, "stop_after_us", None))
+    return past_stop(node, stop, ORDER)
 
 
 def _after(state: GraphState, node: str, nxt: str) -> str:
@@ -189,11 +193,13 @@ def _start_state(run_id: str, start_at: str) -> dict:
 
 
 def run_graph(run_id: str) -> None:
+    start_vin_details(run_id)  # stage U4: US vehicle details next to locate → verify (no-op for India)
     _invoke(run_id, _start_state(run_id, "locate"))
 
 
 def resume_from(run_id: str, node: str) -> None:
     """Run the pipeline from `node` to the end (through the confirm pause when it is ahead)."""
+    start_vin_details(run_id)  # stage U4: only when a US run has no vehicle details yet
     _invoke(run_id, _start_state(run_id, node))
 
 

@@ -1,6 +1,6 @@
 """
 Dev check (Stage 7): search planning on fake confirmed cars (scripts/fake_plan/*.json), no video, no Tavily.
-Uses the plan node's make_plan(): listing queries from config.yaml plan.listing_templates (Python, no LLM);
+Uses the plan node's make_plan(): listing queries from markets.in.listing_templates (Python, no LLM);
 the plan LLM (models.plan_chain) only when the case has damage or tyres to judge.
 
 Saves to runs/_checks/plan/<case>_<HHMMSS>/: request.json, response.json (only when the LLM was called), queries.json.

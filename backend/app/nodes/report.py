@@ -7,7 +7,8 @@ import threading
 from datetime import datetime, timezone
 
 from ..config import get_config, pinned
-from ..report import build_report, inr
+from ..config import current_market
+from ..report import build_report, money
 from ..results import load_result, save_result
 from ..runs import append_event
 from .confirm import load_record, load_verify_answer
@@ -42,6 +43,14 @@ def run_report(run_id: str, claimed: bool = False) -> None:
             _running.discard(run_id)
 
 
+def _us_inputs(run_id: str) -> dict:
+    """Stage U5: miles rule, video-vs-VIN result and vehicle details (or None when not available)."""
+    details = (load_result(run_id, "00b_vin_details/response.json") or {}).get("details")
+    return {"miles": load_result(run_id, "03_verify/miles.json"),
+            "vin_match": load_result(run_id, "03_verify/vin_match.json"),
+            "details": details if (details or {}).get("ok") else None}
+
+
 def _run_report_inner(run_id: str) -> None:
     confirm = load_record(run_id)
     if confirm is None:
@@ -59,11 +68,13 @@ def _run_report_inner(run_id: str) -> None:
         "price": load_result(run_id, "09_report/price.json"),
         "sources": {k: {"title": v.get("title"), "url": v.get("url")} for k, v in (trimmed.get("sources") or {}).items()},
         "km_min_confidence": get_config().photos.km_min_confidence,
+        "us": _us_inputs(run_id) if current_market() == "us" else None,  # stage U5
     })
     report = {"run_id": run_id, "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"), **report}
     save_result(run_id, "09_report/report.json", report)
     p = report["price"]
-    price = f"{inr(p['low'])} – {inr(p['high'])}" if p["status"] == "ok" else "valuation unavailable"
+    cur = p.get("currency", "INR")
+    price = f"{money(p['low'], cur)} – {money(p['high'], cur)}" if p["status"] == "ok" else "valuation unavailable"
     append_event(run_id, "report", "node_done", {
         "summary": f"{price}; {len(report['damage'])} damage, {len(report['tyres'])} tyres, "
                    f"{len(report['repairs']['items'])} repair items",

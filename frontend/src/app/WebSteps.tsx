@@ -97,9 +97,9 @@ export function SearchRows({ search }: { search: SearchResults }) {
   );
 }
 
-const MONEY = /(₹|Rs\.?|INR)\s?[\d,.]+(\s?(lakh|lac|crore|k)\b)?|\b[\d.]+\s?(lakh|lac|crore)\b/gi;
+const MONEY = /(₹|Rs\.?|INR)\s?[\d,.]+(\s?(lakh|lac|crore|k)\b)?|\b[\d.]+\s?(lakh|lac|crore)\b|\$\s?\d[\d,]*(\.\d+)?k?/gi;
 
-/** Underlines anything that looks like a rupee amount (done in the browser, not by the AI). */
+/** Underlines anything that looks like a rupee or dollar amount (done in the browser, not by the AI). */
 function Money({ text }: { text: string }) {
   const parts: ReactNode[] = [];
   let last = 0;

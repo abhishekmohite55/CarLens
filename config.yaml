@@ -62,6 +62,8 @@ frames:
   workers: 0 # parallel items; 0 = CPU count
   max_long_edge_px: 1280 # saved JPEG (sharpest frame only)
   jpeg_quality: 90
+  extra_frames_for: [damage] # owner 27 Nov: these items also send locate's exact frame + another angle to verify (up to 3); [] = sharpest only
+  extra_min_gap_sec: 0.5 # "another angle" = sharpest frame at least this far (seconds) from the other frames
 
 confirm:
   expand_below_confidence: 0.6 # open the form if make, model or year is missing or below this (variant is optional)
@@ -78,23 +80,8 @@ plan:
   queries_per_part: 4 # LLM queries per damaged part and per tyre marked "replace"
   listing_queries_per_run: 4 # picked at random from listing_templates each run
   tyre_ok_score: 7 # tyres scored below this, or with tread worn/bald (even unscored), go to the plan LLM
-  listing_templates: # Python fills these from 04_confirm.json; a template with an empty field is skipped.
-    # Keep at most 2 with {city}: small RTO towns (e.g. Dudu) find no listings, so any 4 picked include 2+ state/India queries.
-    - "used {make} {model} {year} {fuel} price in {city}"
-    - "second hand {make} {model} {year} for sale {state}"
-    - "{make} {model} {variant} {year} used car price {city}"
-    - "used {model} {year} {fuel} price {state}"
-    - "used {make} {model} {variant} price {state}"
-    - "buy used {make} {model} {year} {state} cars24 spinny cardekho"
-    - "second hand {make} {model} {fuel} price list {state}"
-    - "used {make} {model} cars for sale {state} all years"
-  new_price_queries_per_run: 2 # today's new-car price (on-road / ex-showroom), picked at random from new_price_templates
-  new_price_templates: # no {year}: we want today's price of the model; {variant} templates skipped when variant is empty
-    - "{make} {model} {variant} on road price {city}"
-    - "{make} {model} {variant} ex-showroom price"
-    - "{make} {model} on road price {city} all variants"
-    - "{make} {model} {fuel} ex-showroom price list variants"
-    - "new {make} {model} {variant} {fuel} price {state}"
+  new_price_queries_per_run: 2 # today's new-car price, picked at random from markets.<market>.new_price_templates
+  # listing_templates / new_price_templates moved to markets.in / markets.us (stage M0)
 
 search: # Tavily (node 7); free plan 1,000 credits/month, basic = 1 credit, advanced = 2
   depth: basic # basic | advanced
@@ -102,26 +89,128 @@ search: # Tavily (node 7); free plan 1,000 credits/month, basic = 1 credit, adva
   include_raw_content: false # false = short snippet only; true = whole page text (more tokens for extract)
   include_domains: [] # empty = whole web; e.g. [cardekho.com, cars24.com]
   exclude_domains: [tavily.com] # tavily.com company-profile pages filled result slots with no prices
-  country: india # boosts results from this country
+  # country moved to markets.<market>.search_country (stage M0)
   workers: 4 # queries run in parallel
 
 extract: # trimming before the extract LLM (node 8)
   max_results_per_group: 15 # per listing / part / tyre group, best Tavily score first
   max_snippet_chars: 800
-  listing_min_inr: 100000 # car prices (listing / new price) under ₹1 lakh are dropped; nothing above listing_max_inr
-  listing_max_inr: 10000000
+  # listing_min_inr / listing_max_inr moved to markets.<market>.extract_limits (stage M0)
   outlier_factor: 3 # parts/tyres (and several prices in one figure): drop above 3x or below 1/3 of the median (2+ values)
 
 pricing:
   max_from_top: 3 # price max = average of the top 3 yearly rates, so one odd listing can't set the top
   min_listing_age: 2 # listings younger than 2 years are skipped: year-1 prices swing too much to give a reliable yearly rate
   min_listings_with_year: 3 # fewer listings with a stated year → valuation unavailable
-  tyre_minor_wear_deduction_inr: 5000 # fixed deduction per tyre the plan LLM marks minor_wear (from config, not the internet)
+  # tyre_minor_wear_deduction_inr moved to markets.<market>.tyre_minor_wear_deduction (stage M0)
   year_tolerance: 3 # listings within ±3 years of the car feed the depreciation rate (owner, 5 Nov)
   min_comparables: 3
 
 dev: # platform step 2 testing: the pipeline ends after this node; re-run buttons start the next ones
-  stop_after: locate # node name, or empty for the full pipeline
+  stop_after: locate # India pipeline only: node name, or empty for the full pipeline
+  stop_after_us: "" # US pipeline only: upload (= upload/vin: video + VIN saved, locate never starts) or a node name; empty = full pipeline
+  markets_on: { in: true, us: false } # off = no new runs, fresh runs, resumes or re-runs in that market (no AI / Tavily tokens); runs already working finish
+
+markets: # stage M0 (docs/backend/07-us-market.md §3, §9): settings that differ per market; everything else is shared
+  default: in # market when no user pin, admin choice or country header decides (laptop: owner sets in / us)
+  country_map: { US: us } # CloudFront-Viewer-Country → market; any other country → default
+  in:
+    currency: INR
+    distance_unit: km
+    search_country: india # Tavily boosts results from this country
+    listing_templates: # Python fills these from 04_confirm.json; a template with an empty field is skipped.
+      # Keep at most 2 with {city}: small RTO towns (e.g. Dudu) find no listings, so any 4 picked include 2+ state/India queries.
+      - "used {make} {model} {year} {fuel} price in {city}"
+      - "second hand {make} {model} {year} for sale {state}"
+      - "{make} {model} {variant} {year} used car price {city}"
+      - "used {model} {year} {fuel} price {state}"
+      - "used {make} {model} {variant} price {state}"
+      - "buy used {make} {model} {year} {state} cars24 spinny cardekho"
+      - "second hand {make} {model} {fuel} price list {state}"
+      - "used {make} {model} cars for sale {state} all years"
+    new_price_templates: # no {year}: we want today's price of the model; {variant} templates skipped when variant is empty
+      - "{make} {model} {variant} on road price {city}"
+      - "{make} {model} {variant} ex-showroom price"
+      - "{make} {model} on road price {city} all variants"
+      - "{make} {model} {fuel} ex-showroom price list variants"
+      - "new {make} {model} {variant} {fuel} price {state}"
+    extract_limits: # car prices (listing / new price) under ₹1 lakh are dropped; nothing above listing_max
+      listing_min: 100000
+      listing_max: 10000000
+    tyre_minor_wear_deduction: 5000 # fixed deduction per tyre the plan LLM marks minor_wear (from config, not the internet)
+    extract_mode: classic # classic = extract as before E1; labels = the LLM labels every price, code keeps or rejects it (stage E1). Switch to labels once an India run is checked
+    light_repair_band: { min: 500, max: 5000 } # labels mode: a cosmetic / minor repair price counts only when its midpoint is in this range (₹)
+  us:
+    currency: USD
+    distance_unit: mi
+    search_country: united states
+    listing_templates: # stage U4: at most state_templates_max with {state} per run, the rest US-wide; a template with an empty field is skipped
+      - "used {year} {make} {model} for sale {state}"
+      - "{year} {make} {model} {variant} price {state}"
+      - "used {year} {make} {model} {variant} price"
+      - "{year} {make} {model} private party value kbb edmunds"
+      - "used {year} {make} {model} for sale carfax cargurus"
+      - "{year} {make} {model} {variant} listings carmax carvana autotrader"
+    new_price_templates: # owner 28 Nov: the ORIGINAL MSRP of this model year and trim (it may not be sold new today); MSRP is national: no {state}
+      - "{year} {make} {model} {variant} original MSRP"
+      - "{year} {make} {model} {variant} price when new"
+      - "{year} {make} {model} MSRP all trims"
+    extract_limits:
+      listing_min: 1000
+      listing_max: 300000
+    tyre_minor_wear_deduction: 50
+    extract_mode: labels # labels = the LLM labels every price (trim, match, work...) with confidence; code keeps or rejects it (stage E1, owner 28 Nov)
+    light_repair_band: { min: 50, max: 400 } # labels mode: a cosmetic / minor repair price counts only when its midpoint is in this range ($)
+    moderate_repair_band: { min: 150, max: 1000 } # labels mode: same for a moderate repair (stage E2); remove = no band
+    miles_per_mile: 0.05 # stage E2: each listing's price moves $0.05 per mile it differs from the car's miles (more miles = lower); 0 = miles not used
+    min_range_pct: 0.06 # stage E2: the price range is at least 6% of its middle wide, so it is never one number
+    top_states: [CA, TX, FL, NY, PA, IL, OH, GA, NC] # state chips on the first screen (U1)
+    state_templates_max: 2 # at most this many {state} templates per run, the rest US-wide (U4)
+    odometer_min_confidence: 0.8 # verify's odometer reading counts only at this confidence or higher (U3)
+    vin_mismatch_action: stop # video does not look like the VIN's car: stop (after verify, before any search cost) or warn (go on, report says so)
+    vin_mismatch_min_confidence: 0.8 # only a mismatch at least this sure counts; unsure never stops a run
+    miles_min: 1 # miles the user types at upload: at least this (U2)
+    miles_max: 999999 # ... and at most this
+
+vin: # stage U1 (docs/backend/07-us-market.md §4): every VIN source sits behind backend/app/vin/
+  provider: vpic # decodes the VIN on the first screen
+  cache_days: 30 # same VIN again within this many days: the saved answer (car found or not found), no second call
+  max_lookups_per_hour: 20 # real provider calls per user per hour (the admin has no limit)
+  details_provider: mcpvin # stage U4: recalls, complaints, safety ratings, EPA fuel economy for US runs; empty = none
+  details_wait_sec: 30 # plan waits at most this long for vehicle details, then plans without them
+  details_top_recalls: 5 # recalls listed in the report
+  providers:
+    vpic: # NHTSA vPIC, free, no key
+      base_url: https://vpic.nhtsa.dot.gov/api/vehicles
+      timeout_sec: 10 # longer: "VIN lookup is not working, please come back later"
+      key_env: "" # name of the .env variable holding a key; empty = no key
+      fields: # common name: vPIC field (make, model and year are required for a car to count as found)
+        make: Make
+        model: Model
+        year: ModelYear
+        trim: Trim
+        series: Series
+        fuel: FuelTypePrimary
+        body: BodyClass
+        displacement_l: DisplacementL
+        cylinders: EngineCylinders
+        engine_layout: EngineConfiguration
+        drive: DriveType
+    mcpvin: # mcp.vin REST, free, no key, 30 requests / minute per IP; vehicle details only (it decodes with vPIC too)
+      base_url: https://mcp.vin/api/vin
+      timeout_sec: 20 # longer: "Recall and safety data not available", the run goes on
+      key_env: ""
+      recalls_path: recalls.recalls
+      fields: # common name: dotted path in the mcp.vin answer
+        recalls: recalls.count
+        open_recalls: recall_status.open_count
+        complaints: complaints.count
+        safety_overall: safety_ratings.overall
+        safety_frontal_driver: safety_ratings.frontal_driver
+        mpg_city: fuel_economy.city_mpg
+        mpg_highway: fuel_economy.highway_mpg
+        mpg_combined: fuel_economy.combined_mpg
+        annual_fuel_cost: fuel_economy.annual_fuel_cost
 
 auth: # platform step 5 sign-in (docs/platform/05-login.md)
   session_hours: 24 # a sign-in lasts this long

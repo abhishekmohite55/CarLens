@@ -35,7 +35,8 @@ def sharpness(img, score_scale: float) -> float:
 def best_frame(video: Path, indices: list[int], score_scale: float) -> dict:
     """Open one VideoCapture, seek to first index, read forward, return the sharpest frame.
 
-    Returns: frame_index, t (3 dp), sharpness (1 dp), img, frames_extracted, timings_s.
+    Returns: frame_index, t (3 dp), sharpness (1 dp), img, frames_extracted, timings_s, scores ({frame index:
+    sharpness} of every frame read; owner 27 Nov: used to pick the "another angle" frame without keeping images).
     Raises ValueError if no frame could be read.
     """
     if not indices:
@@ -57,6 +58,7 @@ def best_frame(video: Path, indices: list[int], score_scale: float) -> dict:
         decode_s = score_s = 0.0
         best_img = best_sharp = best_idx = None
         frames_extracted = 0
+        scores: dict[int, float] = {}
 
         for idx in range(first, last + 1):
             t1 = time.perf_counter()
@@ -71,6 +73,7 @@ def best_frame(video: Path, indices: list[int], score_scale: float) -> dict:
                 break
             frames_extracted += 1
             sharp = sharpness(img, score_scale)
+            scores[idx] = round(sharp, 1)
             score_s += time.perf_counter() - t2
             if best_img is None or sharp > best_sharp:
                 best_img, best_sharp, best_idx = img, sharp, idx
@@ -91,7 +94,38 @@ def best_frame(video: Path, indices: list[int], score_scale: float) -> dict:
                 "score": round(score_s, 3),
                 "total": round(total_s, 3),
             },
+            "scores": scores,
         }
+    finally:
+        cap.release()
+
+
+# --- extra frames per damage item (owner, 27 Nov 2026): sharpest + locate's own moment + another angle ---
+
+def locate_index(t: float, video_fps: float, n_frames: int) -> int:
+    """The source frame at locate's exact timestamp (no window), kept inside the video."""
+    return min(max(round(t * video_fps), 0), max(n_frames - 1, 0))
+
+
+def pick_angle_frame(scores: dict[int, float], taken: list[int], video_fps: float, min_gap_sec: float) -> int | None:
+    """The sharpest scored frame at least min_gap_sec away from every frame already taken (a different moment of
+    the walk, so another angle); None when the window has no such frame."""
+    gap = min_gap_sec * video_fps
+    far = [i for i in scores if all(abs(i - t) >= gap for t in taken)]
+    return max(far, key=lambda i: (scores[i], -i)) if far else None
+
+
+def read_frame(video: Path, index: int):
+    """One frame by index (a second, short read after scoring). Raises ValueError when it cannot be read."""
+    cap = cv2.VideoCapture(str(video))
+    try:
+        if not cap.isOpened():
+            raise ValueError(f"cannot open {video.name}")
+        cap.set(cv2.CAP_PROP_POS_FRAMES, index)
+        ok, img = cap.read()
+        if not ok:
+            raise ValueError(f"frame {index} could not be read")
+        return img
     finally:
         cap.release()
 

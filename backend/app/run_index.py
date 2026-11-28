@@ -78,6 +78,12 @@ def busy_refusal() -> RunRefused:
     return RunRefused(503, "busy", "CarLens is busy right now. Try again in a few minutes.")
 
 
+def market_off_refusal(market: str) -> RunRefused:
+    """Stage M0: dev.markets_on has this market off (no new runs, fresh runs, resumes or re-runs; no tokens spent)."""
+    label = "US" if market == "us" else "India"
+    return RunRefused(409, "market_off", f"{label} inspections are paused right now. Please come back later.")
+
+
 def resume_allowed(failures: int, free_resumes: int) -> bool:
     """Hardening A7: a user may resume while the run has failed at most free_resumes times."""
     return failures <= free_resumes
@@ -132,15 +138,17 @@ def log_upload_event(user_id: int, action: str, details: dict) -> None:
 
 
 def create_run_row(*, sha256: str, original_filename: str, size_bytes: int, duration_sec: float,
-                   user_id: int | None = None, spend_token: bool = False, max_active_runs: int | None = None) -> str:
+                   user_id: int | None = None, spend_token: bool = False, max_active_runs: int | None = None,
+                   market: str = "in") -> str:
     """Insert the runs row under a new random id and return the id. A clash draws a new id.
     spend_token (users): in the same transaction, check one run at a time, the server's run limit
-    (max_active_runs, hardening A7) and take 1 token; raises RunRefused."""
+    (max_active_runs, hardening A7) and take 1 token; raises RunRefused.
+    market (stage M0): stored on the row and never changed; the run's prompts are pinned from that market."""
     from .settings_store import new_run_pins  # imported here: settings_store imports config and models too
 
     engine = require_engine()
     commit = git_commit()
-    config_id, prompt_ids = new_run_pins()  # the run keeps these versions (step 6.3)
+    config_id, prompt_ids = new_run_pins(market)  # the run keeps these versions (step 6.3)
     for _ in range(5):
         run_id = new_run_id()
         try:
@@ -161,7 +169,7 @@ def create_run_row(*, sha256: str, original_filename: str, size_bytes: int, dura
                 conn.execute(insert(Run).values(
                     id=run_id, video_sha256=sha256, original_filename=original_filename,
                     size_bytes=size_bytes, duration_sec=duration_sec, git_commit=commit, user_id=user_id,
-                    config_version_id=config_id, prompt_version_ids=prompt_ids))
+                    config_version_id=config_id, prompt_version_ids=prompt_ids, market=market))
             return run_id
         except IntegrityError as exc:
             if getattr(getattr(exc.orig, "diag", None), "constraint_name", None) == "runs_pkey":
@@ -214,10 +222,11 @@ def user_runs(user_id: int | None, limit: int = 50) -> list[dict]:
                  "created_at": r.created_at.isoformat()} for r in conn.execute(q)]
 
 
-def user_run_with_video(user_id: int, sha256: str) -> str | None:
-    """The user's newest run of this video (same sha256), if any."""
+def user_run_with_video(user_id: int, sha256: str, market: str = "in") -> str | None:
+    """The user's newest run of this video (same sha256) in this market (stage U2), if any."""
     with require_engine().connect() as conn:
-        return conn.execute(select(Run.id).where(Run.user_id == user_id, Run.video_sha256 == sha256)
+        return conn.execute(select(Run.id).where(Run.user_id == user_id, Run.video_sha256 == sha256,
+                                                 Run.market == market)
                             .order_by(Run.created_at.desc()).limit(1)).scalar_one_or_none()
 
 

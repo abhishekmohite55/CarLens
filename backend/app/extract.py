@@ -5,10 +5,11 @@ import re
 from urllib.parse import urlparse
 
 PRICE_RE = re.compile(r"₹|\bRs\.?\s?\d|\bINR\b|\blakhs?\b|\d\s?/-", re.I)
+USD_PRICE_RE = re.compile(r"\$\s?\d|\bUSD\b|\bMSRP\b", re.I)  # stage U5: US snippets
 
 
-def has_price(text: str | None) -> bool:
-    return bool(text and PRICE_RE.search(text))
+def has_price(text: str | None, pattern: re.Pattern = PRICE_RE) -> bool:
+    return bool(text and pattern.search(text))
 
 
 def domain_of(url: str) -> str:
@@ -20,8 +21,9 @@ def car_line(confirm: dict) -> str:
     car = confirm.get("car") or {}
     name = " ".join(str(car[k]) for k in ("make", "model", "variant", "year", "fuel") if car.get(k))
     km = confirm.get("odometer_km")
+    miles = confirm.get("miles_user")  # stage U5: US runs have miles, not km
     place = confirm.get("city") or confirm.get("state")
-    return " · ".join(x for x in (name, place, f"{km:,} km" if km else None) if x)
+    return " · ".join(x for x in (name, place, f"{km:,} km" if km else None, f"{miles:,} mi" if miles else None) if x)
 
 
 def _group_labels(plan_queries: dict) -> dict[str, str]:
@@ -34,9 +36,11 @@ def _group_labels(plan_queries: dict) -> dict[str, str]:
     return labels
 
 
-def trim_results(search: dict, plan_queries: dict, max_per_group: int, max_chars: int) -> dict:
+def trim_results(search: dict, plan_queries: dict, max_per_group: int, max_chars: int,
+                 price_re: re.Pattern = PRICE_RE) -> dict:
     """Group results by what they price (listing / part / tyre), keep only snippets with a price, each URL once per
-    group, best Tavily score first, at most max_per_group. Ids S1.. map back to the full URL in `sources`."""
+    group, best Tavily score first, at most max_per_group. Ids S1.. map back to the full URL in `sources`.
+    Stage U5: price_re = the run's currency; a US listing source also keeps its query group ("state" / "us")."""
     labels = _group_labels(plan_queries)
     order: list[str] = []
     candidates: dict[str, dict[str, dict]] = {}
@@ -50,12 +54,12 @@ def trim_results(search: dict, plan_queries: dict, max_per_group: int, max_chars
         for r in q.get("results") or []:
             stats["results_in"] += 1
             stats["chars_in"] += len(r.get("content") or "") + len(r.get("raw_content") or "")
-            if not has_price(r.get("content")):
+            if not has_price(r.get("content"), price_re):
                 stats["dropped_no_price"] += 1
             elif r["url"] in candidates[key]:
                 stats["dropped_duplicate"] += 1
             else:
-                candidates[key][r["url"]] = r
+                candidates[key][r["url"]] = {**r, **({"query_group": q["group"]} if q.get("group") else {})}
 
     groups, sources, n = [], {}, 0
     for key in order:
@@ -65,7 +69,8 @@ def trim_results(search: dict, plan_queries: dict, max_per_group: int, max_chars
         for r in ranked[:max_per_group]:
             n += 1
             sid = f"S{n}"
-            sources[sid] = {"url": r["url"], "title": r.get("title"), "group": key}
+            sources[sid] = {"url": r["url"], "title": r.get("title"), "group": key,
+                            **({"query_group": r["query_group"]} if r.get("query_group") else {})}
             items.append({"id": sid, "domain": domain_of(r["url"]), "title": " ".join(str(r.get("title") or "").split()),
                           "snippet": " ".join(str(r.get("content") or "").split())[:max_chars]})
         stats["kept"] += len(items)
@@ -107,6 +112,21 @@ def parse_inr(text: str) -> int | None:
     return round(value * _UNIT.get((matches[0].group(2) or unit or "").lower(), 1))
 
 
+_USD_AMOUNT_RE = re.compile(r"(\d[\d,]*(?:\.\d+)?)\s*(k\b|m\b|thousand\b|million\b)?", re.I)
+_USD_UNIT = {"k": 1_000, "thousand": 1_000, "m": 1_000_000, "million": 1_000_000}
+
+
+def parse_usd(text: str) -> int | None:
+    """Stage U5: '$24,995' → 24995, '$25k' → 25000, '$1.2k' → 1200, 'USD 18,500' → 18500, '$24,995 - $27,000' →
+    24995 (first amount). The amount after the first $ is read, so "2019 Accord $18,995" is not read as 2019."""
+    text = text or ""
+    sign = re.search(r"\$|\busd\b", text, re.I)
+    m = _USD_AMOUNT_RE.search(text, sign.end() if sign else 0) or _USD_AMOUNT_RE.search(text)
+    if not m:
+        return None
+    return round(float(m.group(1).replace(",", "")) * _USD_UNIT.get((m.group(2) or "").lower(), 1))
+
+
 def _squash(text: str) -> str:
     return " ".join(str(text or "").lower().split())
 
@@ -134,11 +154,14 @@ def median_to_max(values: list[float]) -> list[int]:
     return sorted({round(_median(values)), round(max(values))})
 
 
-def check_figures(figures: list[dict], trimmed: dict, car: dict, limits: dict) -> tuple[list[dict], list[dict]]:
+def check_figures(figures: list[dict], trimmed: dict, car: dict, limits: dict,
+                  parse=parse_inr) -> tuple[list[dict], list[dict]]:
     """Keep figures whose price text is in the snippet and (car groups) is at least listing_min_inr, matches the car's
     model and year ± year_tolerance. Parts/tyres have no amount limit. A figure with more than 2 prices becomes
     median → max after outlier removal. Group comes from the source id, never from the LLM.
-    limits: listing_min_inr, listing_max_inr, year_tolerance, outlier_factor. Returns (kept, rejected with reason)."""
+    limits: listing_min_inr, listing_max_inr, year_tolerance, outlier_factor. Returns (kept, rejected with reason).
+    Stage U5: parse = the run's currency (parse_inr / parse_usd); limits and the "inr" amount list are in that currency;
+    a figure keeps its source's query_group (US: "state" / "us")."""
     items = {it["id"]: it for g in trimmed["groups"] for it in g["items"]}
     model = _squash(car.get("model"))
     kept, rejected = [], []
@@ -157,7 +180,7 @@ def check_figures(figures: list[dict], trimmed: dict, car: dict, limits: dict) -
             reject("LLM: not this car/item"); continue
         if not texts or any(_squash(t) not in _squash(items[sid]["snippet"]) for t in texts):
             reject("price text not in snippet"); continue
-        amounts = [parse_inr(t) for t in texts]
+        amounts = [parse(t) for t in texts]
         if None in amounts:
             reject("no number in price text"); continue
         if group in CAR_GROUPS:
@@ -174,7 +197,9 @@ def check_figures(figures: list[dict], trimmed: dict, car: dict, limits: dict) -
             used, dropped = outlier_values(amounts, limits["outlier_factor"])
             extra = {"collapsed_from": sorted(amounts), "collapsed_outliers": dropped}
             amounts = median_to_max(used)
-        kept.append({**f, "group": group, "url": trimmed["sources"][sid]["url"], "inr": sorted(amounts), **extra})
+        qg = trimmed["sources"][sid].get("query_group")
+        kept.append({**f, "group": group, "url": trimmed["sources"][sid]["url"], "inr": sorted(amounts), **extra,
+                     **({"query_group": qg} if qg else {})})
     return kept, rejected
 
 

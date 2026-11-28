@@ -8,7 +8,9 @@ from pathlib import Path
 
 import cv2
 
-from ..config import get_config, pinned
+from ..config import current_market, get_config, market_config, pinned
+from ..miles import miles_used
+from ..vin.match import car_line, mismatch_message, vin_match_verdict
 from ..settings_store import load_prompt
 from ..llm.chat import ask_chain, image_blocks
 from ..llm.tracing import langchain_callbacks
@@ -100,12 +102,61 @@ def normalise_answer(parsed):
             parsed[key] = None
             repairs.append(f"{key} missing: set to null")
 
+    _keep_findings(parsed, repairs)
+    return parsed, repairs
+
+
+def _keep_findings(parsed: dict, repairs: list[str]) -> None:
     findings = parsed.get("findings")
     if isinstance(findings, list):
         kept = [f for f in findings if isinstance(f, dict) and "item_id" in f and "confirmed" in f]
         if len(kept) != len(findings):
             repairs.append(f"{len(findings) - len(kept)} finding(s) without item_id/confirmed dropped")
             parsed["findings"] = kept
+
+
+# Stage U3: the US answer has no plate, badge or vehicle (the car comes from the VIN); the odometer has a unit.
+_US_ANSWER_KEYS = ("odometer", "tyres_assessed", "odometer_found", "vin_match")
+_UNITS = {"mi": "mi", "mile": "mi", "miles": "mi", "km": "km", "kms": "km", "kilometer": "km", "kilometers": "km",
+          "kilometre": "km", "kilometres": "km"}
+
+
+def normalise_us_answer(parsed):
+    """normalise_answer for the US verify answer: findings as for India; odometer {value, unit mi | km, confidence,
+    frame}. Key names and wrapping only, never values. Returns (answer, repairs)."""
+    repairs: list[str] = []
+    if isinstance(parsed, list):
+        parsed = {"findings": parsed}
+        repairs.append("answer was a list: used as findings")
+    if not isinstance(parsed, dict):
+        return parsed, repairs
+    odo = parsed.get("odometer")
+    if isinstance(odo, (int, float)) and not isinstance(odo, bool):
+        parsed["odometer"] = odo = {"value": odo, "unit": None, "confidence": None}
+        repairs.append("odometer was a number: wrapped as {value}")
+    if isinstance(odo, dict):
+        if "value" not in odo and "text" in odo:
+            odo["value"] = odo.pop("text")
+            repairs.append("odometer.text renamed to odometer.value")
+        unit = _UNITS.get(str(odo.get("unit") or "").strip().lower())
+        if unit != odo.get("unit"):
+            repairs.append(f"odometer.unit {odo.get('unit')!r} read as {unit!r}")
+            odo["unit"] = unit
+    elif odo is not None:
+        parsed["odometer"] = None
+        repairs.append("odometer had an unknown shape: set to null")
+    match = parsed.get("vin_match")
+    if isinstance(match, str):
+        parsed["vin_match"] = {"result": match, "confidence": None}
+        repairs.append("vin_match was text: wrapped as {result}")
+    elif match is not None and not isinstance(match, dict):
+        parsed["vin_match"] = None
+        repairs.append("vin_match had an unknown shape: set to null")
+    for key in _US_ANSWER_KEYS:
+        if key not in parsed:
+            parsed[key] = None
+            repairs.append(f"{key} missing: set to null")
+    _keep_findings(parsed, repairs)
     return parsed, repairs
 
 
@@ -124,8 +175,9 @@ def run_verify(run_id: str, claimed: bool = False) -> None:
         log.warning("verify already running for %s", run_id)
         return
     try:
-        append_event(run_id, "verify", "node_started",
-                     {"label": "Reading plate, then asking the verify models"})
+        label = ("Asking the verify models (US: no plate)" if current_market() == "us"
+                 else "Reading plate, then asking the verify models")
+        append_event(run_id, "verify", "node_started", {"label": label})
         try:
             _run_verify_inner(run_id)
         except Exception as exc:
@@ -152,8 +204,9 @@ def _run_verify_inner(run_id: str) -> None:
         return
 
     frames_dir = rd / "02_frames"
+    us = current_market() == "us"  # stage U3: no plate, no OCR, odometer with its unit, miles rule
     # --- Plate OCR ---
-    plate_items = [i for i in all_items if i.get("category") == "plate"]
+    plate_items = [] if us else [i for i in all_items if i.get("category") == "plate"]
     if plate_items:
         ocr_result = _run_ocr(plate_items, frames_dir)
     else:
@@ -171,17 +224,14 @@ def _run_verify_inner(run_id: str) -> None:
 
     # --- Frames to send ---
     send_items = [i for i in all_items if not (plate_from_ocr and i.get("category") == "plate")]
-    frame_dicts = [
-        {"item_id": i["item_id"], "category": i.get("category", ""),
-         "label": i.get("label", ""), "file": i["sharpest"]["file"]}
-        for i in send_items
-    ]
+    frame_dicts = [f for i in send_items for f in item_frames(i)]  # owner 27 Nov: up to 3 per damage item
 
     # --- Prompts ---
     cfg = get_config()
     system_prompt = load_prompt("verify.system.md")
-    user_prompt = load_prompt("verify.user.md").format(
-        frame_count=len(frame_dicts)
+    vin_car = car_line((load_result(run_id, "04_confirm.json") or {}).get("car")) if us else ""
+    user_prompt = load_prompt("verify.user.md").format(  # India's prompt has no {vin_car}: ignored there
+        frame_count=len(frame_dicts), vin_car=vin_car
     )
 
     # --- request.json (written before the call) ---
@@ -216,7 +266,7 @@ def _run_verify_inner(run_id: str) -> None:
         timeout_sec=cfg.models.verify_timeout_per_model_sec,
         thinking_level=cfg.models.verify_thinking_level,
         validate=validate_answer,
-        normalise=normalise_answer,
+        normalise=normalise_us_answer if us else normalise_answer,
         emit=lambda msg: append_event(run_id, "verify", "node_progress", {"message": msg}),
         callbacks=cbs,
         metadata={"langfuse_session_id": run_id, "langfuse_trace_name": "verify"},
@@ -268,6 +318,9 @@ def _run_verify_inner(run_id: str) -> None:
     n_findings = len(parsed.get("findings", []))
     confirmed = sum(1 for f in parsed.get("findings", []) if f.get("confirmed"))
     answered_model = chain_result["answered_by"]["model"]
+    if us:
+        _finish_us(run_id, parsed, files, confirmed, n_findings, answered_model)
+        return
     plate_text = (parsed.get("plate") or {}).get("text", "none")
     plate_source = (parsed.get("plate") or {}).get("source", "none")
 
@@ -276,6 +329,64 @@ def _run_verify_inner(run_id: str) -> None:
     append_event(run_id, "verify", "node_done", {
         "summary": (f"{confirmed}/{n_findings} confirmed by {answered_model}, "
                     f"plate {plate_text} ({plate_source})"),
+        "files": files,
+    })
+
+
+_KIND_NOTE = {"locate": "the moment it was found", "angle": "another angle"}
+
+
+def item_frames(item: dict) -> list[dict]:
+    """Frames verify gets for one manifest item: its sharpest, then its extra frames (owner 27 Nov: locate's own
+    moment, another angle), each labelled with what it is. A file is never sent twice."""
+    base = {"item_id": item["item_id"], "category": item.get("category", ""), "label": item.get("label", "")}
+    extra = [x for x in item.get("extra") or [] if x.get("file")]
+    first = {**base, "file": item["sharpest"]["file"]}
+    if extra:
+        first["label"] = f"{base['label']} (sharpest)"
+    out, seen = [first], {first["file"]}
+    for x in extra:
+        if x["file"] not in seen:
+            seen.add(x["file"])
+            out.append({**base, "label": f"{base['label']} ({_KIND_NOTE.get(x.get('kind'), x.get('kind'))})",
+                        "file": x["file"]})
+    return out
+
+
+def _finish_us(run_id: str, parsed: dict, files: list[str], confirmed: int, n_findings: int, model: str) -> None:
+    """Stage U3: the miles rule (03_verify/miles.json, read by pricing), then the video-vs-VIN check
+    (03_verify/vin_match.json; owner 27 Nov), then node_done — or node_failed (code vin_mismatch) when a confident
+    mismatch must stop the run before any search cost. Packet goes to plan."""
+    confirm = load_result(run_id, "04_confirm.json") or {}
+    us_cfg = market_config()
+    odo = parsed.get("odometer") or {}
+    result = miles_used(int(confirm.get("miles_user") or 0), odo.get("value"), odo.get("unit"), odo.get("confidence"),
+                        us_cfg.odometer_min_confidence)
+    save_result(run_id, "03_verify/miles.json", result)
+    files.append("03_verify/miles.json")
+    other = (f"; you typed {result['miles_user']:,}" if result["source"] == "odometer"
+             else f"; odometer {result['reading_miles']:,} mi" if result["reading_miles"] is not None else "")
+    append_event(run_id, "verify", "node_progress",
+                 {"message": f"Miles used: {result['miles_used']:,} ({result['source']}{other}; {result['why']})"})
+    verdict = vin_match_verdict(parsed.get("vin_match"), us_cfg.vin_mismatch_action,
+                                us_cfg.vin_mismatch_min_confidence)
+    save_result(run_id, "03_verify/vin_match.json", {**verdict, "vin": confirm.get("vin"), "car": confirm.get("car")})
+    files.append("03_verify/vin_match.json")
+    conf = f"{verdict['confidence']:.2f}" if verdict["confidence"] is not None else "?"
+    append_event(run_id, "verify", "node_progress", {"message":
+                 f"Video vs VIN ({car_line(confirm.get('car'))}): {verdict['result']} ({conf})"
+                 + (f" — {verdict['reason']}" if verdict.get("reason") else "")})
+    if verdict["action"] == "stop":
+        append_event(run_id, "verify", "node_failed", {"error": mismatch_message(confirm.get("car"), verdict["reason"]),
+                                                       "code": "vin_mismatch", "files": files})
+        return
+    if verdict["action"] == "warn":
+        append_event(run_id, "verify", "node_progress",
+                     {"message": "Warning: the video may not show the VIN's car; the run goes on (vin_mismatch_action: warn)"})
+    reading = f"{odo.get('value')} {odo.get('unit') or '?'}" if odo.get("value") is not None else "not read"
+    append_event(run_id, "verify", "packet", {"from": "verify", "to": "plan", "label": f"{n_findings} findings"})
+    append_event(run_id, "verify", "node_done", {
+        "summary": f"{confirmed}/{n_findings} confirmed by {model}, odometer {reading}, miles used {result['miles_used']:,}",
         "files": files,
     })
 

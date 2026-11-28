@@ -49,22 +49,100 @@
   .locate-progress { font-size: 12px; color: #ffb020; margin-left: 8px; }
   .frames-thumb { max-height: 60px; cursor: pointer; border-radius: 2px; vertical-align: middle; }
   .frames-thumb:hover { opacity: 0.8; }
+  /* stage M0: market switch + US skeleton */
+  .mk-switch { display: inline-flex; border: 1px solid #444; border-radius: 3px; overflow: hidden; vertical-align: middle; margin-left: 12px; }
+  .mk-switch button { background: #222; color: #aaa; border-radius: 0; padding: 3px 12px; font-size: 12px; }
+  .mk-switch button.active { color: #fff; }
+  #mk-in.active { background: #f59e0b; color: #0a0a0a; } /* India saffron (owner, 26 Nov) */
+  #mk-us.active { background: #6366f1; } /* US indigo */
+  .mk-badge { display: inline-block; font-size: 10px; padding: 0 6px; border-radius: 8px; border: 1px solid #555; color: #aaa; margin-left: 4px; }
+  .mk-on { border-color: #8fd5b5; color: #8fd5b5; }
+  .mk-off { border-color: #e5484d; color: #e5484d; }
+  .skel { background: linear-gradient(90deg, #222 25%, #2e2e2e 50%, #222 75%); background-size: 200% 100%; animation: skel 1.4s ease-in-out infinite; border-radius: 3px; }
+  @keyframes skel { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+  .skel-line { height: 12px; margin: 6px 0; }
+  .skel-chip { display: inline-block; width: 34px; height: 18px; border-radius: 10px; margin: 0 4px 4px 0; }
+  .us-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .us-card { background: #151515; border: 1px dashed #444; border-radius: 4px; padding: 10px; }
+  .us-later { font-size: 11px; color: #777; margin-top: 4px; }
+  .side-node { border-style: dashed !important; }
+  input:disabled, select:disabled { opacity: 0.5; }
+  /* owner 28 Nov: every section folds on its title; state remembered in this browser */
+  .sec-head { cursor: pointer; user-select: none; }
+  .sec-head:hover { color: #ddd; }
+  .sec-caret { display: inline-block; width: 14px; color: #8bf; }
+  .section.collapsed > .sec-body { display: none; }
+  .section.collapsed > .sec-head { margin-bottom: 0; }
+  .fold-btn { padding: 2px 8px; font-size: 11px; margin-left: 6px; background: #333; }
 </style>
 </head>
 <body>
-<h1>CarLens Inspector <span style="color:#555;font-size:12px">dev tool</span> <a href="/admin" style="font-size:12px;color:#8bf">account</a></h1>
+<h1>CarLens Inspector <span style="color:#555;font-size:12px">dev tool</span> <a href="/admin" style="font-size:12px;color:#8bf">account</a>
+  <span class="mk-switch" title="Market for new uploads from this page (admin only, stage M0)">
+    <button id="mk-in" onclick="setMarket('in')">India</button><button id="mk-us" onclick="setMarket('us')">US</button>
+  </span>
+  <button class="fold-btn" onclick="foldAll(true)">Collapse all</button><button class="fold-btn" onclick="foldAll(false)">Expand all</button>
+</h1>
 
 <div class="section">
-  <label>Upload limits (from /api/config)</label>
-  <div id="limits" class="status">loading…</div>
+  <label>Upload limits and market (from /api/config)</label>
+  <div id="limits" class="status"><div class="skel skel-line" style="width:60%"></div></div>
+  <div id="market-info" class="status"><div class="skel skel-line" style="width:40%"></div></div>
 </div>
 
-<div class="section">
-  <label>Pick a video and upload</label>
+<div class="section" id="us-panel" style="display:none">
+  <label>US inspection — VIN lookup, then the video with VIN, state and miles</label>
+  <div class="us-grid">
+    <div class="us-card">
+      <label>VIN (17 characters)</label>
+      <input type="text" id="us-vin" placeholder="1HGCM82643A104332" maxlength="24" autocomplete="off" spellcheck="false" style="text-transform:uppercase">
+      <div id="us-vin-check" class="status"></div>
+      <button id="us-vin-btn" style="margin-top:6px" onclick="doVinLookup()" disabled>VIN lookup</button>
+      <div class="us-later">Format + check digit here; the server checks again and asks vPIC.</div>
+    </div>
+    <div class="us-card">
+      <label>Is this your car?</label>
+      <div id="us-car">
+        <div class="skel skel-line" style="width:70%"></div>
+        <div class="skel skel-line" style="width:50%"></div>
+        <div class="skel skel-line" style="width:60%"></div>
+      </div>
+      <button id="us-car-yes" onclick="confirmCar(true)" disabled style="margin-top:6px">Yes</button>
+      <button id="us-car-change" onclick="confirmCar(false)" disabled style="margin-top:6px">Change VIN</button>
+      <div id="us-car-status" class="status"></div>
+    </div>
+    <div class="us-card">
+      <label>State (optional; empty = US-wide prices)</label>
+      <div id="us-state-chips"></div>
+      <input type="text" id="us-state-input" placeholder="Type a state…" list="us-state-list" autocomplete="off">
+      <datalist id="us-state-list"></datalist>
+      <div id="us-state-status" class="status"></div>
+    </div>
+    <div class="us-card">
+      <label>Miles (required)</label>
+      <input type="text" id="us-miles" placeholder="e.g. 48,200" inputmode="numeric" autocomplete="off">
+      <div id="us-miles-status" class="status"></div>
+      <div class="us-later">Sent with the upload</div>
+    </div>
+  </div>
+  <details style="margin-top:8px"><summary class="status" style="cursor:pointer">VIN lookup — Sent / Received</summary>
+    <label style="margin-top:6px">Sent</label><pre id="us-vin-sent">(nothing yet)</pre>
+    <label>Received</label><pre id="us-vin-received">(nothing yet)</pre>
+  </details>
+  <label style="margin-top:12px">Video</label>
+  <input type="file" id="us-file-input" accept="video/*">
+  <div class="progress-bar"><div class="progress-fill" id="us-prog"></div></div>
+  <div id="us-upload-status" class="status"></div>
+  <button id="us-upload-btn" onclick="doUpload('us')" disabled>Upload (US)</button>
+  <div class="us-later">Sends VIN, state and miles with the video. US off in dev.markets_on → refused (no run, no token). dev.stop_after_us decides where the run stops. Load the run below to follow its pipeline.</div>
+</div>
+
+<div class="section" id="in-upload">
+  <label>Pick a video and upload (India)</label>
   <input type="file" id="file-input" accept="video/*">
   <div class="progress-bar"><div class="progress-fill" id="prog"></div></div>
   <div id="upload-status" class="status"></div>
-  <button id="upload-btn" onclick="doUpload()" disabled>Upload</button>
+  <button id="upload-btn" onclick="doUpload('in')" disabled>Upload</button>
   <div id="run-id-display"></div>
 </div>
 
@@ -87,6 +165,11 @@
 
   <label style="margin-top:12px">Live events</label>
   <div id="events-log"></div>
+</div>
+
+<div class="section" id="vin-section" style="display:none">
+  <label>VIN — decode (vPIC) and vehicle details (mcp.vin) <span id="vin-section-badge" class="status"></span></label>
+  <div id="vin-section-content"></div>
 </div>
 
 <div class="section" id="locate-section" style="display:none">
@@ -224,37 +307,248 @@ let pricingIsRunning = false;
 let reportNodeStatus = 'waiting';
 let reportIsRunning = false;
 
-// Load config on start
+// --- stage M0: market switch (admin only; sent as ?market= with the upload, remembered in this browser) ---
+const MARKET_KEY = 'carlens.inspector.market';
+let inspectorMarket = null;  // null until /api/config answers (then: saved choice, else the server's)
+
+function storedMarket() {
+  try { return localStorage.getItem(MARKET_KEY); } catch (e) { return null; }
+}
+
+function setMarket(m) {
+  inspectorMarket = m;
+  try { localStorage.setItem(MARKET_KEY, m); } catch (e) { /* private mode: not remembered */ }
+  document.getElementById('mk-in').classList.toggle('active', m === 'in');
+  document.getElementById('mk-us').classList.toggle('active', m === 'us');
+  document.getElementById('in-upload').style.display = m === 'in' ? '' : 'none';
+  document.getElementById('us-panel').style.display = m === 'us' ? '' : 'none';
+  if (inspectorMarket !== null && typeof loadConfig === 'function') loadConfig(false);
+}
+
+// --- stage U1: US first screen (VIN lookup, car card, state, miles) ---
+const VIN_VALUES = {A:1,B:2,C:3,D:4,E:5,F:6,G:7,H:8,J:1,K:2,L:3,M:4,N:5,P:7,R:9,S:2,T:3,U:4,V:5,W:6,X:7,Y:8,Z:9};
+const VIN_WEIGHTS = [8,7,6,5,4,3,2,10,0,9,8,7,6,5,4,3,2];
+const STATE_KEY = 'carlens.inspector.state';
+let usStates = [];       // [{code, name}] from /api/config
+let usStateGuess = null; // CloudFront region (empty on the laptop)
+let usState = null;      // chosen state code, null = US-wide
+let usCar = null;        // last lookup answer
+let usCarConfirmed = false;
+
+function normaliseVin(text) { return (text || '').replace(/[\s-]/g, '').toUpperCase(); }
+
+// Same rules and messages as backend/app/vin/check.py (the server checks again).
+function vinProblem(vin) {
+  if (vin.length !== 17) return `A VIN has 17 characters (you typed ${vin.length}).`;
+  if (/[IOQ]/.test(vin)) return 'A VIN never contains the letters I, O or Q.';
+  if (!/^[A-HJ-NPR-Z0-9]+$/.test(vin)) return 'A VIN has only letters and numbers.';
+  let total = 0;
+  for (let i = 0; i < 17; i++) total += (/[0-9]/.test(vin[i]) ? Number(vin[i]) : VIN_VALUES[vin[i]]) * VIN_WEIGHTS[i];
+  const digit = total % 11 === 10 ? 'X' : String(total % 11);
+  if (vin[8] !== digit) return 'This VIN does not add up (check digit). Check it for typos.';
+  return null;
+}
+
+function onVinInput() {
+  const vin = normaliseVin(document.getElementById('us-vin').value);
+  const box = document.getElementById('us-vin-check');
+  const problem = vin ? vinProblem(vin) : null;
+  box.textContent = !vin ? '' : problem || 'Looks like a valid VIN.';
+  box.className = 'status ' + (!vin ? '' : problem ? (vin.length < 17 ? 'warn' : 'err') : 'ok');
+  document.getElementById('us-vin-btn').disabled = !vin || !!problem;
+  if (usCar && usCar.vin !== vin) showCar(null);
+}
+document.getElementById('us-vin').addEventListener('input', onVinInput);
+document.getElementById('us-vin').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !document.getElementById('us-vin-btn').disabled) doVinLookup();
+});
+
+function showCar(answer, message, cls) {
+  usCar = answer && answer.ok ? answer : null;
+  usCarConfirmed = false;
+  const box = document.getElementById('us-car');
+  if (usCar) {
+    const c = usCar.car;
+    const rows = [['Car', `${c.year} ${c.make} ${c.model}`], ['Trim', c.variant], ['Body', c.body], ['Engine', c.engine],
+                  ['Fuel', c.fuel], ['Drive', c.drive]].filter(r => r[1]);
+    box.innerHTML = rows.map(([k, v]) => `<div class="cf-row" style="grid-template-columns:70px 1fr"><span style="color:#888">${k}</span><b>${esc(v)}</b></div>`).join('')
+      + `<div class="us-later">${usCar.provider} · ${usCar.reused ? 'saved answer, no call' : usCar.ms + ' ms'}</div>`;
+  } else {
+    box.innerHTML = message ? `<div class="${cls || 'err'}" style="font-size:13px">${esc(message)}</div>`
+      : '<div class="skel skel-line" style="width:70%"></div><div class="skel skel-line" style="width:50%"></div><div class="skel skel-line" style="width:60%"></div>';
+  }
+  document.getElementById('us-car-yes').disabled = !usCar;
+  document.getElementById('us-car-change').disabled = !usCar;
+  document.getElementById('us-car-status').textContent = '';
+  updateUsUpload();
+}
+
+function esc(s) { return String(s).replace(/[&<>"]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch])); }
+
+async function doVinLookup() {
+  const vin = normaliseVin(document.getElementById('us-vin').value);
+  const btn = document.getElementById('us-vin-btn');
+  btn.disabled = true;
+  showCar(null);
+  document.getElementById('us-car').innerHTML = '<div class="skel skel-line" style="width:70%"></div><div class="skel skel-line" style="width:50%"></div><div class="status">Looking up…</div>';
+  const sent = {method: 'POST', url: '/api/vin/lookup', body: {vin}};
+  document.getElementById('us-vin-sent').textContent = JSON.stringify(sent, null, 2);
+  const t0 = performance.now();
+  try {
+    const r = await fetch('/api/vin/lookup', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({vin})});
+    const data = await r.json().catch(() => ({error: {message: 'The server answered with something that is not JSON.'}}));
+    document.getElementById('us-vin-received').textContent =
+      `HTTP ${r.status} · ${Math.round(performance.now() - t0)} ms (browser)\n` + JSON.stringify(data, null, 2);
+    if (r.ok) showCar(data);
+    else showCar(null, data.error ? `${data.error.message}` : `HTTP ${r.status}`, r.status === 503 || r.status === 409 ? 'warn' : 'err');
+  } catch (e) {
+    document.getElementById('us-vin-received').textContent = String(e);
+    showCar(null, 'The server did not answer.', 'err');
+  } finally {
+    btn.disabled = !!vinProblem(vin);
+  }
+}
+
+function confirmCar(yes) {
+  if (yes && usCar) {
+    usCarConfirmed = true;
+    document.getElementById('us-car-status').textContent = 'Car confirmed: it goes with the upload.';
+    document.getElementById('us-car-status').className = 'status ok';
+    document.getElementById('us-car-yes').disabled = true;
+    updateUsUpload();
+  } else {
+    showCar(null);
+    const input = document.getElementById('us-vin');
+    input.value = '';
+    onVinInput();
+    input.focus();
+  }
+}
+
+function setState(code) {
+  usState = code || null;
+  try { code ? localStorage.setItem(STATE_KEY, code) : localStorage.removeItem(STATE_KEY); } catch (e) { /* not remembered */ }
+  const name = (usStates.find(s => s.code === usState) || {}).name;
+  document.getElementById('us-state-status').innerHTML = usState
+    ? `Selected: <b>${esc(name)}</b> (${usState}) &nbsp;<a href="#" onclick="setState(null);return false" style="color:#8bf">clear</a>`
+    : 'Empty: US-wide prices only.';
+  document.querySelectorAll('#us-state-chips .chip').forEach(ch => ch.style.borderColor = ch.dataset.code === usState ? '#6366f1' : '');
+  document.getElementById('us-state-input').value = '';
+}
+
+function drawStates(us) {
+  usStates = us.states || [];
+  usStateGuess = us.state_guess || null;
+  document.getElementById('us-state-list').innerHTML = usStates.map(s => `<option value="${s.code} — ${esc(s.name)}">`).join('');
+  document.getElementById('us-state-chips').innerHTML = (us.top_states || []).map(code => {
+    const s = usStates.find(x => x.code === code);
+    return `<span class="chip" data-code="${code}" title="${s ? esc(s.name) : code}" onclick="setState('${code}')">${code}</span>`;
+  }).join('');
+  let saved = null;
+  try { saved = localStorage.getItem(STATE_KEY); } catch (e) { /* not remembered */ }
+  setState(usState || (usStates.some(s => s.code === saved) ? saved : usStateGuess));
+}
+
+document.getElementById('us-state-input').addEventListener('change', function() {
+  const typed = this.value.trim().toLowerCase();
+  const code = typed.slice(0, 2).toUpperCase();
+  const hit = usStates.find(s => s.code === code && (typed.length === 2 || typed.startsWith(code.toLowerCase() + ' ')))
+           || usStates.find(s => s.name.toLowerCase() === typed);
+  if (hit) setState(hit.code);
+  else if (typed) document.getElementById('us-state-status').textContent = 'Not a US state. Pick one from the list.';
+});
+
+function milesValue(text) {
+  const t = (text || '').trim();
+  if (!/^\d{1,3}(,\d{3})*$|^\d+$/.test(t)) return null;
+  return Number(t.replace(/,/g, ''));
+}
+document.getElementById('us-miles').addEventListener('input', function() {
+  const box = document.getElementById('us-miles-status');
+  const v = milesValue(this.value);
+  box.textContent = !this.value.trim() ? 'Required.' : v === null ? 'Digits only (thousands commas allowed), e.g. 48,200.' : `${v.toLocaleString('en-US')} miles`;
+  box.className = 'status ' + (v === null ? (this.value.trim() ? 'err' : 'warn') : 'ok');
+  updateUsUpload();
+});
+
+function drawUsSkeleton() {
+  document.getElementById('us-state-chips').innerHTML =
+    Array.from({length: 9}, () => '<span class="skel skel-chip"></span>').join('');
+}
+drawUsSkeleton();
+
+// Load config on start, then again every 10 s, on a switch click and when the tab comes back (stage M0: markets_on
+// changes in admin show here without a reload; the server re-reads its config at most 5 s late)
+function loadConfig(first) {
 fetch('/api/config').then(r => r.json()).then(cfg => {
   const u = cfg.upload;
   document.getElementById('limits').innerHTML =
     `allowed: <b>${u.allowed_types.join(', ')}</b> &nbsp; max size: <b>${u.max_size_mb} MB</b> &nbsp; max duration: <b>${Math.floor(u.max_duration_sec/60)}:${String(u.max_duration_sec%60).padStart(2,'0')}</b>`;
   document.getElementById('limits').className = 'status ok';
+  const on = cfg.markets_on || {};
+  const badge = (m, name) => `${name}<span class="mk-badge ${on[m] ? 'mk-on' : 'mk-off'}">${on[m] ? 'on' : 'off'}</span>`;
+  document.getElementById('market-info').innerHTML =
+    `server's market for you: <b>${cfg.market === 'us' ? 'US' : 'India'}</b> &nbsp; dev.markets_on: ${badge('in', 'India')} &nbsp; ${badge('us', 'US')}`;
+  document.getElementById('market-info').innerHTML += ` &nbsp; <span style="color:#666">checked ${new Date().toLocaleTimeString()}</span>`;
+  if (cfg.us && !usStates.length) drawStates(cfg.us);  // stage U1: once (the list does not change while the page is open)
+  if (first) {
+    const saved = storedMarket();
+    setMarket(saved === 'in' || saved === 'us' ? saved : (cfg.market || 'in'));
+  }
 }).catch(e => {
   document.getElementById('limits').textContent = 'Error fetching /api/config: ' + e;
   document.getElementById('limits').className = 'status err';
+  document.getElementById('market-info').textContent = '';
+  if (first) setMarket(storedMarket() === 'us' ? 'us' : 'in');
 });
+}
+loadConfig(true);
+setInterval(() => { if (!document.hidden) loadConfig(false); }, 10000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) loadConfig(false); });
 
 // Enable upload button when file is selected
 document.getElementById('file-input').addEventListener('change', function() {
   document.getElementById('upload-btn').disabled = !this.files.length;
 });
+document.getElementById('us-file-input').addEventListener('change', updateUsUpload);
 
-function doUpload() {
-  const fileInput = document.getElementById('file-input');
+// Stage U2: Upload (US) needs a video, Yes on the car card and valid miles; VIN / state / miles go in the address.
+function updateUsUpload() {
+  const hasFile = document.getElementById('us-file-input').files.length > 0;
+  const miles = milesValue(document.getElementById('us-miles').value);
+  const why = !usCarConfirmed ? 'Look up the VIN and answer Yes on the car first.'
+    : miles === null ? 'Enter the miles.' : !hasFile ? 'Pick the video.' : '';
+  document.getElementById('us-upload-btn').disabled = !!why;
+  document.getElementById('us-upload-btn').title = why;
+  const status = document.getElementById('us-upload-status');
+  if (!status.dataset.busy) { status.textContent = why; status.className = 'status warn'; }
+}
+
+function usUploadQuery() {
+  const p = new URLSearchParams({market: 'us', vin: usCar ? usCar.vin : '', miles: document.getElementById('us-miles').value.trim()});
+  if (usState) p.set('state', usState);
+  return p.toString();
+}
+
+function doUpload(market) {
+  market = market === 'us' ? 'us' : 'in';
+  const ids = market === 'us'
+    ? {file: 'us-file-input', btn: 'us-upload-btn', status: 'us-upload-status', prog: 'us-prog'}
+    : {file: 'file-input', btn: 'upload-btn', status: 'upload-status', prog: 'prog'};
+  const fileInput = document.getElementById(ids.file);
   if (!fileInput.files.length) return;
   const file = fileInput.files[0];
 
-  const btn = document.getElementById('upload-btn');
-  const status = document.getElementById('upload-status');
-  const prog = document.getElementById('prog');
+  const btn = document.getElementById(ids.btn);
+  const status = document.getElementById(ids.status);
+  const prog = document.getElementById(ids.prog);
   btn.disabled = true;
   status.textContent = 'Uploading…';
   status.className = 'status';
   prog.style.width = '0%';
 
   const xhr = new XMLHttpRequest();
-  xhr.open('POST', '/api/runs');
+  xhr.open('POST', '/api/runs?' + (market === 'us' ? usUploadQuery() : 'market=in'));
 
   xhr.upload.onprogress = function(e) {
     if (e.lengthComputable) {
@@ -275,7 +569,7 @@ function doUpload() {
         loadRun(data.run_id);
       } else {
         const msg = data.error ? data.error.message : JSON.stringify(data);
-        status.textContent = msg;
+        status.textContent = data.error && data.error.code ? `${xhr.status} ${data.error.code}: ${msg}` : msg;
         status.className = 'status err';
         btn.disabled = false;
       }
@@ -287,7 +581,8 @@ function doUpload() {
   };
 
   xhr.onerror = function() {
-    status.textContent = 'Network error.';
+    // a refusal sent before the whole video arrived (e.g. 409 market_off) can show up as a network error
+    status.textContent = 'Network error. If this market is off in dev.markets_on, the server refused the upload early.';
     status.className = 'status err';
     btn.disabled = false;
   };
@@ -297,9 +592,99 @@ function doUpload() {
   xhr.send(fd);
 }
 
+// Stage U2: a US run says so above its node grid (VIN car, state, miles typed); confirm and photos show as skipped.
+const SIDE_NODES = [{id: 'vin_details', label: 'Vehicle details (mcp.vin)'}];  // stage U4: US side job
+
+function showRunMarket(meta) {
+  runCurrency = meta.market === 'us' ? 'USD' : 'INR';
+  if (meta.market === 'us') {  // no confirm step and no extra photos for US: India-only parts are hidden
+    confirmDone = true;  // 04_confirm.json was written from the VIN at upload: plan can be re-run (fix 28 Nov)
+    updatePlanButton();
+    ['confirm-section', 'photos-section'].forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
+    ['node-confirm', 'node-photos'].forEach(id => { const el = document.getElementById(id); if (el) el.remove(); });
+  }
+  if (meta.market === 'us' && !document.getElementById('node-vin_details')) {
+    const up = document.getElementById('node-upload');
+    if (up) up.insertAdjacentHTML('afterend', '<div class="node-cell node-waiting side-node" id="node-vin_details">Vehicle details (mcp.vin)</div>');
+  }
+  let box = document.getElementById('run-market');
+  if (!box) {
+    box = document.createElement('div');
+    box.id = 'run-market';
+    box.className = 'status';
+    box.style.margin = '0 0 8px';
+    document.getElementById('node-grid').before(box);
+  }
+  document.getElementById('vin-section').style.display = meta.market === 'us' ? '' : 'none';
+  if (meta.market !== 'us') { box.innerHTML = 'Market: <b>India</b>'; return; }
+  box.innerHTML = `Market: <b style="color:#818cf8">US</b> · VIN <b>${escHtml(meta.vin || '—')}</b> · state ${escHtml(meta.state || 'none (US-wide)')} · you typed ${meta.miles_user != null ? Number(meta.miles_user).toLocaleString('en-US') : '—'} miles · <span id="run-car">car …</span>`;
+  fetch(`/api/runs/${currentRunId}/files/04_confirm.json`).then(r => r.ok ? r.json() : null).then(c => {
+    const el = document.getElementById('run-car');
+    if (el && c && c.car) el.textContent = [c.car.year, c.car.make, c.car.model, c.car.variant].filter(Boolean).join(' ');
+  }).catch(() => {});
+  loadVinDetails();
+}
+
+// Stage U4: vehicle details line under the market line (again when the side job ends).
+function loadVinDetails() {
+  const box = document.getElementById('run-market');
+  if (!box || runCurrency !== 'USD') return;
+  fetch(`/api/runs/${currentRunId}/files/00b_vin_details/response.json`).then(r => r.ok ? r.json() : null).then(d => {
+    let line = document.getElementById('run-details');
+    if (!line) { line = document.createElement('div'); line.id = 'run-details'; box.appendChild(line); }
+    const x = d && d.details;
+    line.innerHTML = !d ? 'Vehicle details: waiting…'
+      : !x.ok ? 'Vehicle details: <span class="warn">not available</span> (' + escHtml(x.error || 'empty answer') + ')'
+      : 'Vehicle details: recalls ' + (x.recalls ?? '—') + (x.open_recalls != null ? ' (' + x.open_recalls + ' open)' : '')
+        + ' · complaints ' + (x.complaints ?? '—') + ' · safety ' + (x.safety_overall ?? x.safety_frontal_driver ?? '—') + '★'
+        + ' · ' + (x.mpg_combined ?? '—') + ' mpg · ' + d.ms + ' ms';
+  }).catch(() => {});
+  loadVinSection();
+}
+
+// Owner 28 Nov: the run's VIN decode (00_vin, vPIC) and vehicle details (00b_vin_details, mcp.vin) in full.
+function loadVinSection() {
+  const runId = currentRunId;
+  const get = p => fetch(`/api/runs/${runId}/files/${p}`).then(r => r.ok ? r.json() : null).catch(() => null);
+  Promise.all([get('00_vin/request.json'), get('00_vin/response.json'), get('00b_vin_details/response.json')]).then(([req, vin, det]) => {
+    if (runId !== currentRunId) return;
+    const kv = (o, keys) => '<table>' + keys.filter(k => o[k] != null && o[k] !== '').map(k =>
+      '<tr><td style="color:#888">' + escHtml(k) + '</td><td>' + escHtml(String(o[k])) + '</td></tr>').join('') + '</table>';
+    let html = '<b>VIN decode</b>';
+    if (!vin) html += '<div class="status">00_vin/response.json not saved for this run.</div>';
+    else {
+      html += '<div class="status">' + escHtml(req ? req.vin : '') + ' · provider ' + escHtml(vin.provider || '—')
+        + ' · ' + (vin.ms ?? '—') + ' ms' + (req && req.looked_up_at ? ' · looked up ' + escHtml(req.looked_up_at) : '') + '</div>';
+      html += kv(vin.car || {}, Object.keys(vin.car || {}));
+      html += '<details><summary class="status" style="cursor:pointer">Received (raw vPIC answer)</summary><pre>' + escHtml(JSON.stringify(vin.raw, null, 2)) + '</pre></details>';
+    }
+    html += '<b style="display:block;margin-top:10px">Vehicle details</b>';
+    const badge = document.getElementById('vin-section-badge');
+    if (!det) { html += '<div class="status">Waiting for the mcp.vin job (runs next to locate → verify)…</div>'; badge.textContent = 'details: waiting'; }
+    else {
+      const x = det.details || {};
+      badge.textContent = x.ok ? 'details: done' : 'details: not available';
+      html += '<div class="status">provider ' + escHtml(det.provider || '—') + ' · ' + (det.ms ?? '—') + ' ms'
+        + (x.ok ? '' : ' · <span class="warn">not available</span> (' + escHtml(x.error || 'empty answer') + ')') + '</div>';
+      if (x.ok) {
+        html += kv(x, ['recalls', 'open_recalls', 'complaints', 'safety_overall', 'safety_frontal_driver', 'mpg_city',
+                       'mpg_highway', 'mpg_combined', 'annual_fuel_cost']);
+        const list = x.recall_list || [];
+        html += list.length
+          ? '<label style="margin-top:6px">Recalls (top ' + list.length + ')</label><table><tr><th>campaign</th><th>component</th><th>summary</th></tr>'
+            + list.map(r => '<tr><td>' + escHtml(r.campaign || '—') + '</td><td>' + escHtml(r.component || '—') + '</td><td>' + escHtml(r.summary || '') + '</td></tr>').join('') + '</table>'
+          : '<div class="status">No recalls listed.</div>';
+      }
+      html += '<details><summary class="status" style="cursor:pointer">Received (raw mcp.vin answer)</summary><pre>' + escHtml(JSON.stringify(det.raw, null, 2)) + '</pre></details>';
+    }
+    document.getElementById('vin-section-content').innerHTML = html;
+  });
+}
+
 function loadRun(runId) {
   if (!runId) return;
   currentRunId = runId;
+  runCurrency = 'INR';  // stage U5: set again from meta.json
   locateNodeStatus = 'waiting';
   nodeStartTs = {};
   document.getElementById('resume-box').style.display = 'none';
@@ -333,12 +718,17 @@ function loadRun(runId) {
   links.innerHTML = [
     {path:'meta.json', label:'meta.json'},
     {path:'events.jsonl', label:'events.jsonl'},
+    {path:'00_vin/request.json', label:'00_vin/request.json'},
+    {path:'00_vin/response.json', label:'00_vin/response.json'},
+    {path:'00b_vin_details/response.json', label:'00b_vin_details/response.json'},
     {path:'01_locate/request.json', label:'01_locate/request.json'},
     {path:'01_locate/response.json', label:'01_locate/response.json'},
     {path:'02_frames/manifest.json', label:'02_frames/manifest.json'},
     {path:'03_verify/ocr.json', label:'03_verify/ocr.json'},
     {path:'03_verify/request.json', label:'03_verify/request.json'},
     {path:'03_verify/response.json', label:'03_verify/response.json'},
+    {path:'03_verify/miles.json', label:'03_verify/miles.json'},
+    {path:'03_verify/vin_match.json', label:'03_verify/vin_match.json'},
     {path:'04_confirm_payload.json', label:'04_confirm_payload.json'},
     {path:'04_confirm.json', label:'04_confirm.json'},
     {path:'05_photos/request.json', label:'05_photos/request.json'},
@@ -388,19 +778,26 @@ function loadRun(runId) {
   updateVerifyButton();
   updateConfirmButton();
 
-  // Load meta.json
-  fetch(`/api/runs/${runId}/files/meta.json`)
+  document.getElementById('vin-section').style.display = 'none';
+  document.getElementById('vin-section-content').innerHTML = '';
+  // Load meta.json first (fix 28 Nov): market, currency and the US layout are set before any node draws
+  const metaReady = fetch(`/api/runs/${runId}/files/meta.json`)
     .then(r => r.text())
     .then(t => {
-      try { document.getElementById('meta-json').textContent = JSON.stringify(JSON.parse(t), null, 2); }
+      try {
+        const meta = JSON.parse(t);
+        document.getElementById('meta-json').textContent = JSON.stringify(meta, null, 2);
+        showRunMarket(meta);
+      }
       catch { document.getElementById('meta-json').textContent = t; }
     })
     .catch(() => { document.getElementById('meta-json').textContent = '(not yet available)'; });
 
-  // Load snapshot to get node statuses
-  fetch(`/api/runs/${runId}`)
+  // Load snapshot to get node statuses (after meta.json)
+  metaReady.then(() => fetch(`/api/runs/${runId}`))
     .then(r => r.json())
     .then(d => {
+      if (runId !== currentRunId) return;
       if (d.nodes) updateNodeStatuses(d.nodes);
       const ls = d.nodes && d.nodes['locate'];
       if (ls === 'done' || ls === 'failed') loadLocateFiles(runId);
@@ -414,10 +811,16 @@ function loadRun(runId) {
   // Clear and open SSE stream
   document.getElementById('events-log').innerHTML = '';
   if (sseSource) { sseSource.close(); }
-  sseSource = new EventSource(`/api/runs/${runId}/events`);
+  // Fix 28 Nov: the stream ends after run_done; a re-run button opens it again from the last event seen
+  // (followRun), so the page shows the step running at once instead of after the browser's 60 s retry.
+  lastSeq = 0;
+  const openStream = (after) => {
+  if (sseSource) { sseSource.close(); }
+  sseSource = new EventSource(`/api/runs/${runId}/events` + (after ? `?after=${after}` : ''));
   sseSource.onmessage = function(e) {
     try {
       const ev = JSON.parse(e.data);
+      if (ev.seq) lastSeq = Math.max(lastSeq, ev.seq);
       addEventLine(ev);
       // Update node status from event
       if (ev.node && ev.type) {
@@ -428,15 +831,17 @@ function loadRun(runId) {
           node_skipped: 'skipped',
         };
         if (statusMap[ev.type]) {
+          if (ev.type === 'node_started') openSection(ev.node + '-section');  // a running node's box unfolds
           const cell = document.getElementById('node-' + ev.node);
           if (cell) {
             cell.className = 'node-cell node-' + statusMap[ev.type];
-            const n = NODES.find(x => x.id === ev.node);
+            const n = NODES.concat(SIDE_NODES).find(x => x.id === ev.node);
             if (ev.type === 'node_started') { nodeStartTs[ev.node] = Date.parse(ev.ts); cell.textContent = n.label; }
             else if (nodeStartTs[ev.node]) cell.textContent = n.label + ' · ' + ((Date.parse(ev.ts) - nodeStartTs[ev.node]) / 1000).toFixed(1) + ' s';
           }
         }
         if (ev.node === 'pipeline' && ev.type === 'run_done') showResumeBox(ev.data);
+        if (ev.node === 'vin_details' && ev.type !== 'node_started') loadVinDetails();  // stage U4
         if (ev.type === 'node_started') document.getElementById('resume-box').style.display = 'none';
         if (ev.node === 'locate') document.getElementById('locate-btn').disabled = ev.type === 'node_started';
         if (ev.node === 'locate') {
@@ -556,7 +961,22 @@ function loadRun(runId) {
   sseSource.onerror = function() {
     addRawLine('[SSE disconnected or error]', 'warn');
   };
+  // the server ends a finished run's stream at once; right after a re-run click its first event may not be
+  // written yet, so try again every second (up to 15 s) until something new arrives
+  sseSource.addEventListener('end', () => {
+    if (followTries > 0 && lastSeq <= followFrom) { followTries--; setTimeout(() => reopenStream && reopenStream(lastSeq), 1000); }
+  });
+  };
+  metaReady.then(() => { if (runId === currentRunId) openStream(0); });  // after meta.json (fix 28 Nov)
+  reopenStream = openStream;
 }
+
+let lastSeq = 0;          // newest event seq shown for the loaded run
+let reopenStream = null;  // set by loadRun
+let followFrom = 0, followTries = 0;
+function followRun() { if (!reopenStream) return; followFrom = lastSeq; followTries = 15; reopenStream(lastSeq); }
+// POST that starts work on the loaded run: on success the event stream is opened again (followRun)
+function runFetch(url, opts) { return fetch(url, opts).then(r => { if (r.ok) followRun(); return r; }); }
 
 function updateNodeStatuses(nodes) {
   for (const [id, status] of Object.entries(nodes)) {
@@ -670,7 +1090,7 @@ function doExtractFrames() {
   if (!currentRunId) return;
   document.getElementById('frames-btn').disabled = true;
   document.getElementById('frames-btn-reason').textContent = 'Starting…';
-  fetch('/api/runs/' + currentRunId + '/frames', {method: 'POST'})
+  runFetch('/api/runs/' + currentRunId + '/frames', {method: 'POST'})
     .then(r => r.json().then(d => ({ok: r.ok, data: d})))
     .then(({ok, data}) => {
       if (!ok) {
@@ -725,11 +1145,19 @@ function renderFramesManifest(runId, manifest) {
       + '<td>' + (tm.total || 0).toFixed(2) + '</td>'
       + '<td>' + (best.t || 0).toFixed(3) + '</td>'
       + '<td>' + (best.sharpness || 0).toFixed(0) + '</td>'
-      + '<td><img src="' + imgUrl + '" class="frames-thumb" '
-      + 'onclick="window.open(\'' + imgUrl + '\',\'_blank\')" loading="lazy"></td>'
-      + '</tr>';
+      + '<td><img src="' + imgUrl + '" class="frames-thumb" title="sharpest" '
+      + 'onclick="window.open(\'' + imgUrl + '\',\'_blank\')" loading="lazy">'
+      + (item.extra || []).map(x => {  // owner 27 Nov: locate's own moment + another angle (damage)
+          const u = '/api/runs/' + runId + '/files/02_frames/' + encodeURIComponent(x.file);
+          return ' <img src="' + u + '" class="frames-thumb" style="outline:1px dashed ' + (x.kind === 'locate' ? '#ffb020' : '#818cf8') + '" '
+            + 'title="' + escHtml(x.kind) + ' · ' + x.t.toFixed(2) + ' s · sharpness ' + Math.round(x.sharpness || 0) + '" '
+            + 'onclick="window.open(\'' + u + '\',\'_blank\')" loading="lazy">';
+        }).join('')
+      + (item.extra_error ? ' <span class="warn" title="' + escHtml(item.extra_error) + '">extra frames failed</span>' : '')
+      + '</td></tr>';
   }
   html += '</table>';
+  html += '<div class="status">Damage items: first = sharpest, <span style="color:#ffb020">dashed amber</span> = locate\'s own moment, <span style="color:#818cf8">dashed indigo</span> = another angle.</div>';
   document.getElementById('frames-manifest-content').innerHTML = html;
 }
 
@@ -759,7 +1187,7 @@ function doRunVerify() {
   if (!currentRunId) return;
   document.getElementById('verify-btn').disabled = true;
   document.getElementById('verify-btn-reason').textContent = 'Starting…';
-  fetch('/api/runs/' + currentRunId + '/verify', {method: 'POST'})
+  runFetch('/api/runs/' + currentRunId + '/verify', {method: 'POST'})
     .then(r => r.json().then(d => ({ok: r.ok, data: d})))
     .then(({ok, data}) => {
       if (!ok) {
@@ -786,9 +1214,10 @@ function loadVerifyFiles(runId) {
 
 function renderVerifyContent(runId, ocr, req, res) {
   const parsed = res && res.parsed;
+  const us = runCurrency === 'USD';  // US runs: no plate, no OCR (the Plate tab is hidden)
   let html = '<div class="tabs">'
     + ['plate','attempts','findings','read','sent'].map((t, i) =>
-        `<button class="tab-btn${i===0?' active':''}" onclick="showVerifyTab('${t}')">${t[0].toUpperCase()+t.slice(1)}</button>`
+        `<button class="tab-btn${i===0?' active':''}" onclick="showVerifyTab('${t}')"${us && t === 'plate' ? ' style="display:none"' : ''}>${t[0].toUpperCase()+t.slice(1)}</button>`
       ).join('')
     + '</div>';
 
@@ -849,7 +1278,29 @@ function renderVerifyContent(runId, ocr, req, res) {
 
   // Read tab
   html += '<div id="verify-tab-read" class="tab-panel">';
-  if (parsed) {
+  if (parsed && 'odometer' in parsed && !('vehicle' in parsed)) {  // stage U3: US answer (car from the VIN)
+    const odo = parsed.odometer || {};
+    html += `<b>Odometer:</b> ${odo.value != null ? Number(odo.value).toLocaleString('en-US') : '—'} ${escHtml(odo.unit || '?')} <span style="color:#aaa">(conf ${odo.confidence??'—'})</span><br>`;
+    html += `<b>Tyres assessed:</b> ${parsed.tyres_assessed} &nbsp; <b>Odometer found:</b> ${parsed.odometer_found}<br>`;
+    html += '<div id="verify-miles" class="cf-note" style="margin-top:8px">Miles used: loading…</div>';
+    html += '<div id="verify-vin-match" class="cf-note">Video vs VIN: loading…</div>';
+    fetch(`/api/runs/${currentRunId}/files/03_verify/vin_match.json`).then(r => r.ok ? r.json() : null).then(m => {
+      const box = document.getElementById('verify-vin-match');
+      if (!box) return;
+      if (!m) { box.textContent = 'Video vs VIN: not available (03_verify/vin_match.json missing).'; return; }
+      const colour = m.result === 'match' ? '#6f9' : m.result === 'mismatch' ? '#f66' : '#fb0';
+      box.innerHTML = `<b>Video vs VIN:</b> <b style="color:${colour}">${escHtml(m.result)}</b> (conf ${m.confidence ?? '—'})`
+        + ` · action <b>${escHtml(m.action)}</b>${m.counted ? '' : ' (not counted)'}`
+        + (m.reason ? `<br>${escHtml(m.reason)}` : '') + (m.frame ? ` <span style="color:#888">[${escHtml(m.frame)}]</span>` : '');
+    }).catch(() => {});
+    fetch(`/api/runs/${currentRunId}/files/03_verify/miles.json`).then(r => r.ok ? r.json() : null).then(m => {
+      const box = document.getElementById('verify-miles');
+      if (!box) return;
+      box.innerHTML = m
+        ? `<b>Miles used: ${m.miles_used.toLocaleString('en-US')}</b> (source: <b>${escHtml(m.source)}</b>) · you typed ${m.miles_user.toLocaleString('en-US')} · odometer ${m.reading_miles != null ? m.reading_miles.toLocaleString('en-US') + ' mi' : '—'} · ${escHtml(m.why)}`
+        : 'Miles used: not available (03_verify/miles.json missing).';
+    }).catch(() => {});
+  } else if (parsed) {
     const plate = parsed.plate || {};
     const badge = parsed.badge || {};
     const odo = parsed.odometer_km || {};
@@ -873,7 +1324,7 @@ function renderVerifyContent(runId, ocr, req, res) {
   if (req) {
     const answered = res && res.answered_by ? `${res.answered_by.provider}: ${res.answered_by.model}` : 'none';
     html += `<b>Answered by:</b> ${escHtml(answered)}<br>`;
-    html += `<b>Plate from OCR:</b> ${req.plate_from_ocr} &nbsp; <b>Frames sent:</b> ${(req.media||[]).length}<br>`;
+    html += (us ? '' : `<b>Plate from OCR:</b> ${req.plate_from_ocr} &nbsp; `) + `<b>Frames sent:</b> ${(req.media||[]).length}<br>`;
     html += `<details><summary style="cursor:pointer;color:#aaa">System prompt</summary><pre>${escHtml(req.system_prompt||'')}</pre></details>`;
     html += `<details><summary style="cursor:pointer;color:#aaa">User prompt</summary><pre>${escHtml(req.user_prompt||'')}</pre></details>`;
     html += '<br><b>Frames:</b><br>';
@@ -888,6 +1339,7 @@ function renderVerifyContent(runId, ocr, req, res) {
   html += '</div>';
 
   document.getElementById('verify-content').innerHTML = html;
+  if (us) showVerifyTab('attempts');
 }
 
 function showVerifyTab(name) {
@@ -914,7 +1366,7 @@ function updateConfirmButton() {
 function doStartConfirm() {
   if (!currentRunId) return;
   document.getElementById('confirm-start-btn').disabled = true;
-  fetch('/api/runs/' + currentRunId + '/confirm/start', {method: 'POST'})
+  runFetch('/api/runs/' + currentRunId + '/confirm/start', {method: 'POST'})
     .then(r => r.json().then(d => ({ok: r.ok, data: d})))
     .then(({ok, data}) => {
       if (!ok) document.getElementById('confirm-btn-reason').textContent = data.error ? data.error.message : JSON.stringify(data);
@@ -1016,7 +1468,7 @@ function doConfirm() {
     state: known ? known.state : (city ? confirmPayload.city.state : null),
     odometer_km: km === null ? null : Number(km), skipped: skipped,
   };
-  fetch('/api/runs/' + currentRunId + '/confirm', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)})
+  runFetch('/api/runs/' + currentRunId + '/confirm', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)})
     .then(r => r.json().then(d => ({ok: r.ok, data: d})))
     .then(({ok, data}) => {
       if (!ok) document.getElementById('cf-error').textContent = data.error ? data.error.message : JSON.stringify(data.detail || data);
@@ -1102,15 +1554,16 @@ function updatePlanButton() {
   const btn = document.getElementById('plan-btn');
   const reason = document.getElementById('plan-btn-reason');
   if (!btn) return;
-  btn.disabled = !confirmDone || planIsRunning;
+  const confirmed = confirmDone || runCurrency === 'USD';  // US: 04_confirm.json comes from the VIN at upload
+  btn.disabled = !confirmed || planIsRunning;
   btn.textContent = (planNodeStatus === 'done' || planNodeStatus === 'failed') ? 'Re-generate queries' : 'Generate queries';
-  reason.textContent = !confirmDone ? 'Confirm not done' : planIsRunning ? 'Running…' : '';
+  reason.textContent = !confirmed ? 'Confirm not done' : planIsRunning ? 'Running…' : '';
 }
 
 function doRunPlan() {
   if (!currentRunId) return;
   document.getElementById('plan-btn').disabled = true;
-  fetch('/api/runs/' + currentRunId + '/plan', {method: 'POST'})
+  runFetch('/api/runs/' + currentRunId + '/plan', {method: 'POST'})
     .then(r => r.json().then(d => ({ok: r.ok, data: d})))
     .then(({ok, data}) => {
       if (!ok) document.getElementById('plan-btn-reason').textContent = data.error ? data.error.message : JSON.stringify(data);
@@ -1156,7 +1609,7 @@ function updateSearchButton() {
 function doRunSearch() {
   if (!currentRunId) return;
   document.getElementById('search-btn').disabled = true;
-  fetch('/api/runs/' + currentRunId + '/search', {method: 'POST'})
+  runFetch('/api/runs/' + currentRunId + '/search', {method: 'POST'})
     .then(r => r.json().then(d => ({ok: r.ok, data: d})))
     .then(({ok, data}) => {
       if (!ok) document.getElementById('search-btn-reason').textContent = data.error ? data.error.message : JSON.stringify(data);
@@ -1193,7 +1646,7 @@ function showResumeBox(d) {
     + ' <span id="resume-msg" class="status"></span>';
 }
 function doResume() {
-  fetch('/api/runs/' + currentRunId + '/resume', {method: 'POST'})
+  runFetch('/api/runs/' + currentRunId + '/resume', {method: 'POST'})
     .then(r => r.json().then(d => ({ok: r.ok, data: d})))
     .then(({ok, data}) => {
       if (ok) document.getElementById('resume-box').style.display = 'none';
@@ -1203,7 +1656,11 @@ function doResume() {
 }
 
 // ---- Extract + pricing (Stage 7) ----
-const inr = v => v == null ? '-' : '₹' + Math.round(v).toLocaleString('en-IN');
+// Stage U5: amounts in the run's currency (set from meta.json when a run is loaded), never the visitor's.
+let runCurrency = 'INR';
+const cur = () => runCurrency === 'USD' ? '$' : '₹';
+const inr = v => v == null ? '-' : runCurrency === 'USD'
+  ? '$' + Math.round(v).toLocaleString('en-US') : '₹' + Math.round(v).toLocaleString('en-IN');
 const link = (url, text) => url ? '<a href="' + escHtml(url) + '" target="_blank" rel="noopener">' + escHtml(text) + '</a>' : escHtml(text);
 
 function updateRerunButton(node, prevStatus, prevLabel, status, running, label) {
@@ -1219,7 +1676,7 @@ function updatePricingButton() { updateRerunButton('pricing', extractNodeStatus,
 function doRunNode(node) {
   if (!currentRunId) return;
   document.getElementById(node + '-btn').disabled = true;
-  fetch('/api/runs/' + currentRunId + '/' + node, {method: 'POST'})
+  runFetch('/api/runs/' + currentRunId + '/' + node, {method: 'POST'})
     .then(r => r.json().then(d => ({ok: r.ok, data: d})))
     .then(({ok, data}) => {
       if (!ok) document.getElementById(node + '-btn-reason').textContent = data.error ? data.error.message : JSON.stringify(data);
@@ -1237,13 +1694,26 @@ function loadReport(runId, ev) {
     const w = s => escHtml(String(s ?? '').replace(/_/g, ' '));
     const v = r.vehicle, p = r.price;
     html += '<div class="cf-note"><b style="font-size:15px">' + w([v.make, v.model, v.variant, v.year, v.fuel].filter(Boolean).join(' ')) + '</b><br>'
-      + 'Plate ' + w(v.plate) + ' (' + w(v.plate_from) + ') · ' + w([v.city, v.state].filter(Boolean).join(', '))
-      + ' · ' + (v.odometer_km != null ? v.odometer_km.toLocaleString('en-IN') + ' km (' + w(v.km_from) + ')' : 'km not read')
+      + (r.us  // US: car from the VIN, no plate / km (stage U5)
+        ? 'VIN ' + escHtml(v.vin || '') + ' · ' + w(v.state || 'US-wide') + ' · ' + escHtml(r.us.miles.text)
+        : 'Plate ' + w(v.plate) + ' (' + w(v.plate_from) + ') · ' + w([v.city, v.state].filter(Boolean).join(', '))
+          + ' · ' + (v.odometer_km != null ? v.odometer_km.toLocaleString('en-IN') + ' km (' + w(v.km_from) + ')' : 'km not read'))
       + (v.changed.length ? '<br><span class="status">Changed by the user: ' + w(v.changed.join(', ')) + '</span>' : '') + '</div>';
     html += p.status === 'ok'
-      ? '<div style="font-size:22px;margin:8px 0"><b>' + inr(p.low) + ' – ' + inr(p.high) + '</b> <span class="status">after repairs</span></div>'
+      ? '<div style="font-size:22px;margin:8px 0"><b>' + inr(p.low) + ' – ' + inr(p.high) + '</b> <span class="status">after repairs' + (p.scope ? ' · ' + escHtml(p.scope) : '') + '</span></div>'
         + '<ul>' + p.how.map(x => '<li>' + escHtml(x) + '</li>').join('') + '</ul>'
       : '<div class="cf-note">Valuation unavailable: ' + escHtml(p.reason) + '</div>';
+    if (p.state) html += '<div class="cf-note">' + (p.state.status === 'ok'
+      ? '<b>' + escHtml(p.state.name) + ': ' + inr(p.state.low) + ' – ' + inr(p.state.high) + '</b> (' + p.state.listings + ' state listings)'
+      : escHtml(p.state.reason)) + '</div>';
+    if (r.us) {  // stage U5: VIN, miles, video vs VIN, recalls / safety
+      const u = r.us;
+      html += '<div class="cf-note"><b>VIN</b> ' + escHtml(v.vin || '') + ' · <b>Miles</b> ' + escHtml(u.miles.text)
+        + (u.vin_match ? '<br><b>Video vs VIN</b>: ' + escHtml(u.vin_match.result) + (u.vin_match.reason ? ' — ' + escHtml(u.vin_match.reason) : '') : '')
+        + '<br><b>Vehicle details</b>: ' + (u.vehicle_details.available ? u.vehicle_details.lines.map(escHtml).join(' · ') : 'Recall and safety data not available')
+        + (u.vehicle_details.recalls.length ? '<ul>' + u.vehicle_details.recalls.map(x => '<li>' + escHtml(x.component || '') + ': ' + escHtml(x.summary || '') + '</li>').join('') + '</ul>' : '')
+        + '</div>';
+    }
     html += '<b>Condition summary</b><ul>' + r.condition_summary.map(x => '<li>' + escHtml(x) + '</li>').join('') + '</ul>';
     if (r.damage.length) html += '<b>Damage</b><div style="display:flex;gap:12px;flex-wrap:wrap">' + r.damage.map(d =>
       '<div style="width:220px">' + (d.frame ? '<img src="' + file(d.frame) + '" style="width:210px">' : '')
@@ -1266,7 +1736,8 @@ function loadReport(runId, ev) {
     }
     const c = r.coverage;
     html += '<b>Coverage</b><ul><li>Sides seen: ' + w(c.sides_seen.join(', ') || 'none') + (c.sides_not_seen.length ? '; not seen: ' + w(c.sides_not_seen.join(', ')) : '') + '</li>'
-      + '<li>Tyres not seen: ' + w(c.tyres_not_seen.join(', ') || 'none') + '</li><li>Odometer: ' + w(c.odometer) + ' · Plate: ' + w(c.plate) + '</li>'
+      + '<li>Tyres not seen: ' + w(c.tyres_not_seen.join(', ') || 'none') + '</li><li>' + (r.us ? 'Miles: ' : 'Odometer: ') + w(c.odometer)
+      + (r.us ? '' : ' · Plate: ' + w(c.plate)) + '</li>'
       + (c.skipped.length ? '<li>Skipped by the user: ' + w(c.skipped.join(', ')) + '</li>' : '')
       + c.not_confirmed.map(x => '<li>Not confirmed: ' + escHtml(x.item_id) + ' ' + escHtml(x.label || '') + ' — ' + escHtml(x.reason || '') + '</li>').join('')
       + '</ul>';
@@ -1274,6 +1745,14 @@ function loadReport(runId, ev) {
   });
 }
 function doRunPricing() { doRunNode('pricing'); }
+
+// Stage E1: labels the extract LLM gave a figure, each with its confidence ("match: exact (0.95)")
+function extractLabels(x) {
+  const keys = ['match', 'drivetrain', 'fuel', 'transmission', 'part', 'position', 'work', 'new_or_repair', 'car_specific', 'about'];
+  const c = x.confidence && typeof x.confidence === 'object' ? x.confidence : {};
+  return keys.filter(k => x[k] != null).map(k => escHtml(k + ': ' + x[k] + (typeof c[k] === 'number' ? ' (' + c[k].toFixed(2) + ')' : ''))).join('<br>')
+    + (x.llm_reason ? '<br><i>' + escHtml(x.llm_reason) + '</i>' : '');
+}
 
 function loadExtractFiles(runId, ev) {
   const get = f => fetch('/api/runs/' + runId + '/files/08_extract/' + f).then(r => r.ok ? r.json() : null).catch(() => null);
@@ -1291,9 +1770,12 @@ function loadExtractFiles(runId, ev) {
         + '</table>';
       const row = x => '<tr><td>' + escHtml(x.source || '') + '</td><td>' + escHtml(x.group || '') + '</td><td>' + escHtml(x.type || '') + '</td><td>'
         + escHtml((x.price_text || []).join(' – ')) + '</td><td>' + (x.inr ? x.inr.map(inr).join(' – ') : '-') + '</td><td>'
-        + escHtml([x.year, x.km != null ? x.km + ' km' : null, x.variant, x.tyre_size].filter(v => v != null).join(' · ')) + '</td><td>'
-        + (x.reason ? escHtml(x.reason) : link(x.url, 'link')) + '</td></tr>';
-      const head = '<tr><th>S</th><th>group</th><th>type</th><th>price text</th><th>₹</th><th>year · km · variant · tyre</th><th>link / reason</th></tr>';
+        + escHtml([x.year, x.km != null ? x.km + ' km' : null, x.miles != null ? x.miles + ' mi' : null, x.variant ?? x.trim, x.valuation,
+                   x.query_group ? 'query: ' + x.query_group : null, x.tyre_size].filter(v => v != null).join(' · ')) + '</td><td>'
+        + extractLabels(x) + '</td><td>'
+        + (x.reason ? escHtml(x.reason) + (x.url ? ' ' + link(x.url, 'link') : '') : link(x.url, 'link')) + '</td></tr>';
+      const head = '<tr><th>S</th><th>group</th><th>type</th><th>price text</th><th>' + cur() + '</th><th>year · km/mi · variant · tyre</th><th>LLM labels (confidence)</th><th>link / reason</th></tr>';
+      if (f.mode === 'labels') html += '<div class="status">Mode: labels — the LLM labels every price; code keeps or rejects it (no outlier rule)</div>';
       html += '<b>Kept (' + f.kept.length + ')</b><table>' + head + f.kept.map(row).join('') + '</table>';
       const dropped = f.rejected.concat(f.outliers);
       html += '<details><summary>Rejected + outliers (' + dropped.length + ')</summary><table>' + head + dropped.map(row).join('') + '</table></details>';
@@ -1316,7 +1798,7 @@ function loadPricing(runId, ev) {
       html += '<b>New price</b>: ' + (np ? inr(np.value) + ' (' + escHtml(np.type) + ', variant match: ' + escHtml(np.variant_match || String(np.variant_matched))
         + ', from ' + src(np.sources) + ')' : 'none found') + '<br>';
       if (p.listings_used) {
-        html += '<b>Listings used (' + p.listings_used.length + ')</b><table><tr><th>S</th><th>year</th><th>₹</th><th>age</th><th>kept / year</th></tr>'
+        html += '<b>Listings used (' + p.listings_used.length + ')</b><table><tr><th>S</th><th>year</th><th>' + cur() + '</th><th>age</th><th>kept / year</th></tr>'
           + p.listings_used.map(x => '<tr><td>' + link(urls[x.source], x.source) + '</td><td>' + x.year + '</td><td>' + inr(x.price) + '</td><td>' + x.age + '</td><td>' + x.rate.toFixed(3) + '</td></tr>').join('')
           + '</table>';
         html += '<details><summary>Listings dropped (' + p.listings_dropped.length + ')</summary><ul>'
@@ -1326,16 +1808,63 @@ function loadPricing(runId, ev) {
         + escHtml(i.note || i.fixed || '') + (i.sources ? ' · ' + i.sources.map((u, n) => link(u, 'link ' + (n + 1))).join(', ') : '') + '</li>').join('') + '</ul>';
       if (p.status === 'ok') {
         const k = p.yearly_value_kept;
-        html += '<div>Yearly value kept: median ' + k.median.toFixed(3) + ', top-3 average ' + k.max.toFixed(3) + '; car age ' + p.car_age_years + ' years</div>';
+        html += '<div>Yearly value kept: ' + (runCurrency === 'USD'  // stage E2: US range = 25th–75th percentile
+          ? k.median.toFixed(3) + ' – ' + k.max.toFixed(3) + ' (25th–75th percentile)'
+          : 'median ' + k.median.toFixed(3) + ', top-3 average ' + k.max.toFixed(3)) + '; car age ' + p.car_age_years + ' years</div>';
         html += '<div>Fair value: ' + inr(p.fair_value.median) + ' – ' + inr(p.fair_value.max) + '</div>';
         html += '<div style="font-size:18px;margin-top:6px"><b>Price after repairs: ' + inr(p.after_repairs.median) + ' – ' + inr(p.after_repairs.max) + '</b></div>';
       } else {
         html += '<div class="cf-note">Valuation unavailable: ' + escHtml(p.reason) + '</div>';
       }
+      if (p.currency === 'USD') {  // stage U5: state price next to the US-wide one; miles shown, not used yet
+        const st = p.state;
+        html += '<div class="cf-note">Above = <b>US-wide</b>. '
+          + (st ? (st.status === 'ok' ? '<b>' + escHtml(st.name) + ': ' + inr(st.after_repairs.median) + ' – ' + inr(st.after_repairs.max)
+                   + '</b> (' + (st.listings_used || []).length + ' state listings)' : escHtml(st.reason) + (st.detail ? ' (' + escHtml(st.detail) + ')' : ''))
+                : 'No state given: US-wide only.')
+          + (p.miles ? '<br>Miles: ' + (p.miles.used != null ? Number(p.miles.used).toLocaleString('en-US') : '—') + ' (' + escHtml(p.miles.source) + ') — ' + escHtml(p.miles.note) : '')
+          + '</div>';
+      }
     }
     document.getElementById('pricing-content').innerHTML = html;
   });
 }
+
+// --- Owner 28 Nov: every section folds on its title (▾ open / ▸ closed); folded ones remembered in this browser ---
+const FOLD_KEY = 'carlens.inspector.folded';
+function foldedSet() { try { return new Set(JSON.parse(localStorage.getItem(FOLD_KEY) || '[]')); } catch (e) { return new Set(); } }
+function saveFolded() {
+  const ids = [...document.querySelectorAll('.section.collapsed')].map(s => s.dataset.fold);
+  try { localStorage.setItem(FOLD_KEY, JSON.stringify(ids)); } catch (e) { /* private mode: not remembered */ }
+}
+function setFold(sec, folded) {
+  sec.classList.toggle('collapsed', folded);
+  const caret = sec.querySelector(':scope > .sec-head .sec-caret');
+  if (caret) caret.textContent = folded ? '▸' : '▾';
+}
+function openSection(id) { const s = document.getElementById(id); if (s && s.classList.contains('collapsed')) { setFold(s, false); saveFolded(); } }
+function foldAll(folded) { document.querySelectorAll('.section').forEach(s => setFold(s, folded)); saveFolded(); }
+(function makeFoldable() {
+  const folded = foldedSet();
+  document.querySelectorAll('.section').forEach((sec, i) => {
+    const head = sec.querySelector(':scope > label');
+    if (!head) return;
+    sec.dataset.fold = sec.id || 'section-' + i;
+    const body = document.createElement('div');
+    body.className = 'sec-body';
+    while (head.nextSibling) body.appendChild(head.nextSibling);  // moves the nodes: ids and listeners stay
+    sec.appendChild(body);
+    head.classList.add('sec-head');
+    head.insertAdjacentHTML('afterbegin', '<span class="sec-caret">▾</span>');
+    head.title = 'Click to fold / unfold';
+    head.addEventListener('click', e => {
+      if (e.target.closest('button, a, input, select')) return;
+      setFold(sec, !sec.classList.contains('collapsed'));
+      saveFolded();
+    });
+    setFold(sec, folded.has(sec.dataset.fold));
+  });
+})();
 
 // Auto-load run from ?run= URL param
 (function() {

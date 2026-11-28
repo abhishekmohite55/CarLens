@@ -6,9 +6,13 @@ import type { Spot } from "./car";
 export type RunEvent = { seq: number; ts: string; node: string; type: string; data?: Record<string, any> };
 export type StepState = "waiting" | "running" | "done" | "failed" | "skipped";
 
-export const STEPS = ["upload", "locate", "frames", "verify", "confirm", "photos", "plan", "search", "extract", "pricing", "report"];
+// vin_details: US side job (mcp.vin), next to locate → verify; India runs never send it, so it stays out of the diary.
+export const STEPS = ["upload", "vin_details", "locate", "frames", "verify", "confirm", "photos", "plan", "search", "extract", "pricing", "report"];
+/** Side jobs run next to the main steps: they never become the step the pill shows. */
+export const SIDE_STEPS = ["vin_details"];
 
 export const STEP_NAME: Record<string, string> = {
+  vin_details: "Vehicle details",
   upload: "Checking video", locate: "Finding moments", frames: "Picking sharpest frames", verify: "Verifying",
   confirm: "Confirm details", photos: "Reading your photos", plan: "Planning searches", search: "Searching the web",
   extract: "Reading prices", pricing: "Working out the price", report: "Report",
@@ -33,7 +37,9 @@ export function apply(run: Run, e: RunEvent): Run {
   const step = steps[e.node];
   const d = e.data ?? {};
   const next: Run = { ...run, steps };
-  if (e.type === "node_started" && step) {
+  if (e.type === "node_started" && step && SIDE_STEPS.includes(e.node)) {
+    steps[e.node] = { state: "running", startedAt: e.ts };
+  } else if (e.type === "node_started" && step) {
     if (run.ended?.status === "failed") next.resumedAt = [...run.resumedAt, e.ts];
     steps[e.node] = { state: "running", startedAt: e.ts };
     Object.assign(next, { current: e.node, note: undefined, ended: undefined, waiting: false });
@@ -66,6 +72,7 @@ export function diaryLine(step: string, run: Run, moments?: Moment[], verdicts?:
   if (extra?.[step] && s.state === "done") return extra[step];
   if (s.state === "skipped") return `${STEP_NAME[step]}: skipped.`;
   if (step === "upload") return `Video accepted: ${s.summary ?? ""}.`;
+  if (step === "vin_details") return "Recalls, safety ratings and fuel economy looked up from the VIN.";
   if (step === "locate") return moments ? `Found ${moments.length} moments in the video.` : "Found the moments in the video.";
   if (step === "frames") return "Kept the sharpest frame of each moment.";
   if (step === "confirm") return "Details confirmed.";
@@ -113,13 +120,13 @@ export function pinsFor(moments: Moment[] | undefined, verdicts?: Verdicts): Car
   }));
 }
 
-/** The question the AI is asked about each kind of moment (Scene 8). */
-export function question(m: Moment): string {
+/** The question the AI is asked about each kind of moment (Scene 8). us: US spelling ("tire"). */
+export function question(m: Moment, us = false): string {
   return {
     plate: "What does the plate say?",
     model_badge: "What does the badge say?",
     odometer: "What does the odometer read?",
-    tyre: "How worn is this tyre?",
+    tyre: us ? "How worn is this tire?" : "How worn is this tyre?",
     mirror: "Is this mirror damaged?",
     windshield: "Any cracks in the windshield?",
   }[m.category] ?? "Real damage, or a reflection?";
@@ -129,6 +136,12 @@ export function question(m: Moment): string {
 export const LOOKING_FOR = [
   "Looking for the number plate", "Looking for the rear badge", "Looking for the odometer",
   "Looking for each tyre", "Looking for dents, scratches and cracks", "Noting which sides of the car are shown",
+];
+
+/** US runs: the car comes from the VIN, so locate looks for no plate or badge. */
+export const LOOKING_FOR_US = [
+  "Looking for the odometer", "Looking for each tire", "Looking for dents, scratches and cracks",
+  "Checking the mirrors and the windshield", "Noting which sides of the car are shown",
 ];
 
 /** Locate's real sub-steps, in order, matched against its progress messages. */

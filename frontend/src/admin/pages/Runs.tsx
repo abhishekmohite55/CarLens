@@ -1,11 +1,12 @@
 import { Fragment, useCallback, useEffect, useState, type ReactNode } from "react";
 import { api } from "../../shared/api";
+import { MarketTag, useMarket, withMarket } from "../market";
 import { td, th, useLoad, when } from "../ui";
 import { RunEvents } from "./RunEvents";
 
 type Run = {
   run_id: string; file: string | null; status: string; failed_at: string | null; error: string | null; user: string | null;
-  last_step: string | null; created_at: string;
+  last_step: string | null; created_at: string; market: string; // stage M0
 };
 type Step = { node: string; status: string; started_at: string; seconds: number | null; summary: string | null; error: string | null };
 const ACTIVE = ["uploaded", "running", "awaiting_confirm"];
@@ -178,7 +179,8 @@ export function Runs() {
   const [status, setStatus] = useState("");
   const [open, setOpen] = useState<string | null>(null);
   const [steps, setSteps] = useState<Step[]>([]);
-  const load = useCallback(() => api<{ runs: Run[] }>(`/api/admin/runs${status ? `?status=${status}` : ""}`), [status]);
+  const market = useMarket();
+  const load = useCallback(() => api<{ runs: Run[] }>(withMarket(`/api/admin/runs${status ? `?status=${status}` : ""}`, market)), [status, market]);
   const { data, error, act, reload } = useLoad(load);
   const [eventsOf, setEventsOf] = useState<string | null>(null);
   const logRun = data?.runs.find((r) => r.run_id === eventsOf);
@@ -262,7 +264,7 @@ export function Runs() {
           <div key={r.run_id} className="rounded-2xl bg-card px-4 py-3 shadow-card">
             <div className="flex items-center gap-2">
               <StatusChip status={r.status} />
-              <span className="font-mono text-xs text-neutral-200">{r.run_id.slice(0, 8)}</span>
+              <span className="font-mono text-xs text-neutral-200">{r.run_id.slice(0, 8)}<MarketTag market={r.market} /></span>
               <span className="ml-auto shrink-0 text-xs text-neutral-500">{when(r.created_at)}</span>
             </div>
             <div className="mt-0.5 text-xs text-neutral-500">
@@ -305,7 +307,7 @@ export function Runs() {
               <Fragment key={r.run_id}>
                 <tr className={eventsOf === r.run_id ? "bg-inset" : ""}>
                   <td className={td}>{when(r.created_at)}</td>
-                  <td className={`${td} font-mono text-xs`}>{r.run_id}</td>
+                  <td className={`${td} font-mono text-xs`}>{r.run_id}<MarketTag market={r.market} /></td>
                   <td className={td}>{r.user ?? "—"}</td>
                   <td className={td}>{r.file}</td>
                   <td className="border-b border-neutral-900 px-3 py-2 text-sm align-middle">

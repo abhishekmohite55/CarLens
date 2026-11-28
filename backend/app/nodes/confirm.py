@@ -12,6 +12,7 @@ from ..models import RtoCode, State
 from ..photos import list_photos
 from ..results import load_result, save_result
 from ..runs import append_event, run_dir
+from ..settings_store import run_market
 
 PAYLOAD_FILE = "04_confirm_payload.json"
 RECORD_FILE = "04_confirm.json"
@@ -46,7 +47,11 @@ def rto_rows() -> list[dict]:
 
 @pinned
 def start_confirm(run_id: str) -> dict | None:
-    """Emit awaiting_confirm once and return the payload; None (node skipped) when verify has no answer."""
+    """Emit awaiting_confirm once and return the payload; None (node skipped) when verify has no answer.
+    Stage U2: a US run is never paused here: its 04_confirm.json was written from the VIN at upload."""
+    if run_market(run_id) == "us":
+        append_event(run_id, "confirm", "node_skipped", {"reason": "US: car from the VIN, no confirm step"})
+        return None
     saved = load_payload(run_id)
     if saved is not None:  # graph resume re-runs the node: no second set of events
         return saved

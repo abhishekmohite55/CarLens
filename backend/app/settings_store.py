@@ -18,6 +18,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from . import config as config_mod
 from .db import get_engine, require_engine
+from .market import MARKETS, US_NODES, move_market_keys
 from .models import AuditLog, ConfigVersion, PromptVersion, Run, User
 
 log = logging.getLogger(__name__)
@@ -26,18 +27,19 @@ CHECK_EVERY_SEC = 5  # how often the active version is looked up again
 PROVIDERS = ("google_genai", "openrouter")
 # Prompts filled with str.format: only these {fields} may appear; write {{ and }} for literal braces.
 FORMAT_FIELDS = {
-    "verify.user.md": {"frame_count"},
+    "verify.user.md": {"frame_count", "vin_car"},  # vin_car: US prompt only (owner 27 Nov: video vs VIN check)
     "photos.user.md": {"photo_count"},
     "extract_prices.user.md": {"trimmed_text"},
+    "extract_labels.user.md": {"car_text", "trimmed_text"},  # stage E1: labelled extract
     "plan_searches.user.md": {"car_json", "damage_count", "damage_json", "tyre_count", "tyres_json", "queries_per_part"},
 }
 
 _lock = Lock()
 _active_config: tuple[float, int, dict] | None = None  # (checked at, version id, data)
 _config_by_id: dict[int, dict] = {}
-_active_prompts: tuple[float, dict[str, int]] | None = None  # (checked at, {name: version id})
+_active_prompts: dict[str, tuple[float, dict[str, int]]] = {}  # market → (checked at, {name: version id})
 _prompt_by_id: dict[int, str] = {}
-_run_pins: dict[str, tuple[int | None, dict | None]] = {}
+_run_pins: dict[str, tuple[int | None, dict | None, str]] = {}  # run → (config id, prompt ids, market)
 
 
 class SettingsError(Exception):
@@ -49,9 +51,10 @@ class SettingsError(Exception):
 
 
 def forget_cache() -> None:
-    global _active_config, _active_prompts
+    global _active_config
     with _lock:
-        _active_config = _active_prompts = None
+        _active_config = None
+        _active_prompts.clear()
         _run_pins.clear()
 
 
@@ -102,6 +105,42 @@ def check_config(data: Any, nodes: list[str], keep_origin: str | None = None) ->
             bad(f"upload.{field}", "must be above 0")
     if cfg.dev.stop_after and cfg.dev.stop_after not in nodes:
         bad("dev.stop_after", f"must be empty or one of {', '.join(nodes)}")
+    if cfg.dev.stop_after_us and cfg.dev.stop_after_us not in US_NODES:
+        bad("dev.stop_after_us", f"must be empty or one of {', '.join(US_NODES)}")
+    for market in cfg.dev.markets_on:
+        if market not in MARKETS:
+            bad(f"dev.markets_on.{market}", f"unknown market; markets: {', '.join(MARKETS)}")
+    if cfg.markets.default not in MARKETS:
+        bad("markets.default", f"must be one of {', '.join(MARKETS)}")
+    for country, market in cfg.markets.country_map.items():
+        if market not in MARKETS:
+            bad(f"markets.country_map.{country}", f"must be one of {', '.join(MARKETS)}")
+    for market in MARKETS:
+        limits = cfg.markets.of(market).extract_limits
+        if not 0 < limits.listing_min < limits.listing_max:
+            bad(f"markets.{market}.extract_limits", "listing_min must be above 0 and below listing_max")
+        mc = cfg.markets.of(market)
+        if mc.extract_mode not in ("classic", "labels"):
+            bad(f"markets.{market}.extract_mode", "must be classic or labels")
+        if not 0 <= mc.light_repair_band.min < mc.light_repair_band.max:
+            bad(f"markets.{market}.light_repair_band", "min must be 0 or more and below max")
+        mb = mc.moderate_repair_band
+        if mb is not None and not 0 <= mb.min < mb.max:
+            bad(f"markets.{market}.moderate_repair_band", "min must be 0 or more and below max")
+    if cfg.markets.us.vin_mismatch_action not in ("stop", "warn"):
+        bad("markets.us.vin_mismatch_action", "must be stop or warn")
+    from .vin.providers import DETAILS as DETAILS_PROVIDERS, KNOWN as VIN_PROVIDERS  # stage U1, U4
+    details = cfg.vin.details_provider
+    if details and (details not in DETAILS_PROVIDERS or details not in cfg.vin.providers):
+        bad("vin.details_provider", f"must be empty or one of {', '.join(DETAILS_PROVIDERS)} with an entry in vin.providers")
+    if cfg.vin.provider not in VIN_PROVIDERS:
+        bad("vin.provider", f"must be one of {', '.join(VIN_PROVIDERS)}")
+    elif cfg.vin.provider not in cfg.vin.providers:
+        bad("vin.providers", f"needs an entry for {cfg.vin.provider}")
+    else:
+        missing = sorted({"make", "model", "year"} - set(cfg.vin.providers[cfg.vin.provider].fields))
+        if missing:
+            bad(f"vin.providers.{cfg.vin.provider}.fields", f"needs {', '.join(missing)}")
     if cfg.auth.session_hours <= 0 or cfg.auth.max_failed_logins <= 0 or cfg.auth.lockout_minutes <= 0:
         bad("auth", "session_hours, max_failed_logins and lockout_minutes must be above 0")
     if keep_origin and keep_origin.rstrip("/") not in {o.rstrip("/") for o in cfg.auth.allowed_origins}:
@@ -136,27 +175,34 @@ def _file_config_data() -> dict:
         return config_mod.AppConfig(**yaml.safe_load(f)).model_dump()
 
 
+DEEPER_SECTIONS = ("markets",)  # stage M0: one level more, so markets.us.<field> is filled too
+WHOLE_MAPS = ("country_map",)  # a map the owner edits as a whole: only added when missing, never topped up
+
+
 def fill_defaults(data: dict, defaults: dict, depth: int = 2) -> tuple[dict, list[str]]:
-    """data with every section / field of defaults it lacks added (two levels: sections and their fields; values the
-    owner set are never changed). Returns (new data, names added such as "maintenance" or "auth.client_ip_header")."""
+    """data with every section / field of defaults it lacks added (two levels: sections and their fields; three for
+    DEEPER_SECTIONS; values the owner set are never changed). Returns (new data, names added such as "maintenance" or
+    "auth.client_ip_header")."""
     out, added = dict(data), []
     for key, value in defaults.items():
         if key not in out:
             out[key] = value
             added.append(key)
-        elif depth > 1 and isinstance(value, dict) and isinstance(out[key], dict):
-            out[key], sub = fill_defaults(out[key], value, depth - 1)
+        elif depth > 1 and key not in WHOLE_MAPS and isinstance(value, dict) and isinstance(out[key], dict):
+            out[key], sub = fill_defaults(out[key], value, depth if key in DEEPER_SECTIONS else depth - 1)
             added += [f"{key}.{name}" for name in sub]
     return out, added
 
 
 def add_missing_settings(nodes: list[str]) -> str | None:
     """Startup (step 9.3): settings this code knows but the active config version lacks are saved as a new version,
-    with their config.yaml values. Returns a note, or None when nothing was missing."""
+    with their config.yaml values. Returns a note, or None when nothing was missing.
+    Stage M0: a version from before markets has its India keys moved under markets.in first (so its own values are
+    kept, not replaced by config.yaml's), and markets.<market>.<field> is filled too (DEEPER_SECTIONS)."""
     active = active_config()
     if active is None:
         return None
-    data, added = fill_defaults(active[1], _file_config_data())
+    data, added = fill_defaults(move_market_keys(active[1]), _file_config_data())
     if not added:
         return None
     checked, problems = check_config(data, nodes)
@@ -172,12 +218,13 @@ def add_missing_settings(nodes: list[str]) -> str | None:
     return note
 
 
-def _prompts_dir():
-    return config_mod.PROJECT_ROOT / config_mod.file_config().paths.prompts_dir
+def _prompts_dir(market: str = "in"):
+    """prompts/<market>/ (stage M0: prompts/in/ = India, prompts/us/ = US)."""
+    return config_mod.PROJECT_ROOT / config_mod.file_config().paths.prompts_dir / market
 
 
-def _prompt_files() -> dict[str, str]:
-    return {p.name: p.read_text(encoding="utf-8") for p in sorted(_prompts_dir().glob("*.md"))}
+def _prompt_files(market: str = "in") -> dict[str, str]:
+    return {p.name: p.read_text(encoding="utf-8") for p in sorted(_prompts_dir(market).glob("*.md"))}
 
 
 # --- active versions ---
@@ -220,27 +267,30 @@ def config_version(version_id: int) -> dict | None:
     return _config_by_id[version_id]
 
 
-def active_prompt_ids() -> dict[str, int]:
-    """{prompt name: newest version id}; a prompt file with no version yet is seeded as its first version."""
-    global _active_prompts
+def active_prompt_ids(market: str = "in") -> dict[str, int]:
+    """{prompt name: newest version id} of one market; a prompt file in prompts/<market>/ with no version yet is
+    seeded as its first version."""
     engine = get_engine()
     if engine is None:
         return {}
     with _lock:
-        if _active_prompts and time.monotonic() - _active_prompts[0] < CHECK_EVERY_SEC:
-            return _active_prompts[1]
+        cached = _active_prompts.get(market)
+        if cached and time.monotonic() - cached[0] < CHECK_EVERY_SEC:
+            return cached[1]
         try:
             with engine.begin() as conn:
                 newest = dict(conn.execute(select(PromptVersion.name, func.max(PromptVersion.id))
+                                           .where(PromptVersion.market == market)
                                            .group_by(PromptVersion.name)).all())
-                for name, text in _prompt_files().items():
+                for name, text in _prompt_files(market).items():
                     if name not in newest:
                         newest[name] = conn.execute(insert(PromptVersion).values(
-                            name=name, text=text, note="seed from prompts/").returning(PromptVersion.id)).scalar_one()
+                            name=name, text=text, market=market, note=f"seed from prompts/{market}/")
+                            .returning(PromptVersion.id)).scalar_one()
         except SQLAlchemyError as exc:
             log.warning("prompt versions not readable (%s)", exc)
-            return _active_prompts[1] if _active_prompts else {}
-        _active_prompts = (time.monotonic(), newest)
+            return cached[1] if cached else {}
+        _active_prompts[market] = (time.monotonic(), newest)
         return newest
 
 
@@ -256,48 +306,64 @@ def prompt_text(version_id: int) -> str | None:
 
 # --- runs pinned to versions ---
 
-def new_run_pins() -> tuple[int | None, dict | None]:
-    """(config version id, {prompt name: version id}) for a run that starts now; (None, None) without a database."""
+def new_run_pins(market: str = "in") -> tuple[int | None, dict | None]:
+    """(config version id, {prompt name: version id} of the run's market) for a run that starts now; (None, None)
+    without a database. A run has one market, so its pins stay {name: id} as before stage M0."""
     active = active_config()
-    return (active[0] if active else None), (dict(active_prompt_ids()) or None)
+    return (active[0] if active else None), (dict(active_prompt_ids(market)) or None)
 
 
-def pinned_ids(run_id: str) -> tuple[int | None, dict | None]:
+def _run_pin_row(run_id: str) -> tuple[int | None, dict | None, str]:
     if run_id not in _run_pins:
         engine = get_engine()
         if engine is None:
-            return None, None
+            return None, None, "in"
         try:
             with engine.connect() as conn:
-                row = conn.execute(select(Run.config_version_id, Run.prompt_version_ids).where(Run.id == run_id)).first()
+                row = conn.execute(select(Run.config_version_id, Run.prompt_version_ids, Run.market)
+                                   .where(Run.id == run_id)).first()
         except SQLAlchemyError as exc:
             log.warning("run versions not readable (%s)", exc)
-            return None, None
+            return None, None, "in"
         if len(_run_pins) > 500:
             _run_pins.clear()
-        _run_pins[run_id] = (row.config_version_id, row.prompt_version_ids) if row else (None, None)
+        _run_pins[run_id] = ((row.config_version_id, row.prompt_version_ids, row.market or "in") if row
+                             else (None, None, "in"))
     return _run_pins[run_id]
 
 
+def pinned_ids(run_id: str) -> tuple[int | None, dict | None]:
+    config_id, prompt_ids, _ = _run_pin_row(run_id)
+    return config_id, prompt_ids
+
+
+def run_market(run_id: str) -> str:
+    """The run's market (stage M0); set when the run is created, never changed. "in" when unknown."""
+    return _run_pin_row(run_id)[2]
+
+
 def repin_run(run_id: str) -> None:
-    """A new attempt on an old run (Resume, dev single-step re-run) uses the versions active now."""
-    config_id, prompt_ids = new_run_pins()
+    """A new attempt on an old run (Resume, dev single-step re-run) uses the versions active now (of its market)."""
+    market = run_market(run_id)
+    config_id, prompt_ids = new_run_pins(market)
     engine = get_engine()
     if engine is None or config_id is None:
         return
     with engine.begin() as conn:
         conn.execute(update(Run).where(Run.id == run_id).values(config_version_id=config_id, prompt_version_ids=prompt_ids))
-    _run_pins[run_id] = (config_id, prompt_ids)
+    _run_pins[run_id] = (config_id, prompt_ids, market)
 
 
 def load_prompt(name: str) -> str:
-    """Prompt text for the run this thread works on (its pinned version), else the newest version, else the file."""
+    """Prompt text for the run this thread works on (its pinned version), else the newest version of the run's
+    market, else the file prompts/<market>/<name>."""
     run_id = config_mod.current_run_id()
+    market = run_market(run_id) if run_id else "in"
     version_id = (pinned_ids(run_id)[1] or {}).get(name) if run_id else None
     if version_id is None:
-        version_id = active_prompt_ids().get(name)
+        version_id = active_prompt_ids(market).get(name)
     text = prompt_text(version_id) if version_id is not None else None
-    return text if text is not None else (_prompts_dir() / name).read_text(encoding="utf-8")
+    return text if text is not None else (_prompts_dir(market) / name).read_text(encoding="utf-8")
 
 
 # --- admin: config ---
@@ -361,69 +427,122 @@ def import_config(admin_id: int, nodes: list[str], keep_origin: str | None = Non
 
 # --- admin: prompts ---
 
-def list_prompts() -> list[dict]:
-    ids = active_prompt_ids()
-    if not ids:
-        return []
-    with require_engine().connect() as conn:
-        counts = dict(conn.execute(select(PromptVersion.name, func.count()).group_by(PromptVersion.name)).all())
-        rows = conn.execute(select(PromptVersion.id, PromptVersion.name, PromptVersion.created_at, PromptVersion.note,
-                                   User.email).outerjoin(User, User.id == PromptVersion.created_by)
-                            .where(PromptVersion.id.in_(list(ids.values()))).order_by(PromptVersion.name)).all()
-    # "number" = this prompt's own version number (1, 2, 3 ...); "id" = the row, used for rollback
-    return [{"name": r.name, "id": r.id, "number": counts[r.name], "saved_at": r.created_at.isoformat(),
-             "saved_by": r.email, "note": r.note, "placeholders": sorted(FORMAT_FIELDS.get(r.name, []))} for r in rows]
+def _prompt_target(market: str, name: str, number: int) -> str:
+    """Audit target: "prompt verify.user.md v3" for India (as before stage M0), "prompt us/verify.user.md v1" for US."""
+    return f"prompt {name} v{number}" if market == "in" else f"prompt {market}/{name} v{number}"
 
 
-def get_prompt(name: str, version_id: int | None = None) -> dict:
-    ids = active_prompt_ids()
+def list_prompts(market: str | None = None) -> list[dict]:
+    """Active prompts of one market, or of every market when market is None (stage M0)."""
+    out: list[dict] = []
+    for m in ([market] if market else list(MARKETS)):
+        ids = active_prompt_ids(m)
+        if not ids:
+            continue
+        with require_engine().connect() as conn:
+            counts = dict(conn.execute(select(PromptVersion.name, func.count()).where(PromptVersion.market == m)
+                                       .group_by(PromptVersion.name)).all())
+            rows = conn.execute(select(PromptVersion.id, PromptVersion.name, PromptVersion.created_at,
+                                       PromptVersion.note, User.email)
+                                .outerjoin(User, User.id == PromptVersion.created_by)
+                                .where(PromptVersion.id.in_(list(ids.values()))).order_by(PromptVersion.name)).all()
+        files = _prompt_files(m)
+        # "number" = this prompt's own version number (1, 2, 3 ...); "id" = the row, used for rollback
+        # file_differs (owner 28 Nov): prompts/<market>/<name> is not the active text, so "Import file" would change it
+        out += [{"name": r.name, "market": m, "id": r.id, "number": counts[r.name],
+                 "saved_at": r.created_at.isoformat(), "saved_by": r.email, "note": r.note,
+                 "placeholders": sorted(FORMAT_FIELDS.get(r.name, [])),
+                 "file_differs": r.name in files and not same_text(files[r.name], prompt_text(r.id))} for r in rows]
+    return out
+
+
+def same_text(a: str | None, b: str | None) -> bool:
+    """Prompt texts equal apart from line endings (files on Windows have CRLF, the seed may not)."""
+    return (a or "").replace("\r\n", "\n").strip() == (b or "").replace("\r\n", "\n").strip()
+
+
+def get_prompt(name: str, version_id: int | None = None, market: str = "in") -> dict:
+    ids = active_prompt_ids(market)
     if name not in ids:
         raise SettingsError([{"field": name, "message": "unknown prompt"}])
     with require_engine().connect() as conn:
         versions = conn.execute(select(PromptVersion.id, PromptVersion.created_at, PromptVersion.note, User.email)
                                 .outerjoin(User, User.id == PromptVersion.created_by)
-                                .where(PromptVersion.name == name).order_by(PromptVersion.id.desc())).all()
+                                .where(PromptVersion.name == name, PromptVersion.market == market)
+                                .order_by(PromptVersion.id.desc())).all()
     shown = version_id or ids[name]
     numbers = {v.id: len(versions) - i for i, v in enumerate(versions)}  # oldest = 1
     if shown not in numbers:
         raise SettingsError([{"field": "version", "message": "not found"}])
-    return {"name": name, "id": shown, "number": numbers[shown], "active": shown == ids[name], "text": prompt_text(shown),
-            "placeholders": sorted(FORMAT_FIELDS.get(name, [])),
+    return {"name": name, "market": market, "id": shown, "number": numbers[shown], "active": shown == ids[name],
+            "text": prompt_text(shown), "placeholders": sorted(FORMAT_FIELDS.get(name, [])),
             "versions": [{"id": v.id, "number": numbers[v.id], "saved_at": v.created_at.isoformat(), "saved_by": v.email,
                           "note": v.note} for v in versions]}
 
 
-def prompt_number(name: str, version_id: int) -> int:
-    """This prompt's own version number of a row (oldest = 1)."""
+def prompt_number(name: str, version_id: int, market: str = "in") -> int:
+    """This prompt's own version number of a row (oldest = 1), counted within its market."""
     with require_engine().connect() as conn:
         return conn.execute(select(func.count()).select_from(PromptVersion)
-                            .where(PromptVersion.name == name, PromptVersion.id <= version_id)).scalar_one()
+                            .where(PromptVersion.name == name, PromptVersion.market == market,
+                                   PromptVersion.id <= version_id)).scalar_one()
 
 
-def save_prompt(admin_id: int, name: str, text: str, note: str | None, action: str = "save_prompt") -> int:
-    if name not in active_prompt_ids():
+def save_prompt(admin_id: int, name: str, text: str, note: str | None, action: str = "save_prompt",
+                market: str = "in") -> int:
+    if name not in active_prompt_ids(market):
         raise SettingsError([{"field": name, "message": "unknown prompt"}])
     problems = check_prompt(name, text)
     if problems:
         raise SettingsError(problems)
     with require_engine().begin() as conn:
-        version_id = conn.execute(insert(PromptVersion).values(name=name, text=text, created_by=admin_id, note=note)
+        version_id = conn.execute(insert(PromptVersion).values(name=name, text=text, market=market,
+                                                               created_by=admin_id, note=note)
                                   .returning(PromptVersion.id)).scalar_one()
         number = conn.execute(select(func.count()).select_from(PromptVersion)
-                              .where(PromptVersion.name == name)).scalar_one()
-        conn.execute(insert(AuditLog).values(admin_id=admin_id, action=action, target=f"prompt {name} v{number}",
-                                             details={"note": note, "row": version_id}))
+                              .where(PromptVersion.name == name, PromptVersion.market == market)).scalar_one()
+        conn.execute(insert(AuditLog).values(admin_id=admin_id, action=action,
+                                             target=_prompt_target(market, name, number),
+                                             details={"note": note, "row": version_id, "market": market}))
     forget_cache()
     return version_id
 
 
-def rollback_prompt(admin_id: int, name: str, version_id: int) -> int:
-    old = get_prompt(name, version_id)
-    return save_prompt(admin_id, name, old["text"], f"rollback to v{old['number']}", action="rollback_prompt")
+def rollback_prompt(admin_id: int, name: str, version_id: int, market: str = "in") -> int:
+    old = get_prompt(name, version_id, market)
+    return save_prompt(admin_id, name, old["text"], f"rollback to v{old['number']}", action="rollback_prompt",
+                       market=market)
 
 
-def import_prompt(admin_id: int, name: str) -> int:
-    files = _prompt_files()
+def import_prompt(admin_id: int, name: str, market: str = "in") -> int:
+    """The prompt's file as a new version — only when it differs from the active text (owner 28 Nov: a click with
+    nothing new changes nothing). Returns the active version's row id (new or unchanged)."""
+    return import_prompt_file(admin_id, name, market)["id"]
+
+
+def import_prompt_file(admin_id: int, name: str, market: str = "in") -> dict:
+    """{id, changed}: the file saved as a new version when it differs from the active text, else the active row."""
+    files = _prompt_files(market)
     if name not in files:
-        raise SettingsError([{"field": name, "message": "no such file in prompts/"}])
-    return save_prompt(admin_id, name, files[name], "import from prompts/", action="import_prompt")
+        raise SettingsError([{"field": name, "message": f"no such file in prompts/{market}/"}])
+    active = active_prompt_ids(market).get(name)
+    if active is not None and same_text(files[name], prompt_text(active)):
+        return {"id": active, "changed": False}
+    new_id = save_prompt(admin_id, name, files[name], f"import from prompts/{market}/", action="import_prompt",
+                         market=market)
+    return {"id": new_id, "changed": True}
+
+
+def import_all_prompts(admin_id: int, market: str | None = None) -> list[dict]:
+    """Owner 28 Nov: every file in prompts/<market>/ (every market when None) imported in one go — only files that
+    differ from their active version get a new version. A file with no version yet is seeded first (as on listing).
+    Returns one line per file: {market, name, changed, from, to} (version numbers)."""
+    out = []
+    for m in ([market] if market else list(MARKETS)):
+        ids = active_prompt_ids(m)  # seeds files that have no version yet
+        for name in sorted(_prompt_files(m)):
+            before = prompt_number(name, ids[name], m) if name in ids else None
+            result = import_prompt_file(admin_id, name, m)
+            out.append({"market": m, "name": name, "changed": result["changed"], "from": before,
+                        "to": prompt_number(name, result["id"], m)})
+    return out

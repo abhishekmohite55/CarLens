@@ -1,5 +1,7 @@
 """Extract node: trims 07_search results, asks the extract LLM chain to copy price text, then Python checks every
-figure (in its snippet, rupees, limits, model + year, outliers). Saves trimmed.txt/.json, request, response, figures in the database."""
+figure (in its snippet, rupees, limits, model + year, outliers). Saves trimmed.txt/.json, request, response, figures in the database.
+Stage E1: a market with extract_mode "labels" has the LLM label every price too, and app/extract_rules.py keeps or
+rejects it (no model-name check, no outlier rule)."""
 from __future__ import annotations
 
 import logging
@@ -8,9 +10,11 @@ from datetime import datetime, timezone
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from ..config import get_config, pinned
+from ..config import get_config, market_config, pinned
 from ..settings_store import load_prompt
-from ..extract import car_line, check_figures, drop_outliers, group_summary, render_trimmed, trim_results
+from ..extract import (PRICE_RE, USD_PRICE_RE, car_line, check_figures, drop_outliers, group_summary, parse_inr,
+                       parse_usd, render_trimmed, trim_results)
+from ..extract_rules import car_text, check_labelled
 from ..llm.chat import ask_chain
 from ..llm.tracing import langchain_callbacks
 from ..photos import apply_photos
@@ -37,14 +41,20 @@ def _now() -> str:
 
 
 def make_extract(trimmed: dict, text: str, car: dict, emit, callbacks: list, metadata: dict | None = None,
-                 entries=None) -> dict:
-    """Everything extract does without a run folder. Used by the node and scripts/check_extract.py.
-    Returns {"request", "response", "figures"}; figures is None when every model failed."""
+                 entries=None, plan_queries: dict | None = None, mode: str | None = None) -> dict:
+    """Everything extract does without a run folder. Used by the node and scripts/check_extract.py, check_judge.py.
+    Returns {"request", "response", "figures"}; figures is None when every model failed.
+    mode: "labels" | "classic"; default the market's extract_mode (stage E1). plan_queries: the plan's parts (labels
+    mode reads each part's severity and action)."""
     cfg = get_config()
     entries = entries or cfg.models.extract_chain
     e = cfg.extract
-    system_prompt = load_prompt("extract_prices.system.md")
-    user_prompt = load_prompt("extract_prices.user.md").format(trimmed_text=text)
+    market = market_config()
+    labels = (mode or market.extract_mode) == "labels"
+    prefix = "extract_labels" if labels else "extract_prices"
+    system_prompt = load_prompt(f"{prefix}.system.md")
+    user_prompt = load_prompt(f"{prefix}.user.md").format(trimmed_text=text,
+                                                          **({"car_text": car_text(car)} if labels else {}))
     request = {"node": "extract", "chain": [{"provider": m.provider, "model": m.model} for m in entries],
                "timeout_per_model_sec": cfg.models.extract_timeout_per_model_sec,
                "reasoning_effort": cfg.models.extract_reasoning_effort,
@@ -60,12 +70,26 @@ def make_extract(trimmed: dict, text: str, car: dict, emit, callbacks: list, met
     if answer["parsed"] is None:
         return {"request": request, "response": response, "figures": None}
 
-    limits = {"listing_min_inr": e.listing_min_inr, "listing_max_inr": e.listing_max_inr,
-              "year_tolerance": cfg.pricing.year_tolerance, "outlier_factor": e.outlier_factor}
-    kept, rejected = check_figures(answer["parsed"]["figures"], trimmed, car, limits)
-    kept, outliers = drop_outliers(kept, e.outlier_factor)
+    car_limits = market.extract_limits  # the run's market (stage M0); helper keys unchanged
+    usd = market.currency == "USD"  # stage U5: dollars for US runs
+    parse = parse_usd if usd else parse_inr
+    if labels:  # stage E1: the LLM's labels + app/extract_rules.py, no outlier rule
+        kept, rejected = check_labelled(answer["parsed"]["figures"], trimmed, plan_queries,
+                                        (car_limits.listing_min, car_limits.listing_max),
+                                        (market.light_repair_band.min, market.light_repair_band.max),
+                                        parse, e.outlier_factor,
+                                        (market.moderate_repair_band.min, market.moderate_repair_band.max)
+                                        if market.moderate_repair_band else None)
+        outliers = []
+    else:
+        limits = {"listing_min_inr": car_limits.listing_min, "listing_max_inr": car_limits.listing_max,
+                  "year_tolerance": cfg.pricing.year_tolerance, "outlier_factor": e.outlier_factor}
+        kept, rejected = check_figures(answer["parsed"]["figures"], trimmed, car, limits, parse)
+        kept, outliers = drop_outliers(kept, e.outlier_factor)
     figures = {"answered_by": answer["answered_by"], "car": car, "summary": group_summary(kept),
-               "kept": kept, "rejected": rejected, "outliers": outliers}
+               "kept": kept, "rejected": rejected, "outliers": outliers,
+               **({"mode": "labels"} if labels else {}),  # classic figures.json stays exactly as before E1
+               **({"currency": "USD"} if usd else {})}  # US figures stay out of the shared price_figures table
     return {"request": request, "response": response, "figures": figures}
 
 
@@ -93,8 +117,10 @@ def _run_extract_inner(run_id: str) -> None:
     confirm = load_result(run_id, "04_confirm.json")
     confirm = apply_photos(confirm, [], load_photos_answer(run_id), get_config().photos.km_min_confidence)[0]  # photo km
     e = get_config().extract
-    trimmed = trim_results(results, load_result(run_id, "06_plan/queries.json"),
-                           e.max_results_per_group, e.max_snippet_chars)
+    usd = market_config().currency == "USD"  # stage U5: keep snippets with a $ amount for US runs
+    plan_queries = load_result(run_id, "06_plan/queries.json")
+    trimmed = trim_results(results, plan_queries,
+                           e.max_results_per_group, e.max_snippet_chars, USD_PRICE_RE if usd else PRICE_RE)
     text = render_trimmed(car_line(confirm), trimmed)
     trimmed["stats"]["chars_out"] = len(text)
 
@@ -106,7 +132,8 @@ def _run_extract_inner(run_id: str) -> None:
 
     result = make_extract(trimmed, text, confirm.get("car") or {}, emit=emit,
                           callbacks=langchain_callbacks(run_id, "extract"),
-                          metadata={"langfuse_session_id": run_id, "langfuse_trace_name": "extract"})
+                          metadata={"langfuse_session_id": run_id, "langfuse_trace_name": "extract"},
+                          plan_queries=plan_queries)
     for name in ("request", "response", "figures"):
         if result[name] is not None:
             save_result(run_id, f"08_extract/{name}.json", result[name])  # figures.json also fills price_figures

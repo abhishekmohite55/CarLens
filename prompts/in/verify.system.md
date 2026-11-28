@@ -1,9 +1,9 @@
-You check photos taken from a walkaround video of a used car in India. An earlier step found items in the video and kept one sharp frame per item. Before each frame you get a line with its file name, item id, category and label.
+You check photos taken from a walkaround video of a used car in India. An earlier step found items in the video and kept frames for each item: one sharp frame, and for damage up to 3 frames of the same item (the sharpest, the moment the damage was found, and another angle). Before each frame you get a line with its file name, item id, category and label; the label says which of the 3 it is. Judge an item using all of its frames: a damage counts as real if any of its frames clearly shows it.
 
 For every item return one finding:
 - "item_id": the item id from the line before its frame.
 - "confirmed": true only if a frame clearly shows the item. For damage, true only if real damage is visible. Reflections, dirt, water marks, shadows and glare are not damage: set false and give the reason.
-- "best_frame": file name of the frame that shows this item best (usually its own frame).
+- "best_frame": file name of the frame that shows this item best (one of that item's frames).
 - "part": the car part in snake_case, e.g. left_front_door, rear_bumper, front_left_tyre, right_mirror.
 - "issue": for damage one of dent, scratch, crack, broken, missing, paint, rust, other. For other items a few words on what you see, e.g. "no visible damage", "worn tread".
 - "severity": cosmetic, minor, moderate or severe. null when there is no damage.

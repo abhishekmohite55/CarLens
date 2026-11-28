@@ -10,6 +10,7 @@ from . import admin_data, health, settings_store
 from .auth import SignedIn, require_admin
 from .config import get_config
 from .graph import ORDER, forget_run
+from .market import MARKETS, US_NODES, checked_market
 from .run_index import is_run_id
 from .runs import run_dir
 
@@ -25,9 +26,30 @@ class PasswordBody(BaseModel):
     password: str
 
 
+class MarketBody(BaseModel):
+    market: str | None = None  # in / us; empty = by location
+
+
+def _one_market(market: str | None) -> str:
+    """Prompt routes work on one market's prompts: in (default, as before stage M0) or us."""
+    if market in (None, ""):
+        return "in"
+    if market not in MARKETS:
+        raise HTTPException(400, detail=f"market must be one of {', '.join(MARKETS)}")
+    return market
+
+
+# Stage M0: every list takes ?market=all|in|us (the admin header switch); empty / all = every market.
+
 @router.get("/users")
-def users(status: str | None = None, admin: SignedIn = Depends(require_admin)):
-    return {"users": admin_data.list_users(status)}
+def users(status: str | None = None, market: str | None = None, admin: SignedIn = Depends(require_admin)):
+    return {"users": admin_data.list_users(status, checked_market(market))}
+
+
+@router.patch("/users/{user_id}/market")
+def user_market(user_id: int, body: MarketBody, admin: SignedIn = Depends(require_admin)):
+    admin_data.set_market(admin.id, user_id, body.market or None)
+    return {"market": body.market or None}
 
 
 @router.post("/users/{user_id}/approve")
@@ -66,8 +88,8 @@ def remove_user(user_id: int, admin: SignedIn = Depends(require_admin)):
 
 
 @router.get("/runs")
-def runs(status: str | None = None, admin: SignedIn = Depends(require_admin)):
-    return {"runs": admin_data.list_runs(status)}
+def runs(status: str | None = None, market: str | None = None, admin: SignedIn = Depends(require_admin)):
+    return {"runs": admin_data.list_runs(status, market=checked_market(market))}
 
 
 def _checked_run_id(run_id: str) -> str:
@@ -95,8 +117,8 @@ def remove_run(run_id: str = Depends(_checked_run_id), admin: SignedIn = Depends
 
 
 @router.get("/audit")
-def audit(action: str | None = None, admin: SignedIn = Depends(require_admin)):
-    return {"entries": admin_data.list_audit(action)}
+def audit(action: str | None = None, market: str | None = None, admin: SignedIn = Depends(require_admin)):
+    return {"entries": admin_data.list_audit(action, market=checked_market(market))}
 
 
 # --- config and prompts (stage 6.3): versions in the database; a save applies to runs that start from now ---
@@ -118,7 +140,8 @@ def _origin(request: Request) -> str | None:
 @router.get("/config")
 def config(admin: SignedIn = Depends(require_admin)):
     return {**settings_store.get_config_version(),
-            "options": {"stop_after": ORDER, "providers": list(settings_store.PROVIDERS)}}
+            "options": {"stop_after": ORDER, "stop_after_us": list(US_NODES), "markets": list(MARKETS),
+                        "providers": list(settings_store.PROVIDERS)}}
 
 
 @router.get("/config/versions")
@@ -147,31 +170,43 @@ def import_config(request: Request, admin: SignedIn = Depends(require_admin)):
 
 
 @router.get("/prompts")
-def prompts(admin: SignedIn = Depends(require_admin)):
-    return {"prompts": settings_store.list_prompts()}
+def prompts(market: str | None = None, admin: SignedIn = Depends(require_admin)):
+    return {"prompts": settings_store.list_prompts(checked_market(market))}
+
+
+@router.post("/prompts/import-all")
+def import_all_prompts(market: str | None = None, admin: SignedIn = Depends(require_admin)):
+    """Owner 28 Nov: every prompt file of the market (or all markets); only changed files get a new version."""
+    results = settings_store.import_all_prompts(admin.id, checked_market(market))
+    return {"results": results, "changed": sum(1 for r in results if r["changed"])}
 
 
 @router.get("/prompts/{name}")
-def prompt(name: str, version: int | None = None, admin: SignedIn = Depends(require_admin)):
-    return settings_store.get_prompt(name, version)
+def prompt(name: str, version: int | None = None, market: str | None = None,
+           admin: SignedIn = Depends(require_admin)):
+    return settings_store.get_prompt(name, version, _one_market(market))
 
 
 @router.put("/prompts/{name}")
-def save_prompt(name: str, body: PromptBody, admin: SignedIn = Depends(require_admin)):
-    version_id = settings_store.save_prompt(admin.id, name, body.text, body.note)
-    return {"version": settings_store.prompt_number(name, version_id)}
+def save_prompt(name: str, body: PromptBody, market: str | None = None, admin: SignedIn = Depends(require_admin)):
+    m = _one_market(market)
+    version_id = settings_store.save_prompt(admin.id, name, body.text, body.note, market=m)
+    return {"version": settings_store.prompt_number(name, version_id, m)}
 
 
 @router.post("/prompts/{name}/rollback/{version_id}")
-def rollback_prompt(name: str, version_id: int, admin: SignedIn = Depends(require_admin)):
-    new_id = settings_store.rollback_prompt(admin.id, name, version_id)
-    return {"version": settings_store.prompt_number(name, new_id)}
+def rollback_prompt(name: str, version_id: int, market: str | None = None,
+                    admin: SignedIn = Depends(require_admin)):
+    m = _one_market(market)
+    new_id = settings_store.rollback_prompt(admin.id, name, version_id, m)
+    return {"version": settings_store.prompt_number(name, new_id, m)}
 
 
 @router.post("/prompts/{name}/import")
-def import_prompt(name: str, admin: SignedIn = Depends(require_admin)):
-    new_id = settings_store.import_prompt(admin.id, name)
-    return {"version": settings_store.prompt_number(name, new_id)}
+def import_prompt(name: str, market: str | None = None, admin: SignedIn = Depends(require_admin)):
+    m = _one_market(market)
+    result = settings_store.import_prompt_file(admin.id, name, m)  # owner 28 Nov: no new version when unchanged
+    return {"version": settings_store.prompt_number(name, result["id"], m), "changed": result["changed"]}
 
 
 # --- dashboard and tables (stage 6.4) ---
@@ -183,17 +218,18 @@ def admin_health(admin: SignedIn = Depends(require_admin)):
 
 
 @router.get("/dashboard")
-def dashboard(days: int = 30, admin: SignedIn = Depends(require_admin)):
+def dashboard(days: int = 30, market: str | None = None, admin: SignedIn = Depends(require_admin)):
     up = get_config().upload
-    return admin_data.dashboard(days, up.repeat_window_min, up.repeat_warn_count)
+    return admin_data.dashboard(days, up.repeat_window_min, up.repeat_warn_count, checked_market(market))
 
 
 @router.get("/tables")
-def tables(admin: SignedIn = Depends(require_admin)):
-    return {"tables": admin_data.list_tables()}
+def tables(market: str | None = None, admin: SignedIn = Depends(require_admin)):
+    return {"tables": admin_data.list_tables(checked_market(market))}
 
 
 @router.get("/tables/{name}")
 def table(name: str, page: int = 1, sort: str | None = None, desc: bool = True, search: str | None = None,
-          column: str | None = None, value: str | None = None, admin: SignedIn = Depends(require_admin)):
-    return admin_data.table_rows(name, page, sort, desc, search, column, value)
+          column: str | None = None, value: str | None = None, market: str | None = None,
+          admin: SignedIn = Depends(require_admin)):
+    return admin_data.table_rows(name, page, sort, desc, search, column, value, checked_market(market))

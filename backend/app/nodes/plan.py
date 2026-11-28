@@ -8,16 +8,19 @@ from datetime import datetime, timezone
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from ..config import get_config, pinned
+from ..config import get_config, market_config, pinned
 from ..settings_store import load_prompt
 from ..llm.chat import ask_chain
 from ..llm.tracing import langchain_callbacks
-from ..plan import (build_user_prompt, car_problem, check_plan, damage_findings, listing_queries,
+from ..plan import (build_user_prompt, car_problem, check_plan, damage_findings, listing_queries, market_listing_queries,
                     tyres_not_seen, tyres_to_judge)
 from ..photos import apply_photos
 from ..results import load_result, save_result
 from ..runs import append_event
 from .photos import load_photos_answer
+from .vin_details import wait_for_details
+from ..config import current_market
+from ..vin.details import details_lines
 
 log = logging.getLogger(__name__)
 
@@ -41,19 +44,31 @@ def _validate(parsed) -> str | None:
     return None if isinstance(parsed, dict) and isinstance(parsed.get("parts"), list) else "answer has no parts list"
 
 
-def make_plan(confirm: dict, findings: list[dict], emit, callbacks: list, metadata: dict | None = None) -> dict:
+def make_plan(confirm: dict, findings: list[dict], emit, callbacks: list, metadata: dict | None = None,
+              extra: dict | None = None) -> dict:
     """Everything plan does without a run folder. Used by the node and scripts/check_plan.py.
-    Returns {"request": dict | None, "response": dict | None, "queries": dict}; request/response are None when no LLM call."""
+    Returns {"request": dict | None, "response": dict | None, "queries": dict}; request/response are None when no LLM call.
+    extra (stage U4, US): miles / VIN / vehicle details for the plan model. US listing queries carry query_groups."""
     cfg = get_config()
+    market = market_config()  # templates of the run's market (stage M0)
     seed = random.randrange(1_000_000)
-    listing, empty = listing_queries(confirm.get("car") or {}, {"city": confirm.get("city"), "state": confirm.get("state")},
-                                     cfg.plan.listing_templates, cfg.plan.listing_queries_per_run, random.Random(seed))
+    place = {"city": confirm.get("city"), "state": confirm.get("state")}
+    groups = None
+    if hasattr(market, "state_templates_max"):  # US: a few {state} queries, the rest US-wide (07 §8)
+        listing, groups, empty = market_listing_queries(confirm.get("car") or {}, place, market.listing_templates,
+                                                        cfg.plan.listing_queries_per_run, market.state_templates_max,
+                                                        random.Random(seed))
+    else:
+        listing, empty = listing_queries(confirm.get("car") or {}, place,
+                                         market.listing_templates, cfg.plan.listing_queries_per_run, random.Random(seed))
     damage = damage_findings(findings)
     tyres = tyres_to_judge(findings, cfg.plan.tyre_ok_score)
     new_price, _ = listing_queries(confirm.get("car") or {}, {"city": confirm.get("city"), "state": confirm.get("state")},
-                                   cfg.plan.new_price_templates, cfg.plan.new_price_queries_per_run, random.Random(seed))
+                                   market.new_price_templates, cfg.plan.new_price_queries_per_run, random.Random(seed))
     queries = {"listing": listing, "new_price": new_price, "listing_seed": seed, "llm_called": bool(damage or tyres),
                "parts": [], "tyres": [], "tyres_not_seen": tyres_not_seen(findings), "problems": []}
+    if groups is not None:
+        queries["query_groups"] = groups  # stage U4: listing query → "state" | "us"
     if len(listing) < cfg.plan.listing_queries_per_run:
         queries["problems"].append(f"{len(listing)} of {cfg.plan.listing_queries_per_run} listing queries"
                                    f" (empty fields: {', '.join(empty) or 'none'})")
@@ -62,7 +77,7 @@ def make_plan(confirm: dict, findings: list[dict], emit, callbacks: list, metada
 
     system_prompt = load_prompt("plan_searches.system.md")
     user_prompt = build_user_prompt(load_prompt("plan_searches.user.md"),
-                                    confirm, damage, tyres, cfg.plan.queries_per_part)
+                                    confirm, damage, tyres, cfg.plan.queries_per_part, extra)
     request = {"node": "plan", "chain": [{"provider": e.provider, "model": e.model} for e in cfg.models.plan_chain],
                "timeout_per_model_sec": cfg.models.plan_timeout_per_model_sec,
                "system_prompt": system_prompt, "user_prompt": user_prompt, "sent_at": _now()}
@@ -96,6 +111,14 @@ def run_plan(run_id: str, claimed: bool = False) -> None:
             _running.discard(run_id)
 
 
+def _us_extra(run_id: str, confirm: dict, emit) -> dict:
+    """Stage U4: what the US plan model gets beyond the car: VIN, miles used, vehicle details (waits for them)."""
+    details = wait_for_details(run_id, get_config().vin.details_wait_sec, emit)
+    miles = load_result(run_id, "03_verify/miles.json") or {}
+    return {"vin": confirm.get("vin"), "miles_used": miles.get("miles_used", confirm.get("miles_user")),
+            "vehicle_details": details_lines(details) or ["not available"]}
+
+
 def _run_plan_inner(run_id: str) -> None:
     confirm = load_result(run_id, "04_confirm.json")
     if confirm is None:
@@ -115,10 +138,11 @@ def _run_plan_inner(run_id: str) -> None:
     # extra photos (Stage 6): tyre photos replace video tyres, a confident odometer photo sets km; no photos = unchanged
     confirm, findings, _ = apply_photos(confirm, findings, load_photos_answer(run_id), get_config().photos.km_min_confidence)
 
-    result = make_plan(confirm, findings,
-                       emit=lambda msg: append_event(run_id, "plan", "node_progress", {"message": msg}),
+    emit = lambda msg: append_event(run_id, "plan", "node_progress", {"message": msg})  # noqa: E731
+    extra = _us_extra(run_id, confirm, emit) if current_market() == "us" else None
+    result = make_plan(confirm, findings, emit=emit,
                        callbacks=langchain_callbacks(run_id, "plan"),
-                       metadata={"langfuse_session_id": run_id, "langfuse_trace_name": "plan"})
+                       metadata={"langfuse_session_id": run_id, "langfuse_trace_name": "plan"}, extra=extra)
     files = []
     for name in ("request", "response", "queries"):
         if result[name] is not None:

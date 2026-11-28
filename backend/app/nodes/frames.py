@@ -12,7 +12,7 @@ from pathlib import Path
 import cv2
 
 from ..config import get_config, pinned
-from ..frames import best_frame, sample_indices, save_jpeg
+from ..frames import best_frame, locate_index, pick_angle_frame, read_frame, sample_indices, save_jpeg, sharpness
 from ..results import delete_results, load_result, save_result
 from ..runs import append_event, run_dir
 
@@ -135,9 +135,37 @@ def _run_frames_inner(run_id: str) -> None:
                     "file": filename,
                 },
             })
+            if item.get("category") in fc.extra_frames_for:
+                try:  # an extra frame that cannot be read never costs the item its sharpest frame
+                    rec["extra"] = _extra_frames(item, t, result, fps, n_frames)
+                except Exception as exc:  # noqa: BLE001
+                    rec["extra"], rec["extra_error"] = [], str(exc)
         except Exception as exc:
             rec["skipped"] = str(exc)
         return item_idx, rec
+
+    def _extra_frames(item: dict, t: float, result: dict, fps: float, n_frames: int) -> list[dict]:
+        """Owner 27 Nov: locate's own moment (exact timestamp, no window) and another angle (sharpest frame at least
+        extra_min_gap_sec from the others). A frame that is already taken is not saved twice."""
+        extra: list[dict] = []
+        taken = [result["frame_index"]]
+        wanted = [("locate", locate_index(t, fps, n_frames))]
+        loc = wanted[0][1]
+        angle = pick_angle_frame(result["scores"], [result["frame_index"], loc], fps, fc.extra_min_gap_sec)
+        if angle is not None:
+            wanted.append(("angle", angle))
+        for kind, idx in wanted:
+            if idx in taken:
+                continue
+            img = read_frame(video_path, idx)
+            sharp = result["scores"].get(idx)
+            sharp = sharp if sharp is not None else round(sharpness(img, fc.score_scale), 1)
+            frame_t = round(idx / fps, 3)
+            name = f"{item['id']}_{item.get('category')}_{frame_t:06.2f}s_{kind}.jpg"
+            save_jpeg(img, out_dir / name, fc.max_long_edge_px, fc.jpeg_quality)
+            extra.append({"kind": kind, "frame_index": idx, "t": frame_t, "sharpness": sharp, "file": name})
+            taken.append(idx)
+        return extra
 
     futures = {}
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
@@ -180,6 +208,8 @@ def _run_frames_inner(run_id: str) -> None:
             "score_scale": fc.score_scale,
             "max_long_edge_px": fc.max_long_edge_px,
             "jpeg_quality": fc.jpeg_quality,
+            "extra_frames_for": fc.extra_frames_for,
+            "extra_min_gap_sec": fc.extra_min_gap_sec,
         },
         "totals": {
             "items": total_items,
@@ -193,7 +223,7 @@ def _run_frames_inner(run_id: str) -> None:
     save_result(run_id, "02_frames/manifest.json", manifest)  # JPEGs stay files (stage 2.3)
 
     n = len(done_records)
-    jpg_files = [f"02_frames/{r['sharpest']['file']}" for r in done_records]
+    jpg_files = [f"02_frames/{f['file']}" for r in done_records for f in [r["sharpest"], *r.get("extra", [])]]
     append_event(run_id, "frames", "packet", {
         "from": "frames",
         "to": "verify",
