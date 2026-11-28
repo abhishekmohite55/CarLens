@@ -77,7 +77,9 @@ def make_extract(trimmed: dict, text: str, car: dict, emit, callbacks: list, met
         kept, rejected = check_labelled(answer["parsed"]["figures"], trimmed, plan_queries,
                                         (car_limits.listing_min, car_limits.listing_max),
                                         (market.light_repair_band.min, market.light_repair_band.max),
-                                        parse, e.outlier_factor)
+                                        parse, e.outlier_factor,
+                                        (market.moderate_repair_band.min, market.moderate_repair_band.max)
+                                        if market.moderate_repair_band else None)
         outliers = []
     else:
         limits = {"listing_min_inr": car_limits.listing_min, "listing_max_inr": car_limits.listing_max,

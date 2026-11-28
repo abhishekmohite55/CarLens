@@ -1808,7 +1808,9 @@ function loadPricing(runId, ev) {
         + escHtml(i.note || i.fixed || '') + (i.sources ? ' · ' + i.sources.map((u, n) => link(u, 'link ' + (n + 1))).join(', ') : '') + '</li>').join('') + '</ul>';
       if (p.status === 'ok') {
         const k = p.yearly_value_kept;
-        html += '<div>Yearly value kept: median ' + k.median.toFixed(3) + ', top-3 average ' + k.max.toFixed(3) + '; car age ' + p.car_age_years + ' years</div>';
+        html += '<div>Yearly value kept: ' + (runCurrency === 'USD'  // stage E2: US range = 25th–75th percentile
+          ? k.median.toFixed(3) + ' – ' + k.max.toFixed(3) + ' (25th–75th percentile)'
+          : 'median ' + k.median.toFixed(3) + ', top-3 average ' + k.max.toFixed(3)) + '; car age ' + p.car_age_years + ' years</div>';
         html += '<div>Fair value: ' + inr(p.fair_value.median) + ' – ' + inr(p.fair_value.max) + '</div>';
         html += '<div style="font-size:18px;margin-top:6px"><b>Price after repairs: ' + inr(p.after_repairs.median) + ' – ' + inr(p.after_repairs.max) + '</b></div>';
       } else {

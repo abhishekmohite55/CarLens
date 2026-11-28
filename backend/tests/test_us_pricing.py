@@ -163,3 +163,50 @@ def test_us_report():
     assert money(24995, "USD") == "$24,995" and money(450000, "INR") == "₹4,50,000"
     no_details = build_report({"confirm": confirm, "verify": {}, "price": None, "us": {**us, "details": None}})
     assert "Recall and safety data not available." in no_details["condition_summary"]
+
+
+# --- stage E2 (owner 28 Nov, run r_rbuwdpwkd6sw: "$17,600 to $17,600") ---
+
+CAMRY = {"year": 2017, "make": "TOYOTA", "model": "Camry", "variant": "LE/SE/XLE/XSE"}
+
+
+def test_msrp_exact_only_every_listed_trim_and_never_below_used():
+    figs = [_fig("new_price", 24314, 2017, ftype="msrp", source="K1", variant="LE", match="exact"),
+            _fig("new_price", 25084, 2017, ftype="msrp", source="K2", variant="SE", match="exact"),
+            _fig("new_price", 31370, 2017, ftype="msrp", source="T1", variant="XSE", match="same_model_other_trim"),
+            _fig("new_price", 14250, 2017, ftype="msrp", source="A1", variant="LE", match="exact"),  # TSRP read as MSRP
+            _fig("listing", 17998, 2017, source="L1")]
+    m = original_msrp(figs, CAMRY)
+    assert m["sources"] == ["K1", "K2"] and m["value"] == (24314 + 25084) / 2 and m["variant_match"] == "exact"
+
+
+def test_valuations_join_the_pool_trade_in_stays_out():
+    figs = [_fig("new_price", 25000, 2017, ftype="msrp", source="N", variant="LE", match="exact"),
+            _fig("listing", 17000, 2017, source="L1"),
+            _fig("listing", 12400, 2017, ftype="private_party", source="K1"),
+            _fig("listing", 13600, 2017, ftype="dealer_retail", source="K2"),
+            _fig("listing", 8900, 2017, ftype="trade_in", source="K3")]
+    out = two_prices(figs, {"parts": [], "tyres": []}, CAMRY, 2026, {**SETTINGS, "min_listings_with_year": 3}, None)
+    assert out["status"] == "ok" and sorted(x["source"] for x in out["listings_used"]) == ["K1", "K2", "L1"]
+
+
+def test_range_is_never_one_number_and_miles_move_listings():
+    figs = [_fig("new_price", 25000, 2017, ftype="msrp", source="N", variant="LE", match="exact")]
+    figs += [_fig("listing", 17990, 2017, source=f"L{i}", miles=80000 + i) for i in range(5)]  # 5 cars, not one twice
+    q = {"parts": [], "tyres": []}
+    flat = two_prices(figs, q, CAMRY, 2026, {**SETTINGS, "min_range_pct": 0.06}, None)
+    lo, hi = flat["fair_value"]["median"], flat["fair_value"]["max"]
+    assert hi > lo and abs((hi - lo) / ((hi + lo) / 2) - 0.06) < 0.01  # identical listings: still a 6% range
+    miles = two_prices(figs, q, CAMRY, 2026, {**SETTINGS, "car_miles": 127089, "miles_per_mile": 0.05}, None)
+    assert miles["listings_used"][0]["miles_adjust"] == round((80000 - 127089) * 0.05)  # -2,354: more miles, lower
+    assert miles["fair_value"]["max"] < flat["fair_value"]["max"]
+
+
+def test_moderate_repair_band():
+    from app.extract_rules import reject_reason
+    job = {"part": "front_bumper", "severity": "moderate", "action": "repair"}
+    f = {"match": "exact", "work": "repaint", "car_specific": "generic"}
+    assert reject_reason(f, "front_bumper", [300, 600], job, False, (1000, 300000), (50, 400), (150, 1000)) is None
+    assert reject_reason(f, "front_bumper", [1500], job, False, (1000, 300000), (50, 400), (150, 1000)) == \
+        "midpoint 1,500 outside 150–1,000"
+    assert reject_reason(f, "front_bumper", [1500], job, False, (1000, 300000), (50, 400), None) is None

@@ -8,12 +8,20 @@ Method (owner, 28 Nov):
 - Repairs by what verify said to do: a minor / cosmetic repair uses repair-job prices only (low end of each range);
   a moderate repair the median repair job; a replacement part + labour. No mixing of part prices into a scratch fix.
 - Two prices: US-wide (every listing) and the state's (state-query listings only), shown only with enough listings.
+
+Stage E2 (owner 28 Nov, run r_rbuwdpwkd6sw gave "$17,600 to $17,600"):
+- MSRP: labelled figures with match "exact" only (a VIN trim like "LE/SE/XLE/XSE" counts every trim it lists);
+  an "MSRP" below the highest same-year used price is impossible and dropped (e.g. Autotrader TSRP read as MSRP).
+- Listing pool adds private-party and dealer-retail valuations (trade-in stays out: always the lowest).
+- Miles: each listing with stated miles is moved toward the car's miles at settings["miles_per_mile"] $ per mile.
+- Range = 25th to 75th percentile of the per-listing fair values (never one number: at least settings["min_range_pct"]
+  wide). Keys "median" / "max" kept for the report and node tables: they now hold the low and the high end.
 """
 from __future__ import annotations
 
 from statistics import median
 
-LISTING_TYPES = ("single_listing", "range")
+LISTING_TYPES = ("single_listing", "range", "private_party", "dealer_retail")  # E2: + valuations
 MSRP_TYPES = ("msrp", "invoice")  # preferred first
 LIGHT = ("cosmetic", "minor")  # severities whose repair uses the low end of repair-job prices
 
@@ -34,6 +42,11 @@ def original_msrp(figures: list[dict], car: dict) -> dict | None:
     """The car's original MSRP: msrp figures (invoice only when there is no msrp) of the car's model year (or with no
     year stated); trim match exact first, else a trim containing it, else the median of every trim found."""
     figs = [f for f in figures if f["group"] == "new_price" and f.get("type") in MSRP_TYPES]
+    if any("match" in f for f in figs):  # stage E2: labelled extract; other trims stay in figures for depreciation
+        figs = [f for f in figs if f.get("match") == "exact"] or figs
+    floor = max((mid(f) for f in figures if f["group"] == "listing" and f.get("type") in LISTING_TYPES
+                 and f.get("year") == car.get("year")), default=0)
+    figs = [f for f in figs if mid(f) > floor]  # a car is never cheaper new than used years later
     if not figs:
         return None
     kind = next(t for t in MSRP_TYPES if any(f["type"] == t for f in figs))
@@ -44,8 +57,9 @@ def original_msrp(figures: list[dict], car: dict) -> dict | None:
     if not figs:
         return None
     v = str(car.get("variant") or "").strip().lower()
+    trims = {t.strip() for t in v.split("/") if t.strip()}  # vPIC may give several: "LE/SE/XLE/XSE"
     names = [str(f.get("variant") or "").strip().lower() for f in figs]
-    exact = [f for f, n in zip(figs, names) if v and n == v]
+    exact = [f for f, n in zip(figs, names) if v and (n == v or n in trims)]
     matched = exact or [f for f, n in zip(figs, names) if v and v in n]
     use = matched or figs
     return {"value": median(mid(f) for f in use), "type": kind, "year": year if same_year else None,
@@ -53,9 +67,11 @@ def original_msrp(figures: list[dict], car: dict) -> dict | None:
             "sources": [f["source"] for f in use]}
 
 
-def yearly_rates(figures: list[dict], msrp: float, current_year: int, min_age: int) -> tuple[list[dict], list[dict]]:
+def yearly_rates(figures: list[dict], msrp: float, current_year: int, min_age: int, car_miles: float | None = None,
+                 per_mile: float = 0) -> tuple[list[dict], list[dict]]:
     """Per listing with a stated year: value kept per year against the original MSRP. Dropped: younger than min_age,
-    at or above the MSRP, the same car twice (same year, price and miles)."""
+    at or above the MSRP, the same car twice (same year, price and miles). Stage E2: a listing with stated miles is
+    first moved toward the car's miles (price + (listing miles − car miles) × per_mile, never below half its price)."""
     out, dropped = [], []
     seen: dict[tuple, str] = {}
     for f in figures:
@@ -74,7 +90,12 @@ def yearly_rates(figures: list[dict], msrp: float, current_year: int, min_age: i
             dropped.append({**base, "reason": f"duplicate of {seen[key]}"})
             continue
         seen[key] = f["source"]
-        out.append({**base, "age": age, "rate": (price / msrp) ** (1 / age), "query_group": f.get("query_group")})
+        adj = 0.0
+        if per_mile and car_miles and isinstance(f.get("miles"), (int, float)):
+            adj = max((f["miles"] - car_miles) * per_mile, -price / 2)
+        out.append({**base, "age": age, "rate": ((price + adj) / msrp) ** (1 / age), "query_group": f.get("query_group"),
+                    **({"miles": f["miles"], "miles_adjust": round(adj)} if adj else {}),
+                    **({"type": f["type"]} if f.get("type") != "single_listing" else {})})
     return out, dropped
 
 
@@ -129,6 +150,21 @@ def _round(x: float) -> int:
     return int(round(x / 100) * 100)  # US prices to the nearest $100
 
 
+def _quantile(values: list[float], q: float) -> float:
+    v = sorted(values)
+    pos = (len(v) - 1) * q
+    lo = int(pos)
+    return v[lo] + (v[min(lo + 1, len(v) - 1)] - v[lo]) * (pos - lo)
+
+
+def value_range(values: list[float], min_pct: float) -> dict:
+    """{"median": low end, "max": high end, "mid"}: 25th–75th percentile, at least min_pct of the middle wide."""
+    low, high, middle = _quantile(values, 0.25), _quantile(values, 0.75), median(values)
+    if middle and (high - low) / middle < min_pct:
+        low, high = middle * (1 - min_pct / 2), middle * (1 + min_pct / 2)
+    return {"median": low, "max": high, "mid": middle}
+
+
 def price_report(figures: list[dict], queries: dict, car: dict, current_year: int, settings: dict) -> dict:
     """settings: min_listings_with_year, max_from_top, min_listing_age, tyre_minor_wear_deduction."""
     msrp = original_msrp(figures, car)
@@ -136,16 +172,17 @@ def price_report(figures: list[dict], queries: dict, car: dict, current_year: in
     base = {"new_price": msrp, "repairs": rep}
     if msrp is None:
         return {**base, "status": "unavailable", "reason": "no original MSRP found for this model year"}
-    rates, dropped = yearly_rates(figures, msrp["value"], current_year, settings.get("min_listing_age", 1))
+    rates, dropped = yearly_rates(figures, msrp["value"], current_year, settings.get("min_listing_age", 1),
+                                  settings.get("car_miles"), settings.get("miles_per_mile", 0))
     base["listings_used"], base["listings_dropped"] = rates, dropped
     if len(rates) < settings["min_listings_with_year"]:
         return {**base, "status": "unavailable", "listings_short": True,
                 "reason": f"{len(rates)} listings with a year, need {settings['min_listings_with_year']}"}
     r = [x["rate"] for x in rates]
     age = max(0, current_year - int(car["year"]))
-    top = sorted(r)[-max(1, settings["max_from_top"]):]
-    kept = {"median": median(r), "max": max(median(r), sum(top) / len(top))}
-    fair = {k: msrp["value"] * v ** age for k, v in kept.items()}
+    # stage E2: the range is the spread of the per-listing fair values (25th–75th percentile), not median → top-3
+    fair = value_range([msrp["value"] * x ** age for x in r], settings.get("min_range_pct", 0))
+    kept = {k: (v / msrp["value"]) ** (1 / age) if age else 1.0 for k, v in fair.items()}
     return {**base, "status": "ok", "car_age_years": age, "yearly_value_kept": kept,
             "fair_value": {k: _round(v) for k, v in fair.items()},
             "after_repairs": {k: _round(v - rep["total"]) for k, v in fair.items()}}

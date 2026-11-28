@@ -160,6 +160,7 @@ class MarketConfig(BaseModel):
     # it; "classic" = the extract before E1 (model-name check + outliers). India stays classic until validated.
     extract_mode: str = "classic"
     light_repair_band: PriceBand = PriceBand(min=500, max=5000)
+    moderate_repair_band: Optional[PriceBand] = None  # stage E2: a moderate repair's midpoint must be in it; None = no band
 
 
 class UsMarketConfig(MarketConfig):
@@ -170,6 +171,9 @@ class UsMarketConfig(MarketConfig):
     tyre_minor_wear_deduction: int = 50
     extract_mode: str = "labels"
     light_repair_band: PriceBand = PriceBand(min=50, max=400)
+    moderate_repair_band: Optional[PriceBand] = PriceBand(min=150, max=1000)
+    miles_per_mile: float = Field(0.05, ge=0)  # stage E2: $ a listing moves per mile it differs from the car; 0 = off
+    min_range_pct: float = Field(0.06, ge=0, le=1)  # stage E2: the price range is at least this share of its middle
     top_states: list[str] = ["CA", "TX", "FL", "NY", "PA", "IL", "OH", "GA", "NC"]
     state_templates_max: int = Field(2, ge=0)
     odometer_min_confidence: float = Field(0.8, ge=0, le=1)

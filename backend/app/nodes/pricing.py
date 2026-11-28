@@ -55,11 +55,17 @@ def _price_us(run_id: str, figs: dict, queries: dict) -> None:
     confirm = load_result(run_id, "04_confirm.json") or {}
     miles = load_result(run_id, "03_verify/miles.json") or {"miles_used": confirm.get("miles_user"), "source": "you"}
     p = get_config().pricing
+    us = market_config()
     settings = {"min_listings_with_year": p.min_listings_with_year, "max_from_top": p.max_from_top,
-                "min_listing_age": p.min_listing_age, "tyre_minor_wear_deduction": market_config().tyre_minor_wear_deduction}
+                "min_listing_age": p.min_listing_age, "tyre_minor_wear_deduction": us.tyre_minor_wear_deduction,
+                # stage E2: listings moved toward the car's miles; range never one number
+                "car_miles": miles.get("miles_used"), "miles_per_mile": us.miles_per_mile, "min_range_pct": us.min_range_pct}
     out = pricing_us.two_prices(figs["kept"], queries, figs["car"], datetime.now().year, settings, confirm.get("state"))
-    out = {**out, "currency": "USD", "miles": {"used": miles.get("miles_used"), "source": miles.get("source"),
-                                               "in_price": False, "note": "Miles are shown, not used in the price yet"}}
+    in_price = bool(us.miles_per_mile and miles.get("miles_used"))
+    out = {**out, "currency": "USD", "miles": {
+        "used": miles.get("miles_used"), "source": miles.get("source"), "in_price": in_price,
+        "note": (f"Listings adjusted to this car's miles at ${us.miles_per_mile:.2f} per mile" if in_price
+                 else "Miles are shown, not used in the price")}}
     save_result(run_id, "09_report/price.json", out)  # currency USD: not written to the shared prices table
     files = ["09_report/price.json"]
     if out["status"] != "ok":

@@ -161,6 +161,9 @@ markets: # stage M0 (docs/backend/07-us-market.md §3, §9): settings that diffe
     tyre_minor_wear_deduction: 50
     extract_mode: labels # labels = the LLM labels every price (trim, match, work...) with confidence; code keeps or rejects it (stage E1, owner 28 Nov)
     light_repair_band: { min: 50, max: 400 } # labels mode: a cosmetic / minor repair price counts only when its midpoint is in this range ($)
+    moderate_repair_band: { min: 150, max: 1000 } # labels mode: same for a moderate repair (stage E2); remove = no band
+    miles_per_mile: 0.05 # stage E2: each listing's price moves $0.05 per mile it differs from the car's miles (more miles = lower); 0 = miles not used
+    min_range_pct: 0.06 # stage E2: the price range is at least 6% of its middle wide, so it is never one number
     top_states: [CA, TX, FL, NY, PA, IL, OH, GA, NC] # state chips on the first screen (U1)
     state_templates_max: 2 # at most this many {state} templates per run, the rest US-wide (U4)
     odometer_min_confidence: 0.8 # verify's odometer reading counts only at this confidence or higher (U3)

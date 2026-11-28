@@ -124,6 +124,9 @@ def check_config(data: Any, nodes: list[str], keep_origin: str | None = None) ->
             bad(f"markets.{market}.extract_mode", "must be classic or labels")
         if not 0 <= mc.light_repair_band.min < mc.light_repair_band.max:
             bad(f"markets.{market}.light_repair_band", "min must be 0 or more and below max")
+        mb = mc.moderate_repair_band
+        if mb is not None and not 0 <= mb.min < mb.max:
+            bad(f"markets.{market}.moderate_repair_band", "min must be 0 or more and below max")
     if cfg.markets.us.vin_mismatch_action not in ("stop", "warn"):
         bad("markets.us.vin_mismatch_action", "must be stop or warn")
     from .vin.providers import DETAILS as DETAILS_PROVIDERS, KNOWN as VIN_PROVIDERS  # stage U1, U4

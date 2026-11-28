@@ -123,11 +123,14 @@ def build_report(inp: dict) -> dict:
             "how": [(f"Original MSRP {fmt(np['value'])} ({np.get('year') or 'year not stated'}, " if us else
                      f"New price {fmt(np['value'])} (")
                     + f"{_words(np['type'])}, variant match: {np.get('variant_match', 'n/a')}, {len(np['sources'])} source(s))",
-                    f"{len(price['listings_used'])} listings 2+ years old: value kept per year median {k['median']:.3f}, "
-                    f"top-3 average {k['max']:.3f}",
+                    (f"{len(price['listings_used'])} listings and valuations 2+ years old: value kept per year "
+                     f"{k['median']:.3f} – {k['max']:.3f} (25th–75th percentile)" if us else
+                     f"{len(price['listings_used'])} listings 2+ years old: value kept per year median {k['median']:.3f}, "
+                     f"top-3 average {k['max']:.3f}"),
                     f"Car age {price['car_age_years']} years: fair value {fmt(fv['median'])} – {fmt(fv['max'])}",
                     f"Minus repairs {fmt(repairs['total'])}: {fmt(a['median'])} – {fmt(a['max'])}",
-                    "Miles are not used in the price yet" if us else "Km is not used in the price"]}
+                    ((price.get("miles") or {}).get("note") or "Miles are not used in the price") if us
+                    else "Km is not used in the price"]}
     else:
         price_out = {"status": "unavailable",
                      "reason": (price or {}).get("reason") or "Pricing did not run for this run"}

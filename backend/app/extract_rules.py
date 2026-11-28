@@ -46,7 +46,8 @@ def _is_tyre(group: str, trimmed: dict) -> bool:
 
 
 def reject_reason(f: dict, group: str, amounts: list[int], job: dict | None, tyre: bool,
-                  limits: tuple[int, int], band: tuple[int, int]) -> str | None:
+                  limits: tuple[int, int], band: tuple[int, int],
+                  moderate_band: tuple[int, int] | None = None) -> str | None:
     """The first rule a labelled figure breaks, or None. amounts: the parsed prices."""
     if group in CAR_GROUPS:
         if f.get("match") in CAR_REJECT_MATCH:
@@ -63,6 +64,10 @@ def reject_reason(f: dict, group: str, amounts: list[int], job: dict | None, tyr
     if f.get("car_specific") in PART_REJECT_CAR:
         return "other car"
     severity = str((job or {}).get("severity") or "").lower()
+    if (job or {}).get("action") == "repair" and severity == "moderate" and moderate_band:  # stage E2
+        mid = sum(amounts) / len(amounts)
+        if not moderate_band[0] <= mid <= moderate_band[1]:
+            return f"midpoint {round(mid):,} outside {moderate_band[0]:,}–{moderate_band[1]:,}"
     if (job or {}).get("action") == "repair" and severity in WORK_FOR_SEVERITY:
         if f.get("work") not in WORK_FOR_SEVERITY[severity]:
             return f"work {f.get('work')} too much for {severity} damage"
@@ -74,7 +79,7 @@ def reject_reason(f: dict, group: str, amounts: list[int], job: dict | None, tyr
 
 def check_labelled(figures: list, trimmed: dict, plan_queries: dict | None, limits: tuple[int, int],
                    band: tuple[int, int], parse: Callable[[str], int | None],
-                   outlier_factor: float) -> tuple[list[dict], list[dict]]:
+                   outlier_factor: float, moderate_band: tuple[int, int] | None = None) -> tuple[list[dict], list[dict]]:
     """(kept, rejected with reason). Group, url and query_group come from the source id, never from the LLM."""
     items = {it["id"]: it for g in trimmed["groups"] for it in g["items"]}
     jobs = _jobs(plan_queries)
@@ -102,7 +107,7 @@ def check_labelled(figures: list, trimmed: dict, plan_queries: dict | None, limi
         if None in amounts:
             reject("no number in price text"); continue
         tyre = group not in CAR_GROUPS and _is_tyre(group, trimmed)
-        reason = reject_reason(f, group, amounts, jobs.get(group), tyre, limits, band)
+        reason = reject_reason(f, group, amounts, jobs.get(group), tyre, limits, band, moderate_band)
         if reason:
             reject(reason); continue
         extra = {}

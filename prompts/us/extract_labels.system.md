@@ -12,6 +12,9 @@ Copying (every group)
 - Copy prices exactly as written in the snippet into `price_text` (for example "$26,830", "$25k", "$1,295.00"). Never convert, round, add up or invent a number. A range gives both ends in order.
 - One figure per price. A snippet that lists several cars, trims or prices gives one figure per price. In a list of cars, the year, trim and mileage written right after a price belong to that same car; never take them from the previous car.
 - Leave out any label the snippet or title does not state for THAT price (no null fields). No notes.
+- The same price in the same snippet always gets the same labels: never label one copy "exact" and another copy "other_model".
+- A menu, tab or heading word written before a table (for example "Camry Hybrid | ..." at the start of a page) is not the table's model: label a table row by its own row and the page title.
+- "TSRP", "Starting TSRP", "list price", "Fair Purchase Price" and "starts at $X today" on a used-car page are used prices, never MSRP. MSRP is the price when the car was new ("MSRP", "original MSRP", "starting MSRP when new", "originally priced from").
 
 Labels for [new price] and [listing] figures
 - `year`, `make`, `model` as written.
